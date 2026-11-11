@@ -417,6 +417,7 @@ Prefix `sd_`, log domain `sidebar-drives`, branch `dev-side-bar-drives`.
 | S2 | Network rows show usage when the server reports it, else name only. |
 | S3 | Size text uses `g_format_size` (one decimal), as in image 3. |
 | S4 | The OS drive is named after the OS (`PRETTY_NAME`), not "Computer". |
+| S5 | OS drive = our own row directly above Personal Drive (top Computer row hidden); clicking opens the Computer view (§8.6). |
 
 ### 8.5 Phases
 
@@ -429,7 +430,7 @@ Prefix `sd_`, log domain `sidebar-drives`, branch `dev-side-bar-drives`.
 | 4 Refresh & hardening | Focus/timer refresh, smoke-test coverage (extend `tools/smoke-nautilus.sh`), safety run. | `check-safety.sh` + smoke test PASS; no main-loop stall > 16 ms attributable to us. |
 | 5 Docs | README feature section, screenshots. | — |
 
-### 8.6 Phase 0 findings (2026-11-11, Nautilus 51.1 / GTK 4.24.1, in progress)
+### 8.6 Phase 0 findings (2026-11-11, Nautilus 51.1 / GTK 4.24.1)
 
 Method: throwaway probe module loaded into an isolated Nautilus (own D-Bus session, own `XDG_CONFIG_HOME`
 with a copy of the bookmarks, so rebuilds can be triggered without touching the real ones). Not in the repo.
@@ -463,12 +464,32 @@ a network share is mounted).
   re-applied after each rebuild (detect: rows without our marker). ✅ (expected, §8.1.2)
 - Activation via `row-activated` on a real row works (moved Computer row opened the Computer view). ✅
 
-**OS drive row — open problem.**
-- Moving Nautilus' Computer row into list #2: Nautilus never recreates it but **re-adds it itself** on the
-  next rebuild, and after activating the moved row a `g_object_get: assertion 'G_IS_OBJECT (object)'
-  failed` warning appears inside Nautilus. ❌ fragile.
-- Our own `NautilusSidebarRow` for `file:///`: inserts fine and gets the section separator, but `file` is
-  construct-time internal (not settable), so Nautilus' activation handler does nothing for it (and logs the
-  same warning); the list's sort function also moves it according to `place-type`. ❌ as is.
-- Not yet tried: our own row that handles click/Enter itself (non-activatable, own gesture) and forwards to
-  the real (hidden) Computer row; right-click and drag-and-drop on it untested.
+**Event handling** (`gtk_widget_observe_controllers`): `NautilusSidebar` — `GtkGestureLongPress`;
+list #2 — `GtkDropTarget` (formats `NautilusSidebarRow`, `GdkFileList`), `GtkEventControllerKey`,
+`GtkGestureClick` (button 1), shortcuts; each Nautilus-created row — `GtkGestureDrag` (button 1, bookmark
+reordering) and `GtkGestureClick` (all buttons: activation, middle-click, right-click menu); eject button —
+its own click gesture. Controllers are added by Nautilus when it creates a row, so a row created by us has
+**none**.
+
+**Sorting & headers.** List #2's sort function orders mount rows by **label** (`order-index` has no effect
+on them; values < 0 are rejected). The header function puts the section separator on the first row of the
+mounts section, recomputed by `gtk_list_box_invalidate_headers`.
+
+**OS drive row — chosen design (owner, S5), verified in the probe:**
+- Hide Nautilus' Computer row and its list #1 (`gtk_widget_set_visible`), re-hidden after every rebuild.
+- Insert our own `NautilusSidebarRow` into list #2: `uri computer:///`, `section-type MOUNTS`,
+  `place-type INTERNAL_MOUNT`, `ejectable FALSE`, **`label ""`** so the sort puts it first among the
+  mounts; Nautilus' `GtkLabel` hidden and our own label shows the OS name (tooltip + accessible label too);
+  `activatable FALSE` so the list never hands it to Nautilus' activation code.
+- Clicks/Enter on our row (our own gesture + key controller, claiming the event) are forwarded to the hidden
+  real Computer row: select it, then emit `row-activated` on list #1 → Nautilus opens the Computer view. ✅
+  (Emitting `row-activated` on a row that isn't selected makes Nautilus log
+  `g_object_get: assertion 'G_IS_OBJECT (object)' failed` — a real click selects first, so we do too.)
+- Result: separator above our row, then Personal Drive, User Drive; survives rebuilds by re-applying. ✅
+- Selection highlight: Nautilus selects nothing in list #2 while the Computer view is open; we select our
+  row ourselves when the location is `computer:///`.
+- Rejected: moving Nautilus' Computer row (Nautilus re-adds it on rebuild); our row with `file` (read-only).
+
+**Still to verify** (need real input or a real mount — Phase 2/3 acceptance, manual by the owner):
+right-click and drag-and-drop onto our row (our row's gesture claims clicks; a refusing `GtkDropTarget` on
+it), and how mounted **network shares** appear (section/place type, separator) — requires a mounted share.
