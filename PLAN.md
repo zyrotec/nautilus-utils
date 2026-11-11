@@ -496,3 +496,18 @@ it), and how mounted **network shares** appear (section/place type, separator) �
 **deferred to Phase 3** by the owner (tested with a share the owner mounts).
 
 **Phase 0 status: done** (2026-11-11), network-share item deferred to Phase 3.
+
+### 8.7 Phase results
+
+**Phase 1 — Core (done 2026-11-11).** `src/sidebar-drives/drive_info.c` (Nautilus- and GTK-free):
+`sd_os_name` (`g_get_os_info` PRETTY_NAME, fallback "Computer"), `sd_classify` (network = not native **or**
+`filesystem::remote`, which also covers kernel NFS/CIFS mounts), `sd_fill_fraction`/`sd_fill_state`
+(thresholds §8.3), `sd_usage_text` (`g_format_size`: no-break space before "GB"/"TB", plain space before
+"bytes"), and `sd_query_usage_async` (`filesystem::size,free,type,remote`). The timeout returns
+`G_IO_ERROR_TIMED_OUT` on time **even if the backend ignores cancellation** (a dead server); the late result is
+dropped; the caller's cancellable gives `G_IO_ERROR_CANCELLED`.
+Tests: `tests/sidebar-drives/test-drive-info.c`, 12 tests, incl. a fake slow `GFile` (honouring or ignoring
+cancellation) and a 300-round stress test. Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind
+all PASS; coverage 95.9 % (never run: the "Computer" fallback, and a defensive timer cleanup).
+Lesson: tests that run under valgrind must not depend on tight wall-clock limits (first run timed out a real
+query under valgrind load; the real-query test now has no timeout and timing checks have wide margins).

@@ -51,6 +51,7 @@ feature_libs = []
 feature_deps = []
 
 subdir('src/folder-preview')
+subdir('src/sidebar-drives')
 
 # Built at the build root as build/libnautilus-utils.so, which is what the dev symlink points at (README.md).
 nu_module = shared_module('nautilus-utils',
@@ -65,6 +66,7 @@ nu_module = shared_module('nautilus-utils',
 )
 
 subdir('tests/folder-preview')
+subdir('tests/sidebar-drives')
 
 summary({
   'extensiondir': extensiondir,
