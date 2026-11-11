@@ -143,7 +143,7 @@ findings and the smoke test is clean.
 | # | Feature | Dir | Status |
 |---|---|---|---|
 | 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover | `src/folder-preview/` | **v1 done** (grid view) |
-| 2 | *(next feature — to be planned here)* | | |
+| 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **planned** (§8), awaiting approval |
 
 Open items:
 
@@ -315,3 +315,116 @@ without this extension (GIL).
   suppressing it in our own code.
 - New feature: add its section to this file (§6 is the template) and its row to §5, get it approved, then
   build it phase by phase (§4.5).
+
+---
+
+## 8. Feature 2 — Sidebar drives
+
+Turns the drive rows of the Nautilus sidebar into Dolphin/GNOME-Disks-style rows with a usage bar and free
+space, names the OS drive after the installed OS, and lists connected network shares below a separator.
+Prefix `sd_`, log domain `sidebar-drives`, branch `dev-side-bar-drives`.
+
+### 8.1 Behaviour
+
+#### 8.1.1 Layout
+
+```
+  …bookmarks (Documents, Music, …, Development)
+  ───────────────────────────────────────────────  existing separator (unchanged)
+  [icon] Fedora Linux 45 (Workstation Edition)        OS drive (no eject)
+         ███░░░░░░░░░░░░░░░░░░
+         445.7 GB free of 497.3 GB
+  [icon] Personal Drive                          ⏏
+         █████████████░░░░░░░
+         803.2 GB free of 1.0 TB
+  [icon] User Drive                              ⏏
+         ░░░░░░░░░░░░░░░░░░░░
+         500.0 GB free of 500.1 GB
+  ───────────────────────────────────────────────  new separator, same look as the existing one
+  [icon] share on nas.local                      ⏏    network shares (only if any are mounted)
+         ██████░░░░░░░░░░░░░░
+         1.2 TB free of 3.6 TB
+```
+
+- **Local drive rows** (every mount the sidebar already lists in its devices section): name on the first
+  line, a thin usage bar below it, and `"<free> free of <size>"` as a caption below the bar. Eject button,
+  icon, click, right-click menu and drag-and-drop behave exactly as before.
+- **OS drive**: the mount holding `/`. Its label is the OS's pretty name
+  (`g_get_os_info (G_OS_INFO_KEY_PRETTY_NAME)`, e.g. "Fedora Linux 45 (Workstation Edition)"), falling back
+  to "Computer" if unavailable; ellipsised at the end if too long (tooltip shows the full name). It is the
+  **first** drive row; clicking opens `/`. No eject button. If Nautilus doesn't list `/` in the sidebar,
+  we add the row ourselves (decided in Phase 0).
+- Order: OS drive, then the other local drives in Nautilus' order (Personal Drive, User Drive).
+- **Network shares**: mounted network locations only (SMB, SFTP, NFS, WebDAV, …; i.e. mounts that are not
+  native/local). They appear under a separator styled like the existing one; separator and section are
+  hidden when nothing is mounted. Same row layout; usage bar and caption only when the server reports a
+  size, otherwise just the name. Unmount button as Nautilus provides it.
+- Sizes: `g_format_size()` (one decimal, SI units: "445.7 GB free of 497.3 GB").
+- Bar colour: accent colour normally; warning colour at ≥ 90 % full, error colour at ≥ 95 %
+  (`GtkLevelBar` offsets, theme colours only).
+
+#### 8.1.2 Updating
+
+- Rows update when Nautilus rebuilds the sidebar (mount/unmount, bookmarks changed) — the hook re-applies
+  after every rebuild.
+- Free space refreshes: when a window gains focus, after a file operation finishes in Nautilus (if a
+  signal is available, Phase 0), and every `SD_REFRESH_S` while a window is visible. Never per keystroke or
+  per file.
+- Local queries: `g_file_query_filesystem_info_async` (`filesystem::size,free`); never on the main thread.
+- Network queries: same call with a `GCancellable` and an `SD_NET_TIMEOUT_MS` timeout; a slow or dead
+  server keeps its last known values (or name only) and is retried at the next refresh, never more than one
+  query in flight per mount.
+
+#### 8.1.3 Look & accessibility (GNOME HIG, libadwaita)
+
+- Bar: `GtkLevelBar` in continuous mode, 4 px high, rounded, inset under the label (aligned with the text,
+  not the icon), as in images 1–3. Caption: `.caption` + `.dim-label`. All colours from libadwaita CSS
+  variables (`var(--accent-bg-color)`, `var(--warning-bg-color)`, `var(--error-bg-color)`) so light/dark
+  and high-contrast themes work; GTK4 CSS syntax only.
+- Rows get taller (two extra lines); the row height must stay consistent between drive rows.
+- Accessibility: the row's accessible description is the caption text; the level bar has an accessible
+  label ("Disk usage") and value. Keyboard navigation unchanged.
+
+#### 8.1.4 Graceful failure
+
+- All Nautilus-internals code lives in `src/sidebar-drives/sidebar_hook.c`. If `NautilusSidebar` /
+  `NautilusSidebarRow` or the properties we rely on aren't found, log one warning and leave the sidebar
+  untouched. Folder preview keeps working independently.
+
+### 8.2 Rules
+
+1. Main thread only: widget changes and cheap lookups (§4.4). Filesystem queries are async GIO calls.
+2. Never keep raw pointers to sidebar rows (Nautilus destroys and recreates them on every rebuild): use
+   `g_signal_connect_object` / `GWeakRef` and per-row data via `g_object_set_data_full`.
+3. Never change Nautilus' own row actions; only add children/CSS and reorder/relabel as verified in Phase 0.
+4. Size math and text formatting live in a Nautilus-free core (`drive_info.c`) with unit tests.
+
+### 8.3 Constants (`src/sidebar-drives/config.h`)
+
+| Name | Value | Meaning |
+|---|---|---|
+| `SD_REFRESH_S` | 60 | Periodic free-space refresh while a window is visible |
+| `SD_NET_TIMEOUT_MS` | 3000 | Give up on a network size query after this |
+| `SD_WARN_FRACTION` | 0.90 | Bar turns warning colour at this fill level |
+| `SD_FULL_FRACTION` | 0.95 | Bar turns error colour at this fill level |
+| `SD_BAR_HEIGHT_PX` | 4 | Usage bar height |
+
+### 8.4 Decisions (owner, 2026-11-11)
+
+| # | Decision |
+|---|---|
+| S1 | Network section lists **mounted shares only** (no saved-but-disconnected servers). |
+| S2 | Network rows show usage when the server reports it, else name only. |
+| S3 | Size text uses `g_format_size` (one decimal), as in image 3. |
+| S4 | The OS drive is named after the OS (`PRETTY_NAME`), not "Computer". |
+
+### 8.5 Phases
+
+| Phase | Work | Acceptance |
+|---|---|---|
+| 0 Spike | Throwaway probe (not built by Meson): dump the `NautilusSidebar` widget tree and `NautilusSidebarRow` properties (label, mount/volume/drive, uri, section type, eject button); find how rows map to mounts; whether `/` is listed; how the existing separator is drawn; what triggers rebuilds; whether rows can get extra children and be reordered without breaking activation/DnD/context menus. Record findings + screenshots here. | Every question answered; if the sidebar can't be modified safely, stop and report. |
+| 1 Core | `drive_info.c`: OS name, mount classification (OS / local / network), async size query with timeout + cancellation, caption text, fill level → state. Unit tests incl. fake slow mounts. | Tests + `check-safety.sh` pass. |
+| 2 Local rows | `sidebar_hook.c`: usage bar + caption on local drive rows, OS row first and renamed, re-apply on rebuild, CSS. | Matches images 1–3 in light and dark; activation, eject, DnD, context menu unchanged; graceful failure. |
+| 3 Network | Separator + network section, timeout handling, unmount. | A mounted SMB/SFTP share appears below the separator; a dead server never stalls Nautilus (16 ms probe). |
+| 4 Refresh & hardening | Focus/timer refresh, smoke-test coverage (extend `tools/smoke-nautilus.sh`), safety run. | `check-safety.sh` + smoke test PASS; no main-loop stall > 16 ms attributable to us. |
+| 5 Docs | README feature section, screenshots. | — |
