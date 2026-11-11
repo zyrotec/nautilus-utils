@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "skills": {
+    "gtk-ui-ux-engineer": {
+      "source": "gotar/opencode-config",
+      "sourceType": "github",
+      "skillPath": "skills/gtk-ui-ux-engineer/SKILL.md",
+      "computedHash": "0f4ee0471bc80759c6aa8befae1ad01187d9c59cfaa9b40c3b47ea554c17f19b"
+    }
+  }
+}

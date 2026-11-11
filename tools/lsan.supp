@@ -1,0 +1,5 @@
+# LeakSanitizer suppressions (PLAN.md §4.3).
+# RULES: only third-party libraries (GLib, GTK, Nautilus, Mesa, …). Never anything in our own code.
+# Every entry needs a comment explaining why it is a false positive or out of our control.
+#
+# Format: leak:<function or library name>
