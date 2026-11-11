@@ -352,8 +352,8 @@ Prefix `sd_`, log domain `sidebar-drives`, branch `dev-side-bar-drives`.
 - **OS drive**: the mount holding `/`. Its label is the OS's pretty name
   (`g_get_os_info (G_OS_INFO_KEY_PRETTY_NAME)`, e.g. "Fedora Linux 45 (Workstation Edition)"), falling back
   to "Computer" if unavailable; ellipsised at the end if too long (tooltip shows the full name). It is the
-  **first** drive row; clicking opens `/`. No eject button. If Nautilus doesn't list `/` in the sidebar,
-  we add the row ourselves (decided in Phase 0).
+  **first** drive row; clicking opens Nautilus' Computer view (S5). No eject button. Nautilus has no row for
+  `/`, so it is our own row and the top "Computer" row is hidden (§8.6).
 - Order: OS drive, then the other local drives in Nautilus' order (Personal Drive, User Drive).
 - **Network shares**: mounted network locations only (SMB, SFTP, NFS, WebDAV, …; i.e. mounts that are not
   native/local). They appear under a separator styled like the existing one; separator and section are
