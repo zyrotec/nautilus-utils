@@ -417,6 +417,7 @@ Prefix `sd_`, log domain `sidebar-drives`, branch `dev-side-bar-drives`.
 | S2 | Network rows show usage when the server reports it, else name only. |
 | S3 | Size text uses `g_format_size` (one decimal), as in image 3. |
 | S4 | The OS drive is named after the OS (`PRETTY_NAME`), not "Computer". |
+| S6 | Network shares = our own rows in our own list below a separator under the local drives; Nautilus' rows for them hidden. Click opens, eject goes through Nautilus' hidden row. No right-click menu / file drop on these rows (owner accepted, 2026-11-12). |
 | S5 | OS drive = our own row directly above Personal Drive; clicking opens `/`. Nautilus' "Computer" row is **never altered** (owner correction 2026-11-11: "Computer" in the request only referred to the OS drive's name in the screenshot). |
 
 ### 8.5 Phases
@@ -543,3 +544,34 @@ Owner review (2026-11-11): layout, bars and behaviour confirmed ("looks amazing"
 never be altered and the OS row must open `/` — the first version hid Computer and opened the Computer view
 (misread request). Fixed: Computer row untouched, OS row opens `/` through `slot.open-location`, highlight
 follows the window location `/`. Re-verified with the debug driver; tests and `check-safety.sh` re-run.
+
+### 8.8 Phase 3 — Network shares
+
+Findings (Nautilus 51.1, owner's `smb://media-server.local/mediadrive/` mounted):
+- Mounted shares **are** in Nautilus' sidebar, as mount rows (`section MOUNTS`, `place EXTERNAL_MOUNT`).
+  Shares that aren't mounted are not listed (S1 keeps it that way).
+- Measured sort order within the mounts section: **place type first** (EXTERNAL 2 before INTERNAL 3), then
+  `g_utf8_collate` on the label. So shares (and USB sticks) always sort above internal drives.
+- `section-type` is construct-only (setting it later logs a GLib warning); the header (separator) function
+  only separates sections. Nautilus' own rows can therefore not be re-sorted or separated → S6.
+
+Design (S6): Nautilus' row of every network share is hidden (`sd-net-hidden`, restored on detach); our own
+`GtkListBox` (CSS classes copied from Nautilus' list) and a `GtkSeparator` (margins/classes copied from
+Nautilus' row-header separators) are inserted into the sidebar's box right after Nautilus' list. Our rows
+mimic Nautilus' (`row > revealer.sidebar-revealer > box`, spacing and per-widget margins copied) with name,
+usage bar, caption and an eject button. Network = not native, or `filesystem::remote` (kernel NFS/CIFS:
+detected when its size query returns, then moved). Reconciled after every rebuild (mount/unmount). Click →
+`slot.open-location`; eject → `clicked` on the hidden Nautilus row's eject button (Nautilus' own unmount
+path). Highlight follows the window location like the OS row. The list is hidden when no share is mounted.
+
+Oddity: a themed `GIcon` with drive names (e.g. `drive-harddisk-symbolic`, from Nautilus' row or from
+`g_mount_get_symbolic_icon`) rendered **blank** in our row, while `folder-remote-symbolic` renders; network
+rows therefore always use `folder-remote-symbolic`. Root cause not found (only reproducible with a faked
+local disk; real shares use that icon anyway).
+
+Test aid (debug builds only): `SD_DEBUG_FAKE_NETWORK=<label>` treats that local drive as a share;
+debug commands `sd-click-net`, `sd-dump` (network section). Never test eject with a faked share (it would
+unmount the real disk). Verified: separator + list below the local drives, bar/caption, click opens it and
+highlights, highlight moves to the OS row on `/`, kept across rebuilds, no warnings; light/dark.
+Still manual (owner, real share): appearance, click, eject/unmount, unmount from elsewhere removes the row,
+a slow/unreachable server never freezes Files.

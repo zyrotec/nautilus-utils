@@ -9,6 +9,10 @@
  *    among the mounts, our own title label). It is not activatable, so Nautilus' activation code never sees
  *    it: our own gesture/keys open "/" through Nautilus' "slot.open-location" action. Nautilus' Computer
  *    row is left alone (owner decision S5, PLAN.md §8.4).
+ *  - Network shares (S6): Nautilus sorts them above the local drives and its rows' section/place type can't
+ *    be changed, so their Nautilus rows are hidden and shown as our own rows in our own GtkListBox below a
+ *    separator, under the local drives. Click opens the share (slot.open-location); eject presses the hidden
+ *    Nautilus row's eject button, so unmounting goes through Nautilus' own code and notifications.
  *
  * Lifetime rules (PLAN.md §4.1):
  *  - SidebarHook is qdata on its NautilusSidebar; RowDeco is qdata on its row. GLib frees them when the
@@ -32,6 +36,8 @@
 #define SIDEBAR_KEY "sd-sidebar-hook"
 #define DECO_KEY    "sd-row-deco"
 #define OURS_KEY    "sd-our-row"
+#define HIDDEN_KEY  "sd-net-hidden"   /* on Nautilus network rows we hid */
+#define NET_URI_KEY "sd-net-uri"      /* on our network rows: the share's root URI (owned string) */
 
 #define COMPUTER_URI "computer:///"   /* Nautilus' own Computer row: never touched */
 #define OS_URI       "file:///"
@@ -83,6 +89,10 @@ typedef struct
   guint      apply_id;  /* Pending apply idle, or 0. */
   guint      sync_id;   /* Pending selection-sync idle/timeout, or 0. */
   GWeakRef   slot;      /* The window's active NautilusWindowSlot whose "location" we watch. */
+  GtkWidget  *net_sep;      /* Owned (sunk) ref: separator above the network shares, or NULL. */
+  GtkWidget  *net_list;     /* Owned (sunk) ref: our GtkListBox of network shares, or NULL. */
+  GHashTable *net_rows;     /* Root URI (owned) -> our network row (borrowed: owned by @net_list). */
+  GHashTable *remote_uris;  /* Set of root URIs (owned) of native mounts that reported filesystem::remote. */
 } SidebarHook;
 
 typedef struct
@@ -93,6 +103,7 @@ typedef struct
 } RowDeco;
 
 static void disable (const char *reason);
+static void schedule_apply (SidebarHook *hook);
 
 /* Name of a Nautilus type/property we depend on. Debug-driver builds can simulate a Nautilus that renamed
  * things ($SD_DEBUG_BREAK=types|props) to test the graceful-failure path; release builds use @real. */
@@ -279,6 +290,9 @@ show_usage (GtkWidget     *row,
   gtk_accessible_update_property (GTK_ACCESSIBLE (row), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, text, -1);
 }
 
+static void note_remote (GtkWidget *row, GFile *root, gboolean remote);
+
+
 typedef struct
 {
   GWeakRef      row;     /* The row the query is for. */
@@ -317,6 +331,8 @@ on_usage (GObject      *source,
       g_debug ("size of %s unavailable: %s", uri, error->message);
     }
   show_usage (row, deco, usage);
+  if (usage != NULL)
+    note_remote (row, G_FILE (source), usage->remote);
   query_ctx_free (ctx);
 }
 
@@ -480,13 +496,16 @@ current_location (SidebarHook *hook)
 
 /* Our row is highlighted exactly while the window shows "/" (PLAN.md §8.7). Nautilus clears the selection
  * on every rebuild, so this runs after every selection change and location change. */
+static void sync_net_selection (SidebarHook *hook, const char *uri);
+
 static void
 sync_selection (SidebarHook *hook)
 {
+  g_autofree char *uri = current_location (hook);
+  sync_net_selection (hook, uri);
   GtkWidget *list = hook->os_row != NULL ? gtk_widget_get_parent (hook->os_row) : NULL;
   if (!GTK_IS_LIST_BOX (list))
     return;
-  g_autofree char *uri = current_location (hook);
   gboolean ours = gtk_list_box_get_selected_row (GTK_LIST_BOX (list)) == GTK_LIST_BOX_ROW (hook->os_row);
   if (g_strcmp0 (uri, OS_URI) == 0)
     {
@@ -597,6 +616,358 @@ unwatch_selection (GtkWidget *sidebar,
 }
 
 /* ------------------------------------------------------------------------------------------------ */
+/* Network shares (S6, PLAN.md §8.8)                                                                 */
+
+/* Debug-driver builds can pretend a local drive is a network share ($SD_DEBUG_FAKE_NETWORK = its label) to
+ * test the network section without a server. Never set in release builds. */
+static gboolean
+debug_fake_network (GtkWidget *row)
+{
+#ifdef SD_DEBUG_DRIVER
+  const char *fake = g_getenv ("SD_DEBUG_FAKE_NETWORK");
+  if (fake == NULL || *fake == '\0')
+    return FALSE;
+  g_autofree char *label = NULL;
+  g_object_get (row, "label", &label, NULL);
+  return g_strcmp0 (label, fake) == 0;
+#else
+  (void) row;
+  return FALSE;
+#endif
+}
+
+/* A Nautilus mount row is a network share if its location isn't local (smb://, sftp://, …) or its query
+ * reported filesystem::remote (NFS/CIFS mounted by the kernel). */
+static gboolean
+is_network_row (SidebarHook *hook,
+                GtkWidget   *row,
+                GFile       *root)
+{
+  g_autofree char *uri = g_file_get_uri (root);
+  gboolean remote = g_hash_table_contains (hook->remote_uris, uri);
+  return sd_classify (g_file_is_native (root), remote) == SD_DRIVE_NETWORK || debug_fake_network (row);
+}
+
+static void
+note_remote (GtkWidget *row,
+             GFile     *root,
+             gboolean   remote)
+{
+  if (!remote || !g_file_is_native (root) || g_object_get_data (G_OBJECT (row), NET_URI_KEY) != NULL)
+    return; /* already known as network (non-native), or one of our network rows */
+  GtkWidget *sidebar = sidebar_of (row);
+  SidebarHook *hook = sidebar != NULL ? g_object_get_data (G_OBJECT (sidebar), SIDEBAR_KEY) : NULL;
+  if (hook == NULL)
+    return;
+  g_autofree char *uri = g_file_get_uri (root);
+  if (g_hash_table_add (hook->remote_uris, g_steal_pointer (&uri)))
+    schedule_apply (hook);
+}
+
+/* Nautilus' row for the mount at @uri in @sidebar (possibly hidden by us), or NULL. Borrowed. */
+static GtkWidget *
+find_nautilus_mount_row (GtkWidget  *sidebar,
+                         const char *uri)
+{
+  g_autoptr (GPtrArray) rows = g_ptr_array_new ();
+  collect_rows (sidebar, rows);
+  for (guint i = 0; i < rows->len; i++)
+    {
+      GtkWidget *row = g_ptr_array_index (rows, i);
+      if (is_ours (row))
+        continue;
+      g_autoptr (GMount) mount = row_mount (row);
+      if (mount == NULL)
+        continue;
+      g_autoptr (GFile) root = g_mount_get_root (mount);
+      g_autofree char *root_uri = g_file_get_uri (root);
+      if (g_strcmp0 (root_uri, uri) == 0)
+        return row;
+    }
+  return NULL;
+}
+
+static GtkWidget *
+find_child (GtkWidget *w,
+            GType      type)
+{
+  if (G_TYPE_CHECK_INSTANCE_TYPE (w, type))
+    return w;
+  for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL; c = gtk_widget_get_next_sibling (c))
+    {
+      GtkWidget *r = find_child (c, type);
+      if (r != NULL)
+        return r;
+    }
+  return NULL;
+}
+
+/* Eject on our row = press the eject button of Nautilus' (hidden) row, so the unmount runs through
+ * Nautilus' own code (busy/error dialogs, notifications). @sidebar is the connect_object target. */
+static void
+on_net_eject (GtkButton *button,
+              gpointer   sidebar)
+{
+  GtkWidget *row = gtk_widget_get_ancestor (GTK_WIDGET (button), GTK_TYPE_LIST_BOX_ROW);
+  const char *uri = row != NULL ? g_object_get_data (G_OBJECT (row), NET_URI_KEY) : NULL;
+  GtkWidget *nrow = uri != NULL ? find_nautilus_mount_row (sidebar, uri) : NULL;
+  GtkWidget *nbutton = nrow != NULL ? find_child (nrow, GTK_TYPE_BUTTON) : NULL;
+  if (nbutton == NULL)
+    {
+      g_warning ("cannot unmount %s: Nautilus' row or its eject button is missing", uri != NULL ? uri : "(?)");
+      return;
+    }
+  g_signal_emit_by_name (nbutton, "clicked");
+}
+
+/* @sidebar is the connect_object target. */
+static void
+on_net_activated (GtkListBox    *list,
+                  GtkListBoxRow *row,
+                  gpointer       sidebar)
+{
+  (void) list; (void) sidebar;
+  const char *uri = g_object_get_data (G_OBJECT (row), NET_URI_KEY);
+  if (uri != NULL && !gtk_widget_activate_action (GTK_WIDGET (row), "slot.open-location", "s", uri))
+    g_warning ("cannot open %s: Nautilus' slot.open-location action is missing", uri);
+}
+
+static int
+net_sort (GtkListBoxRow *a,
+          GtkListBoxRow *b,
+          gpointer       data)
+{
+  (void) data;
+  const char *ta = g_object_get_data (G_OBJECT (a), "sd-net-title");
+  const char *tb = g_object_get_data (G_OBJECT (b), "sd-net-title");
+  return g_utf8_collate (ta != NULL ? ta : "", tb != NULL ? tb : "");
+}
+
+static void
+sync_net_selection (SidebarHook *hook,
+                    const char  *uri)
+{
+  if (hook->net_list == NULL)
+    return;
+  GtkWidget *row = uri != NULL ? g_hash_table_lookup (hook->net_rows, uri) : NULL;
+  GtkListBoxRow *selected = gtk_list_box_get_selected_row (GTK_LIST_BOX (hook->net_list));
+  if (row != NULL && selected != GTK_LIST_BOX_ROW (row))
+    gtk_list_box_select_row (GTK_LIST_BOX (hook->net_list), GTK_LIST_BOX_ROW (row));
+  else if (row == NULL && selected != NULL)
+    gtk_list_box_unselect_all (GTK_LIST_BOX (hook->net_list));
+}
+
+/* Creates our separator + list once and keeps them right after Nautilus' main list @target. FALSE if the
+ * sidebar isn't laid out as expected (the network section is then skipped; everything else works). */
+static gboolean
+ensure_net_section (SidebarHook *hook,
+                    GtkWidget   *target)
+{
+  GtkWidget *box = gtk_widget_get_parent (target);
+  if (!GTK_IS_BOX (box))
+    return FALSE;
+  if (hook->net_list == NULL)
+    {
+      /* Separator styled like Nautilus' own section separators (its list row headers). */
+      hook->net_sep = g_object_ref_sink (gtk_separator_new (GTK_ORIENTATION_HORIZONTAL));
+      for (GtkWidget *c = gtk_widget_get_first_child (target); c != NULL; c = gtk_widget_get_next_sibling (c))
+        {
+          GtkWidget *header = GTK_IS_LIST_BOX_ROW (c) ? gtk_list_box_row_get_header (GTK_LIST_BOX_ROW (c)) : NULL;
+          if (GTK_IS_SEPARATOR (header))
+            {
+              gtk_widget_set_margin_top (hook->net_sep, gtk_widget_get_margin_top (header));
+              gtk_widget_set_margin_bottom (hook->net_sep, gtk_widget_get_margin_bottom (header));
+              gtk_widget_set_margin_start (hook->net_sep, gtk_widget_get_margin_start (header));
+              gtk_widget_set_margin_end (hook->net_sep, gtk_widget_get_margin_end (header));
+              g_auto (GStrv) classes = gtk_widget_get_css_classes (header);
+              for (char **k = classes; k != NULL && *k != NULL; k++)
+                gtk_widget_add_css_class (hook->net_sep, *k);
+              break;
+            }
+        }
+
+      hook->net_list = g_object_ref_sink (gtk_list_box_new ());
+      g_auto (GStrv) classes = gtk_widget_get_css_classes (target);
+      for (char **k = classes; k != NULL && *k != NULL; k++)
+        gtk_widget_add_css_class (hook->net_list, *k);
+      gtk_list_box_set_selection_mode (GTK_LIST_BOX (hook->net_list), GTK_SELECTION_SINGLE);
+      gtk_list_box_set_sort_func (GTK_LIST_BOX (hook->net_list), net_sort, NULL, NULL);
+      gtk_accessible_update_property (GTK_ACCESSIBLE (hook->net_list), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                      "Network shares", -1);
+      g_signal_connect_object (hook->net_list, "row-activated", G_CALLBACK (on_net_activated), hook->sidebar, 0);
+      g_signal_connect_object (hook->net_list, "selected-rows-changed", G_CALLBACK (on_selection_changed),
+                               hook->sidebar, 0);
+      gtk_widget_set_visible (hook->net_sep, FALSE);
+      gtk_widget_set_visible (hook->net_list, FALSE);
+    }
+  if (gtk_widget_get_parent (hook->net_list) != box || gtk_widget_get_prev_sibling (hook->net_sep) != target)
+    {
+      if (gtk_widget_get_parent (hook->net_sep) != NULL)
+        gtk_box_remove (GTK_BOX (gtk_widget_get_parent (hook->net_sep)), hook->net_sep);
+      if (gtk_widget_get_parent (hook->net_list) != NULL)
+        gtk_box_remove (GTK_BOX (gtk_widget_get_parent (hook->net_list)), hook->net_list);
+      gtk_box_insert_child_after (GTK_BOX (box), hook->net_sep, target);
+      gtk_box_insert_child_after (GTK_BOX (box), hook->net_list, hook->net_sep);
+    }
+  return TRUE;
+}
+
+static void
+copy_margins (GtkWidget *to,
+              GtkWidget *from)
+{
+  if (from == NULL)
+    return;
+  gtk_widget_set_margin_start (to, gtk_widget_get_margin_start (from));
+  gtk_widget_set_margin_end (to, gtk_widget_get_margin_end (from));
+  gtk_widget_set_margin_top (to, gtk_widget_get_margin_top (from));
+  gtk_widget_set_margin_bottom (to, gtk_widget_get_margin_bottom (from));
+}
+
+/* Our row for a network share, built like Nautilus' rows (row > revealer.sidebar-revealer > box) so the
+ * sidebar's CSS applies, with spacing/margins and button classes copied from Nautilus' row @nrow. */
+static GtkWidget *
+create_net_row (SidebarHook *hook,
+                GtkWidget   *nrow,
+                GFile       *root,
+                const char  *uri)
+{
+  g_autofree char *title = NULL, *tooltip = NULL, *eject_tooltip = NULL;
+  g_object_get (nrow, "label", &title, "tooltip", &tooltip, "eject-tooltip", &eject_tooltip, NULL);
+
+  GtkWidget *nrevealer = gtk_widget_get_first_child (nrow);
+  GtkWidget *nbox = GTK_IS_REVEALER (nrevealer) ? gtk_revealer_get_child (GTK_REVEALER (nrevealer)) : NULL;
+  GtkWidget *nbutton = find_child (nrow, GTK_TYPE_BUTTON);
+  GtkWidget *nimage = NULL, *nlabel = NULL;
+  for (GtkWidget *c = nbox != NULL ? gtk_widget_get_first_child (nbox) : NULL; c != NULL; c = gtk_widget_get_next_sibling (c))
+    {
+      if (nimage == NULL && GTK_IS_IMAGE (c))
+        nimage = c;
+      if (nlabel == NULL && GTK_IS_LABEL (c))
+        nlabel = c;
+    }
+  if (nlabel == NULL && nbox != NULL)
+    {
+      /* Already decorated by us: Nautilus' label sits inside our info box. */
+      GtkWidget *info = find_child (nbox, GTK_TYPE_LABEL);
+      nlabel = info;
+    }
+
+  GtkWidget *row = gtk_list_box_row_new ();
+  g_object_set_data_full (G_OBJECT (row), NET_URI_KEY, g_strdup (uri), g_free);
+  g_object_set_data_full (G_OBJECT (row), "sd-net-title", g_strdup (title != NULL ? title : uri), g_free);
+  gtk_widget_set_tooltip_text (row, tooltip != NULL ? tooltip : uri);
+  gtk_accessible_update_property (GTK_ACCESSIBLE (row), GTK_ACCESSIBLE_PROPERTY_LABEL, title != NULL ? title : uri, -1);
+
+  GtkWidget *revealer = gtk_revealer_new ();
+  gtk_widget_add_css_class (revealer, "sidebar-revealer");
+  gtk_revealer_set_transition_type (GTK_REVEALER (revealer), GTK_REVEALER_TRANSITION_TYPE_NONE);
+  gtk_revealer_set_reveal_child (GTK_REVEALER (revealer), TRUE);
+  gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (row), revealer);
+
+  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, GTK_IS_BOX (nbox) ? gtk_box_get_spacing (GTK_BOX (nbox)) : 6);
+  if (nbox != NULL)
+    {
+      gtk_widget_set_margin_top (box, gtk_widget_get_margin_top (nbox));
+      gtk_widget_set_margin_bottom (box, gtk_widget_get_margin_bottom (nbox));
+      gtk_widget_set_margin_start (box, gtk_widget_get_margin_start (nbox));
+      gtk_widget_set_margin_end (box, gtk_widget_get_margin_end (nbox));
+    }
+  gtk_revealer_set_child (GTK_REVEALER (revealer), box);
+
+  /* Always the network-share icon: every row in this list is a network share. (Reusing the icon of
+   * Nautilus' row, or a drive icon, rendered blank in our widget on Nautilus 51.1 — PLAN.md §8.8.) */
+  GtkWidget *image = gtk_image_new_from_icon_name ("folder-remote-symbolic");
+  if (nimage != NULL)
+    {
+      gtk_image_set_icon_size (GTK_IMAGE (image), gtk_image_get_icon_size (GTK_IMAGE (nimage)));
+      if (gtk_image_get_pixel_size (GTK_IMAGE (nimage)) > 0)
+        gtk_image_set_pixel_size (GTK_IMAGE (image), gtk_image_get_pixel_size (GTK_IMAGE (nimage)));
+    }
+  copy_margins (image, nimage);
+  gtk_box_append (GTK_BOX (box), image);
+  GtkWidget *label = gtk_label_new (title != NULL ? title : uri);
+  copy_margins (label, nlabel);
+  gtk_label_set_xalign (GTK_LABEL (label), 0.0f);
+  gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_END);
+  gtk_box_append (GTK_BOX (box), label);
+
+  GtkWidget *eject = gtk_button_new_from_icon_name ("media-eject-symbolic");
+  if (nbutton != NULL)
+    {
+      g_auto (GStrv) classes = gtk_widget_get_css_classes (nbutton);
+      for (char **k = classes; k != NULL && *k != NULL; k++)
+        gtk_widget_add_css_class (eject, *k);
+    }
+  gtk_widget_set_valign (eject, GTK_ALIGN_CENTER);
+  copy_margins (eject, nbutton);
+  gtk_widget_set_tooltip_text (eject, eject_tooltip != NULL ? eject_tooltip : "Unmount");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (eject), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  eject_tooltip != NULL ? eject_tooltip : "Unmount", -1);
+  g_signal_connect_object (eject, "clicked", G_CALLBACK (on_net_eject), hook->sidebar, 0);
+  gtk_box_append (GTK_BOX (box), eject);
+
+  RowDeco *deco = decorate (row, NULL); /* moves our label into name + bar + caption */
+  gtk_list_box_insert (GTK_LIST_BOX (hook->net_list), row, -1);
+  g_hash_table_insert (hook->net_rows, g_strdup (uri), row);
+  if (deco != NULL)
+    start_query (row, deco, root);
+  return row;
+}
+
+/* Hides Nautilus' network rows and keeps our network list in step with them. */
+static void
+reconcile_network (SidebarHook *hook,
+                   GtkWidget   *target,
+                   GPtrArray   *rows)
+{
+  g_autoptr (GHashTable) seen = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+  for (guint i = 0; i < rows->len; i++)
+    {
+      GtkWidget *row = g_ptr_array_index (rows, i);
+      if (is_ours (row))
+        continue;
+      g_autoptr (GMount) mount = row_mount (row);
+      if (mount == NULL)
+        continue;
+      g_autoptr (GFile) root = g_mount_get_root (mount);
+      if (!is_network_row (hook, row, root))
+        continue;
+      if (!ensure_net_section (hook, target))
+        return;
+      g_autofree char *uri = g_file_get_uri (root);
+      gtk_widget_set_visible (row, FALSE);
+      g_object_set_data (G_OBJECT (row), HIDDEN_KEY, GINT_TO_POINTER (1));
+      if (!g_hash_table_contains (hook->net_rows, uri))
+        create_net_row (hook, row, root, uri);
+      g_hash_table_add (seen, g_steal_pointer (&uri));
+    }
+  if (hook->net_list == NULL)
+    return;
+
+  /* Drop our rows for shares that are gone (unmounted). */
+  g_autoptr (GPtrArray) gone = g_ptr_array_new_with_free_func (g_free);
+  GHashTableIter it;
+  gpointer key;
+  g_hash_table_iter_init (&it, hook->net_rows);
+  while (g_hash_table_iter_next (&it, &key, NULL))
+    if (!g_hash_table_contains (seen, key))
+      g_ptr_array_add (gone, g_strdup (key));
+  for (guint i = 0; i < gone->len; i++)
+    {
+      const char *uri = g_ptr_array_index (gone, i);
+      GtkWidget *row = g_hash_table_lookup (hook->net_rows, uri);
+      g_hash_table_remove (hook->net_rows, uri);
+      gtk_list_box_remove (GTK_LIST_BOX (hook->net_list), row);
+      g_hash_table_remove (hook->remote_uris, uri);
+    }
+
+  gboolean any = g_hash_table_size (hook->net_rows) > 0;
+  gtk_widget_set_visible (hook->net_sep, any);
+  gtk_widget_set_visible (hook->net_list, any);
+}
+
+/* ------------------------------------------------------------------------------------------------ */
 /* Per-sidebar apply                                                                                 */
 
 static void
@@ -661,6 +1032,9 @@ apply (SidebarHook *hook)
       g_autoptr (GMount) mount = row_mount (row);
       if (mount == NULL)
         continue;
+      g_autoptr (GFile) mount_root = g_mount_get_root (mount);
+      if (is_network_row (hook, row, mount_root))
+        continue; /* shown as our own row in the network list (reconcile_network) */
       RowDeco *deco = decorate (row, NULL);
       if (deco == NULL)
         {
@@ -668,8 +1042,19 @@ apply (SidebarHook *hook)
           continue;
         }
       g_autoptr (GFile) root = g_mount_get_root (mount);
+      if (g_log_writer_default_would_drop (G_LOG_LEVEL_DEBUG, G_LOG_DOMAIN) == FALSE)
+        {
+          g_autofree char *label = NULL, *uri = g_file_get_uri (root);
+          int section = -1, place = -1;
+          g_object_get (row, "label", &label, "section-type", &section, "place-type", &place, NULL);
+          g_debug ("drive row '%s' root=%s native=%d section=%d place=%d index=%d", label, uri,
+                   g_file_is_native (root), section, place, gtk_list_box_row_get_index (GTK_LIST_BOX_ROW (row)));
+        }
       start_query (row, deco, root);
     }
+
+  reconcile_network (hook, target, rows);
+  sync_selection (hook);
 }
 
 static gboolean
@@ -702,6 +1087,13 @@ sidebar_hook_free (gpointer data)
         gtk_list_box_remove (GTK_LIST_BOX (list), hook->os_row);
       g_clear_object (&hook->os_row);
     }
+  for (GtkWidget **w = (GtkWidget *[]) { hook->net_sep, hook->net_list, NULL }; *w != NULL; w++)
+    if (GTK_IS_BOX (gtk_widget_get_parent (*w)))
+      gtk_box_remove (GTK_BOX (gtk_widget_get_parent (*w)), *w);
+  g_clear_object (&hook->net_sep);
+  g_clear_object (&hook->net_list);
+  g_clear_pointer (&hook->net_rows, g_hash_table_unref);
+  g_clear_pointer (&hook->remote_uris, g_hash_table_unref);
   g_weak_ref_clear (&hook->slot);
   if (sh != NULL && sh->sidebars != NULL)
     g_hash_table_remove (sh->sidebars, hook);
@@ -717,6 +1109,8 @@ get_or_create_hook (GtkWidget *sidebar)
   hook = g_new0 (SidebarHook, 1);
   hook->sidebar = sidebar;
   g_weak_ref_init (&hook->slot, NULL);
+  hook->net_rows = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+  hook->remote_uris = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
   g_object_set_data_full (G_OBJECT (sidebar), SIDEBAR_KEY, hook, sidebar_hook_free);
   g_hash_table_add (sh->sidebars, hook);
   sh->n_hooked_total++;
@@ -740,6 +1134,17 @@ detach (SidebarHook *hook)
     g_signal_handlers_disconnect_by_func (slot, G_CALLBACK (on_slot_location), sidebar);
   if (hook->os_row != NULL)
     unwatch_selection (sidebar, gtk_widget_get_parent (hook->os_row));
+  g_autoptr (GPtrArray) rows = g_ptr_array_new ();
+  collect_rows (sidebar, rows);
+  for (guint i = 0; i < rows->len; i++)
+    {
+      GtkWidget *row = g_ptr_array_index (rows, i);
+      if (g_object_get_data (G_OBJECT (row), HIDDEN_KEY) != NULL)
+        {
+          g_object_set_data (G_OBJECT (row), HIDDEN_KEY, NULL);
+          gtk_widget_set_visible (row, TRUE);
+        }
+    }
   g_object_set_data (G_OBJECT (sidebar), SIDEBAR_KEY, NULL); /* frees @hook, removes our OS row */
 }
 
@@ -939,6 +1344,26 @@ debug_dump (void)
                      deco != NULL && gtk_widget_has_css_class (deco->bar, "sd-full"),
                      deco != NULL ? gtk_label_get_text (GTK_LABEL (deco->caption)) : "", selected);
         }
+      guint hidden = 0;
+      for (guint i = 0; i < rows->len; i++)
+        hidden += g_object_get_data (G_OBJECT (g_ptr_array_index (rows, i)), HIDDEN_KEY) != NULL;
+      g_message ("sd dump: network: sep-visible=%d list-visible=%d rows=%u hidden-nautilus-rows=%u",
+                 hook->net_sep != NULL && gtk_widget_get_visible (hook->net_sep),
+                 hook->net_list != NULL && gtk_widget_get_visible (hook->net_list),
+                 hook->net_rows != NULL ? g_hash_table_size (hook->net_rows) : 0, hidden);
+      if (hook->net_list != NULL)
+        for (GtkWidget *c = gtk_widget_get_first_child (hook->net_list); c != NULL; c = gtk_widget_get_next_sibling (c))
+          {
+            if (!GTK_IS_LIST_BOX_ROW (c))
+              continue;
+            RowDeco *deco = g_object_get_data (G_OBJECT (c), DECO_KEY);
+            g_message ("sd dump:   NET-ROW uri=%s title='%s' bar=%d caption='%s' selected=%d",
+                       (const char *) g_object_get_data (G_OBJECT (c), NET_URI_KEY),
+                       (const char *) g_object_get_data (G_OBJECT (c), "sd-net-title"),
+                       deco != NULL && gtk_widget_get_visible (deco->bar),
+                       deco != NULL ? gtk_label_get_text (GTK_LABEL (deco->caption)) : "",
+                       gtk_list_box_get_selected_row (GTK_LIST_BOX (hook->net_list)) == GTK_LIST_BOX_ROW (c));
+          }
     }
 }
 
@@ -976,6 +1401,22 @@ on_debug_signal (gpointer data)
                   g_signal_emit_by_name (list, "row-activated", row);
                   break;
                 }
+            }
+        }
+    }
+  else if (g_str_equal (cmd, "sd-click-net"))
+    {
+      GHashTableIter it;
+      gpointer key;
+      g_hash_table_iter_init (&it, sh->sidebars);
+      while (g_hash_table_iter_next (&it, &key, NULL))
+        {
+          SidebarHook *hook = key;
+          GtkListBoxRow *row = hook->net_list != NULL ? gtk_list_box_get_row_at_index (GTK_LIST_BOX (hook->net_list), 0) : NULL;
+          if (row != NULL)
+            {
+              g_message ("sd: activating first network row");
+              g_signal_emit_by_name (hook->net_list, "row-activated", row);
             }
         }
     }
