@@ -428,3 +428,47 @@ Prefix `sd_`, log domain `sidebar-drives`, branch `dev-side-bar-drives`.
 | 3 Network | Separator + network section, timeout handling, unmount. | A mounted SMB/SFTP share appears below the separator; a dead server never stalls Nautilus (16 ms probe). |
 | 4 Refresh & hardening | Focus/timer refresh, smoke-test coverage (extend `tools/smoke-nautilus.sh`), safety run. | `check-safety.sh` + smoke test PASS; no main-loop stall > 16 ms attributable to us. |
 | 5 Docs | README feature section, screenshots. | — |
+
+### 8.6 Phase 0 findings (2026-11-11, Nautilus 51.1 / GTK 4.24.1, in progress)
+
+Method: throwaway probe module loaded into an isolated Nautilus (own D-Bus session, own `XDG_CONFIG_HOME`
+with a copy of the bookmarks, so rebuilds can be triggered without touching the real ones). Not in the repo.
+
+**Structure.** `NautilusWindow > … > AdwToolbarView > NautilusSidebar (css placessidebar) > GtkScrolledWindow
+> GtkViewport > GtkBox.navigation-sidebar` containing:
+1. `GtkListBox` #1 — only the **Computer** row (`uri computer:///`, opens Nautilus 51's Computer view, which
+   already shows "Fedora Linux 45 (Workstation…)" with a usage bar = the owner's images 2–3).
+2. a hidden `GtkSeparator`.
+3. `GtkListBox` #2 — Home, Recent, Starred, Network, Trash, (hidden "New bookmark"), bookmarks, mounts.
+   It has a **sort function** (by row type/section) and a **header function**: section separators are
+   `GtkSeparator` row headers (on the first bookmark and the first mount row).
+
+**Rows** (`NautilusSidebarRow < GtkListBoxRow`): properties `label` (writable, updates the UI),
+`tooltip`, `start-icon`, `end-icon`, `ejectable`, `eject-tooltip`, `uri`, `file` (**read-only**),
+`drive`/`volume`/`mount` (Personal/User Drive: `GProxyDrive`/`GProxyVolume`/`GProxyMount`),
+`section-type` (`NautilusSidebarSectionType`: INVALID, DEFAULT_LOCATIONS, BOOKMARKS, CLOUD, MOUNTS),
+`place-type` (`NautilusSidebarRowType`: INVALID, BUILT_IN, EXTERNAL_MOUNT, INTERNAL_MOUNT, NEW_BOOKMARK,
+BOOKMARK, BOOKMARK_PLACEHOLDER), `order-index`, `sidebar`. Content: `GtkRevealer > GtkBox.horizontal >
+[GtkImage start, GtkLabel, GtkImage end (hidden), GtkButton.sidebar-button eject, AdwSpinner]`.
+`/` has **no** row (only the Computer view row). No section exists for network mounts yet (unverified until
+a network share is mounted).
+
+**Signals.** `NautilusSidebar`: `mount`, `unmount`, `drag-action-requested`, `drag-action-ask`,
+`drag-perform-drop`. Rows: none of their own.
+
+**Modifying rows.**
+- Wrapping the row's `GtkLabel` in a vertical box with a `GtkLevelBar` + caption works: the row grows, icon
+  and eject button stay aligned. ✅
+- **Every rebuild** (e.g. a bookmark change) recreates **all** rows of list #2, so decorations must be
+  re-applied after each rebuild (detect: rows without our marker). ✅ (expected, §8.1.2)
+- Activation via `row-activated` on a real row works (moved Computer row opened the Computer view). ✅
+
+**OS drive row — open problem.**
+- Moving Nautilus' Computer row into list #2: Nautilus never recreates it but **re-adds it itself** on the
+  next rebuild, and after activating the moved row a `g_object_get: assertion 'G_IS_OBJECT (object)'
+  failed` warning appears inside Nautilus. ❌ fragile.
+- Our own `NautilusSidebarRow` for `file:///`: inserts fine and gets the section separator, but `file` is
+  construct-time internal (not settable), so Nautilus' activation handler does nothing for it (and logs the
+  same warning); the list's sort function also moves it according to `place-type`. ❌ as is.
+- Not yet tried: our own row that handles click/Enter itself (non-activatable, own gesture) and forwards to
+  the real (hidden) Computer row; right-click and drag-and-drop on it untested.
