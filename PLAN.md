@@ -492,4 +492,7 @@ mounts section, recomputed by `gtk_list_box_invalidate_headers`.
 
 **Still to verify** (need real input or a real mount — Phase 2/3 acceptance, manual by the owner):
 right-click and drag-and-drop onto our row (our row's gesture claims clicks; a refusing `GtkDropTarget` on
-it), and how mounted **network shares** appear (section/place type, separator) — requires a mounted share.
+it), and how mounted **network shares** appear (section/place type, separator) — requires a mounted share;
+**deferred to Phase 3** by the owner (tested with a share the owner mounts).
+
+**Phase 0 status: done** (2026-11-11), network-share item deferred to Phase 3.
