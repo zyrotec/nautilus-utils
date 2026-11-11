@@ -486,8 +486,7 @@ mounts section, recomputed by `gtk_list_box_invalidate_headers`.
   (Emitting `row-activated` on a row that isn't selected makes Nautilus log
   `g_object_get: assertion 'G_IS_OBJECT (object)' failed` — a real click selects first, so we do too.)
 - Result: separator above our row, then Personal Drive, User Drive; survives rebuilds by re-applying. ✅
-- Selection highlight: Nautilus selects nothing in list #2 while the Computer view is open; we select our
-  row ourselves when the location is `computer:///`.
+- Selection highlight: see Phase 2 results (§8.7) — driven by the window's real location.
 - Rejected: moving Nautilus' Computer row (Nautilus re-adds it on rebuild); our row with `file` (read-only).
 
 **Still to verify** (need real input or a real mount — Phase 2/3 acceptance, manual by the owner):
@@ -511,3 +510,29 @@ cancellation) and a 300-round stress test. Safety: strict, `-fanalyzer`, scan-bu
 all PASS; coverage 95.9 % (never run: the "Computer" fallback, and a defensive timer cleanup).
 Lesson: tests that run under valgrind must not depend on tight wall-clock limits (first run timed out a real
 query under valgrind load; the real-query test now has no timeout and timing checks have wide margins).
+
+**Phase 2 — Local rows (done 2026-11-11, pending the owner's manual checks).** `sidebar_hook.c` +
+`sidebar_drives.c`, registered in `src/extension.c`. Discovery: emission hook on `GtkWidget::map` (sees the
+sidebar and every row Nautilus recreates), `apply()` coalesced in a high-priority idle and idempotent.
+Drive rows: Nautilus' label moved into a vertical box with a `GtkLevelBar` (GTK's low/high/full offsets
+removed; our `.sd-warning`/`.sd-full` classes) and a `.caption.dim-label`; size queried with
+`sd_query_usage_async`. OS row as designed in §8.6 (own click/key controllers forwarding to the hidden
+Computer row, refusing drop target). CSS via one `GtkCssProvider` per display, libadwaita variables only.
+
+Findings while building it (Nautilus 51.1):
+- Nautilus keeps **one selected row across all its lists**: selecting our row makes it unselect the Computer
+  row, so the highlight can't be mirrored from that row's selection.
+- `NautilusSidebar:location` is only set by Nautilus when it activates a row and becomes NULL after a
+  rebuild; while it is NULL Nautilus **unselects any row we select**. The window's real location is
+  `NautilusWindow:active-slot` → `NautilusWindowSlot:location` (notifies on change).
+- Design: our row is highlighted exactly while the active slot's location is `computer:///`; after a
+  rebuild we first give the sidebar its location back, then select; plus one re-check 150 ms after a
+  rebuild (Nautilus clears the selection in several steps).
+- The debug screenshot only works while a folder grid is shown (Nautilus 51's Home is not a grid).
+
+Verified in an isolated Nautilus with the debug driver (`sd-dump`, `sd-click-os`, `sd-open-home`):
+layout and separator; click → Computer view + highlight; Home → highlight cleared; highlight kept across
+rebuilds; no wrong navigation; light and dark theme with accent colour; `SD_DEBUG_BREAK=types|props` → one
+warning, stock sidebar, folder preview unaffected. Safety: all `check-safety.sh` steps PASS; unit-test
+coverage of `sidebar_hook.c` is low (5.8 %) as it only runs inside Nautilus — covered by the smoke test.
+Still manual (owner): right-click and drag-and-drop on the OS row, clicking/ejecting the drives.
