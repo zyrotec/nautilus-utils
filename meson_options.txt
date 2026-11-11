@@ -1,0 +1,6 @@
+option('extensiondir', type: 'string', value: '',
+  description: 'Where to install the module. Empty = libnautilus-extension-4 extensiondir from pkg-config.')
+option('analyzer', type: 'boolean', value: false,
+  description: 'Build with GCC -fanalyzer (used by tools/check-safety.sh)')
+option('debug_driver', type: 'boolean', value: false,
+  description: 'Test-only: SIGUSR2 command driver in the view hook (scroll/zoom/verify), used by smoke tests. Never ship.')
