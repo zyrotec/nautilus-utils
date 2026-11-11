@@ -352,8 +352,8 @@ Prefix `sd_`, log domain `sidebar-drives`, branch `dev-side-bar-drives`.
 - **OS drive**: the mount holding `/`. Its label is the OS's pretty name
   (`g_get_os_info (G_OS_INFO_KEY_PRETTY_NAME)`, e.g. "Fedora Linux 45 (Workstation Edition)"), falling back
   to "Computer" if unavailable; ellipsised at the end if too long (tooltip shows the full name). It is the
-  **first** drive row; clicking opens Nautilus' Computer view (S5). No eject button. Nautilus has no row for
-  `/`, so it is our own row and the top "Computer" row is hidden (§8.6).
+  **first** drive row; clicking opens `/` (S5). No eject button. Nautilus has no row for `/`, so it is our
+  own row (§8.6). Nautilus' own "Computer" row (Computer view) stays where it is, untouched.
 - Order: OS drive, then the other local drives in Nautilus' order (Personal Drive, User Drive).
 - **Network shares**: mounted network locations only (SMB, SFTP, NFS, WebDAV, …; i.e. mounts that are not
   native/local). They appear under a separator styled like the existing one; separator and section are
@@ -417,7 +417,7 @@ Prefix `sd_`, log domain `sidebar-drives`, branch `dev-side-bar-drives`.
 | S2 | Network rows show usage when the server reports it, else name only. |
 | S3 | Size text uses `g_format_size` (one decimal), as in image 3. |
 | S4 | The OS drive is named after the OS (`PRETTY_NAME`), not "Computer". |
-| S5 | OS drive = our own row directly above Personal Drive (top Computer row hidden); clicking opens the Computer view (§8.6). |
+| S5 | OS drive = our own row directly above Personal Drive; clicking opens `/`. Nautilus' "Computer" row is **never altered** (owner correction 2026-11-11: "Computer" in the request only referred to the OS drive's name in the screenshot). |
 
 ### 8.5 Phases
 
@@ -475,19 +475,21 @@ its own click gesture. Controllers are added by Nautilus when it creates a row, 
 on them; values < 0 are rejected). The header function puts the section separator on the first row of the
 mounts section, recomputed by `gtk_list_box_invalidate_headers`.
 
-**OS drive row — chosen design (owner, S5), verified in the probe:**
-- Hide Nautilus' Computer row and its list #1 (`gtk_widget_set_visible`), re-hidden after every rebuild.
-- Insert our own `NautilusSidebarRow` into list #2: `uri computer:///`, `section-type MOUNTS`,
+**OS drive row — chosen design (owner, S5; the first version hid the Computer row and opened the Computer
+view — that was a misreading of the request and was reverted, see §8.7):**
+- Nautilus' Computer row is left alone.
+- Insert our own `NautilusSidebarRow` into list #2: `uri file:///`, `section-type MOUNTS`,
   `place-type INTERNAL_MOUNT`, `ejectable FALSE`, **`label ""`** so the sort puts it first among the
   mounts; Nautilus' `GtkLabel` hidden and our own label shows the OS name (tooltip + accessible label too);
   `activatable FALSE` so the list never hands it to Nautilus' activation code.
-- Clicks/Enter on our row (our own gesture + key controller, claiming the event) are forwarded to the hidden
-  real Computer row: select it, then emit `row-activated` on list #1 → Nautilus opens the Computer view. ✅
-  (Emitting `row-activated` on a row that isn't selected makes Nautilus log
-  `g_object_get: assertion 'G_IS_OBJECT (object)' failed` — a real click selects first, so we do too.)
+- Clicks/Enter on our row (our own gesture + key controller, claiming the event) open `/` via Nautilus'
+  `slot.open-location` action (string URI; resolved by the window for its active slot). ✅ (Probe note:
+  emitting `row-activated` on a row that isn't selected makes Nautilus log
+  `g_object_get: assertion 'G_IS_OBJECT (object)' failed`.)
 - Result: separator above our row, then Personal Drive, User Drive; survives rebuilds by re-applying. ✅
 - Selection highlight: see Phase 2 results (§8.7) — driven by the window's real location.
-- Rejected: moving Nautilus' Computer row (Nautilus re-adds it on rebuild); our row with `file` (read-only).
+- Rejected: moving Nautilus' Computer row (Nautilus re-adds it on rebuild); our row with `file` (read-only);
+  forwarding clicks to the Computer row (opens the Computer view, not `/`).
 
 **Still to verify** (need real input or a real mount — Phase 2/3 acceptance, manual by the owner):
 right-click and drag-and-drop onto our row (our row's gesture claims clicks; a refusing `GtkDropTarget` on
@@ -516,8 +518,8 @@ query under valgrind load; the real-query test now has no timeout and timing che
 sidebar and every row Nautilus recreates), `apply()` coalesced in a high-priority idle and idempotent.
 Drive rows: Nautilus' label moved into a vertical box with a `GtkLevelBar` (GTK's low/high/full offsets
 removed; our `.sd-warning`/`.sd-full` classes) and a `.caption.dim-label`; size queried with
-`sd_query_usage_async`. OS row as designed in §8.6 (own click/key controllers forwarding to the hidden
-Computer row, refusing drop target). CSS via one `GtkCssProvider` per display, libadwaita variables only.
+`sd_query_usage_async`. OS row as designed in §8.6 (own click/key controllers opening `/` via `slot.open-location`,
+refusing drop target). CSS via one `GtkCssProvider` per display, libadwaita variables only.
 
 Findings while building it (Nautilus 51.1):
 - Nautilus keeps **one selected row across all its lists**: selecting our row makes it unselect the Computer
@@ -525,14 +527,19 @@ Findings while building it (Nautilus 51.1):
 - `NautilusSidebar:location` is only set by Nautilus when it activates a row and becomes NULL after a
   rebuild; while it is NULL Nautilus **unselects any row we select**. The window's real location is
   `NautilusWindow:active-slot` → `NautilusWindowSlot:location` (notifies on change).
-- Design: our row is highlighted exactly while the active slot's location is `computer:///`; after a
-  rebuild we first give the sidebar its location back, then select; plus one re-check 150 ms after a
-  rebuild (Nautilus clears the selection in several steps).
+- Design: our row is highlighted exactly while the active slot's location is `/`; after a rebuild we
+  first give the sidebar its location back, then select; plus one re-check 150 ms after a rebuild
+  (Nautilus clears the selection in several steps).
 - The debug screenshot only works while a folder grid is shown (Nautilus 51's Home is not a grid).
 
 Verified in an isolated Nautilus with the debug driver (`sd-dump`, `sd-click-os`, `sd-open-home`):
-layout and separator; click → Computer view + highlight; Home → highlight cleared; highlight kept across
+layout and separator; Computer row visible and untouched; click → `/` + highlight; Home → highlight cleared; highlight kept across
 rebuilds; no wrong navigation; light and dark theme with accent colour; `SD_DEBUG_BREAK=types|props` → one
 warning, stock sidebar, folder preview unaffected. Safety: all `check-safety.sh` steps PASS; unit-test
 coverage of `sidebar_hook.c` is low (5.8 %) as it only runs inside Nautilus — covered by the smoke test.
 Still manual (owner): right-click and drag-and-drop on the OS row, clicking/ejecting the drives.
+
+Owner review (2026-11-11): layout, bars and behaviour confirmed ("looks amazing"), but the Computer row must
+never be altered and the OS row must open `/` — the first version hid Computer and opened the Computer view
+(misread request). Fixed: Computer row untouched, OS row opens `/` through `slot.open-location`, highlight
+follows the window location `/`. Re-verified with the debug driver; tests and `check-safety.sh` re-run.

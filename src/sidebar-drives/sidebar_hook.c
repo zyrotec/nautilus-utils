@@ -5,9 +5,10 @@
  *    including all the rows Nautilus recreates on every sidebar rebuild, and schedules apply() for that
  *    sidebar in an idle (coalesced). apply() is idempotent.
  *  - Drive rows (rows with a GMount) get a vertical box: Nautilus' own label, a usage bar and a caption.
- *  - The OS drive row is our own NautilusSidebarRow (uri computer:///, label "" so Nautilus' sort puts it
- *    first among the mounts, our own title label). It is not activatable: our gestures/keys forward
- *    activation to Nautilus' real (hidden) Computer row, so Nautilus' activation code never sees our row.
+ *  - The OS drive row is our own NautilusSidebarRow (uri file:///, label "" so Nautilus' sort puts it first
+ *    among the mounts, our own title label). It is not activatable, so Nautilus' activation code never sees
+ *    it: our own gesture/keys open "/" through Nautilus' "slot.open-location" action. Nautilus' Computer
+ *    row is left alone (owner decision S5, PLAN.md §8.4).
  *
  * Lifetime rules (PLAN.md §4.1):
  *  - SidebarHook is qdata on its NautilusSidebar; RowDeco is qdata on its row. GLib frees them when the
@@ -32,7 +33,8 @@
 #define DECO_KEY    "sd-row-deco"
 #define OURS_KEY    "sd-our-row"
 
-#define COMPUTER_URI "computer:///"
+#define COMPUTER_URI "computer:///"   /* Nautilus' own Computer row: never touched */
+#define OS_URI       "file:///"
 
 /* If a Nautilus window is shown but no sidebar could be hooked within this time, Nautilus changed. */
 #define DETECT_TIMEOUT_MS 3000
@@ -144,22 +146,6 @@ row_mount (GtkWidget *row)
   GMount *mount = NULL;
   g_object_get (row, "mount", &mount, NULL);
   return mount;
-}
-
-/* Nautilus' real Computer row in @sidebar (not ours), or NULL. Borrowed. */
-static GtkWidget *
-find_real_computer_row (GtkWidget *sidebar)
-{
-  g_autoptr (GPtrArray) rows = g_ptr_array_new ();
-  collect_rows (sidebar, rows);
-  for (guint i = 0; i < rows->len; i++)
-    {
-      GtkWidget *row = g_ptr_array_index (rows, i);
-      g_autofree char *uri = is_ours (row) ? NULL : row_uri (row);
-      if (g_strcmp0 (uri, COMPUTER_URI) == 0)
-        return row;
-    }
-  return NULL;
 }
 
 static void
@@ -359,29 +345,23 @@ sidebar_of (GtkWidget *w)
   return sh != NULL && sh->sidebar_type != 0 ? gtk_widget_get_ancestor (w, sh->sidebar_type) : NULL;
 }
 
-/* Opens the Computer view through Nautilus' own (hidden) Computer row, like a real click would: select it
- * first (Nautilus' handler expects the activated row to be selected, PLAN.md §8.6), then activate. */
+/* Opens "/" in the current tab through Nautilus' own "slot.open-location" action (a string URI), which the
+ * window resolves for its active slot — the same navigation a sidebar click does. The highlight follows
+ * from the location change (sync_selection). */
 static void
 activate_os_row (GtkWidget *os_row)
 {
-  GtkWidget *sidebar = sidebar_of (os_row);
-  GtkWidget *real = sidebar != NULL ? find_real_computer_row (sidebar) : NULL;
-  GtkWidget *real_list = real != NULL ? gtk_widget_get_parent (real) : NULL;
-  if (!GTK_IS_LIST_BOX (real_list))
+  if (!gtk_widget_activate_action (os_row, "slot.open-location", "s", OS_URI))
     {
-      g_debug ("Computer row not found; OS row click ignored");
-      return;
+      static gboolean warned;
+      if (!warned)
+        g_warning ("cannot open %s: Nautilus' slot.open-location action is missing", OS_URI);
+      warned = TRUE;
     }
-  gtk_list_box_select_row (GTK_LIST_BOX (real_list), GTK_LIST_BOX_ROW (real));
-  g_signal_emit_by_name (real_list, "row-activated", real);
-
-  GtkWidget *our_list = gtk_widget_get_parent (os_row);
-  if (GTK_IS_LIST_BOX (our_list))
-    gtk_list_box_select_row (GTK_LIST_BOX (our_list), GTK_LIST_BOX_ROW (os_row));
 }
 
 /* Claim every press on our row so Nautilus' list/sidebar gestures (activation, context menu, long press)
- * never get it; only a primary click opens the Computer view. */
+ * never get it; only a primary click opens "/". */
 static void
 on_os_pressed (GtkGestureClick *gesture,
                int              n_press,
@@ -448,7 +428,7 @@ create_os_row (GtkWidget *sidebar)
                                  "sidebar", sidebar,
                                  "label", "",            /* sorts first among the mounts (PLAN.md §8.6) */
                                  "tooltip", sh->os_name,
-                                 "uri", COMPUTER_URI,
+                                 "uri", OS_URI,
                                  "start-icon", icon,
                                  "section-type", sh->section_mounts,
                                  "place-type", sh->place_internal,
@@ -498,9 +478,8 @@ current_location (SidebarHook *hook)
   return location != NULL ? g_file_get_uri (location) : NULL;
 }
 
-/* Our row is highlighted exactly while the window shows the Computer view (PLAN.md §8.6). Nautilus can't
- * do this itself (it only knows its hidden Computer row), and it clears the selection on every rebuild,
- * so this runs after every selection change and location change. */
+/* Our row is highlighted exactly while the window shows "/" (PLAN.md §8.7). Nautilus clears the selection
+ * on every rebuild, so this runs after every selection change and location change. */
 static void
 sync_selection (SidebarHook *hook)
 {
@@ -509,7 +488,7 @@ sync_selection (SidebarHook *hook)
     return;
   g_autofree char *uri = current_location (hook);
   gboolean ours = gtk_list_box_get_selected_row (GTK_LIST_BOX (list)) == GTK_LIST_BOX_ROW (hook->os_row);
-  if (g_strcmp0 (uri, COMPUTER_URI) == 0)
+  if (g_strcmp0 (uri, OS_URI) == 0)
     {
       if (!ours)
         {
@@ -522,8 +501,8 @@ sync_selection (SidebarHook *hook)
               g_object_get (hook->sidebar, "location", &sidebar_location, NULL);
               if (sidebar_location == NULL)
                 {
-                  g_autoptr (GFile) computer = g_file_new_for_uri (COMPUTER_URI);
-                  g_object_set (hook->sidebar, "location", computer, NULL);
+                  g_autoptr (GFile) root = g_file_new_for_uri (OS_URI);
+                  g_object_set (hook->sidebar, "location", root, NULL);
                 }
             }
           if (gtk_list_box_get_selected_row (GTK_LIST_BOX (list)) != GTK_LIST_BOX_ROW (hook->os_row))
@@ -626,8 +605,8 @@ apply (SidebarHook *hook)
   g_autoptr (GPtrArray) rows = g_ptr_array_new ();
   collect_rows (hook->sidebar, rows);
 
-  /* Hide Nautilus' Computer row (and its own list if that holds nothing else); find the list that holds
-   * the places, bookmarks and drives: that's where our OS row goes. */
+  /* Find the list that holds the places, bookmarks and drives (not the Computer row's own list): that's
+   * where our OS row goes. */
   GtkWidget *target = NULL;
   for (guint i = 0; i < rows->len; i++)
     {
@@ -645,7 +624,6 @@ apply (SidebarHook *hook)
 
   ensure_css (hook->sidebar);
 
-  GtkWidget *computer = find_real_computer_row (hook->sidebar);
   watch_selection (hook, target);
   GtkRoot *window = gtk_widget_get_root (hook->sidebar);
   if (window != NULL && g_object_get_data (G_OBJECT (window), "sd-watched") == NULL &&
@@ -655,14 +633,6 @@ apply (SidebarHook *hook)
       g_signal_connect_object (window, "notify::active-slot", G_CALLBACK (on_active_slot), hook->sidebar, 0);
     }
   watch_slot (hook);
-  if (computer != NULL)
-    {
-      watch_selection (hook, gtk_widget_get_parent (computer));
-      gtk_widget_set_visible (computer, FALSE);
-      GtkWidget *computer_list = gtk_widget_get_parent (computer);
-      if (computer_list != target && GTK_IS_LIST_BOX (computer_list))
-        gtk_widget_set_visible (computer_list, FALSE);
-    }
 
   if (hook->os_row == NULL)
     hook->os_row = create_os_row (hook->sidebar);
@@ -759,7 +729,6 @@ static void
 detach (SidebarHook *hook)
 {
   GtkWidget *sidebar = hook->sidebar;
-  GtkWidget *computer = find_real_computer_row (sidebar);
   GtkRoot *window = gtk_widget_get_root (sidebar);
   if (window != NULL)
     {
@@ -771,12 +740,6 @@ detach (SidebarHook *hook)
     g_signal_handlers_disconnect_by_func (slot, G_CALLBACK (on_slot_location), sidebar);
   if (hook->os_row != NULL)
     unwatch_selection (sidebar, gtk_widget_get_parent (hook->os_row));
-  if (computer != NULL)
-    {
-      unwatch_selection (sidebar, gtk_widget_get_parent (computer));
-      gtk_widget_set_visible (computer, TRUE);
-      gtk_widget_set_visible (gtk_widget_get_parent (computer), TRUE);
-    }
   g_object_set_data (G_OBJECT (sidebar), SIDEBAR_KEY, NULL); /* frees @hook, removes our OS row */
 }
 
@@ -916,6 +879,23 @@ on_widget_map (GSignalInvocationHint *ihint,
 
 #ifdef SD_DEBUG_DRIVER
 static guint debug_signal_id;
+
+/* Nautilus' real Computer row in @sidebar (not ours), or NULL. Borrowed. */
+static GtkWidget *
+find_real_computer_row (GtkWidget *sidebar)
+{
+  g_autoptr (GPtrArray) rows = g_ptr_array_new ();
+  collect_rows (sidebar, rows);
+  for (guint i = 0; i < rows->len; i++)
+    {
+      GtkWidget *row = g_ptr_array_index (rows, i);
+      g_autofree char *uri = is_ours (row) ? NULL : row_uri (row);
+      if (g_strcmp0 (uri, COMPUTER_URI) == 0)
+        return row;
+    }
+  return NULL;
+}
+
 
 static void
 debug_dump (void)
