@@ -564,6 +564,12 @@ detected when its size query returns, then moved). Reconciled after every rebuil
 `slot.open-location`; eject → `clicked` on the hidden Nautilus row's eject button (Nautilus' own unmount
 path). Highlight follows the window location like the OS row. The list is hidden when no share is mounted.
 
+Spacing (owner review): our separator sits between two lists, so Nautilus' list bottom padding, the box
+spacing and our list's top padding added up (12 px above and below, vs 8 px / 6 px for Nautilus' own
+separators, measured). Fixed with CSS on our widgets only: `list.sd-net-list { padding-top: 0 }` and
+`separator.sd-net-separator { margin-top: 2px }` (a CSS margin replaces the theme's, it doesn't add) →
+8 px / 6 px, identical to the native separators.
+
 Oddity: a themed `GIcon` with drive names (e.g. `drive-harddisk-symbolic`, from Nautilus' row or from
 `g_mount_get_symbolic_icon`) rendered **blank** in our row, while `folder-remote-symbolic` renders; network
 rows therefore always use `folder-remote-symbolic`. Root cause not found (only reproducible with a faked

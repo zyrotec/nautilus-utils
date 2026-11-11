@@ -57,6 +57,11 @@ static const char sd_css[] =
   "levelbar.sd-usage-bar.sd-warning block.filled { background-color: var(--warning-bg-color); }\n"
   "levelbar.sd-usage-bar.sd-full block.filled { background-color: var(--error-bg-color); }\n"
   "levelbar.sd-usage-bar block.empty { background-color: transparent; }\n"
+  /* Our network section sits between two lists instead of inside one, so the list padding and the box
+   * spacing add up; these match its gaps to Nautilus' own separators (8 px above, 6 px below, measured on
+   * Nautilus 51.1 / Adwaita, PLAN.md §8.8). */
+  "list.sd-net-list { padding-top: 0; }\n"
+  "separator.sd-net-separator { margin-top: 2px; }\n"
   "@media (prefers-contrast: more) {\n"
   "  levelbar.sd-usage-bar trough { outline: 1px solid currentColor; }\n"
   "}\n";
@@ -770,6 +775,7 @@ ensure_net_section (SidebarHook *hook,
     {
       /* Separator styled like Nautilus' own section separators (its list row headers). */
       hook->net_sep = g_object_ref_sink (gtk_separator_new (GTK_ORIENTATION_HORIZONTAL));
+      gtk_widget_add_css_class (hook->net_sep, "sd-net-separator");
       for (GtkWidget *c = gtk_widget_get_first_child (target); c != NULL; c = gtk_widget_get_next_sibling (c))
         {
           GtkWidget *header = GTK_IS_LIST_BOX_ROW (c) ? gtk_list_box_row_get_header (GTK_LIST_BOX_ROW (c)) : NULL;
@@ -790,6 +796,7 @@ ensure_net_section (SidebarHook *hook,
       g_auto (GStrv) classes = gtk_widget_get_css_classes (target);
       for (char **k = classes; k != NULL && *k != NULL; k++)
         gtk_widget_add_css_class (hook->net_list, *k);
+      gtk_widget_add_css_class (hook->net_list, "sd-net-list");
       gtk_list_box_set_selection_mode (GTK_LIST_BOX (hook->net_list), GTK_SELECTION_SINGLE);
       gtk_list_box_set_sort_func (GTK_LIST_BOX (hook->net_list), net_sort, NULL, NULL);
       gtk_accessible_update_property (GTK_ACCESSIBLE (hook->net_list), GTK_ACCESSIBLE_PROPERTY_LABEL,
