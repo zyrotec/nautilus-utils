@@ -30,6 +30,47 @@ Known limitations:
 Clear its frame cache with `rm -rf ~/.cache/nautilus-utils/folder-preview` (rebuilt on demand). Thumbnails
 themselves live in the shared `~/.cache/thumbnails`.
 
+### Sidebar drives
+
+Turns the drive rows of the sidebar into rows with a usage bar and free space, like the Computer view:
+
+```
+  ──────────────────────────────────
+  Fedora Linux 45 (Workstation Edition)
+  ███░░░░░░░░░░░░░░░░░░░░
+  445.7 GB free of 497.3 GB
+  Personal Drive                   ⏏
+  ████░░░░░░░░░░░░░░░░░░░
+  803.2 GB free of 1.0 TB
+  User Drive                       ⏏
+  ░░░░░░░░░░░░░░░░░░░░░░░
+  500.0 GB free of 500.1 GB
+  ──────────────────────────────────
+  mediadrive on media-server.local ⏏
+  ██████░░░░░░░░░░░░░░░░░
+  1.2 TB free of 3.6 TB
+```
+
+- **OS drive**: a row named after the installed OS (`PRETTY_NAME` from os-release) directly above the other
+  drives; clicking it opens `/`. Nautilus' own "Computer" row is left untouched.
+- **Local drives**: Nautilus' drive rows get a bar and "X free of Y" under their name; eject, right-click
+  menu and drag-and-drop work as before.
+- **Network shares** (mounted ones, e.g. SMB/SFTP, or NFS/CIFS mounted by the system) are listed below a
+  separator under the local drives, with a bar when the server reports its size. Click opens the share,
+  the eject button unmounts it. Their right-click menu and dropping files onto them are not available
+  (Nautilus sorts shares above the local drives and its rows can't be re-sorted, so these are our own rows).
+- Bars use the accent colour, the warning colour from 90 % full and the error colour from 95 %; light, dark
+  and high-contrast themes are followed. Free space is refreshed when a window gets focus and every 60 s.
+  A slow or unreachable server never blocks Files: its size query gives up after 3 s and keeps the last
+  values.
+
+Known limitations:
+
+- **Nautilus updates may switch the feature off.** It relies on Nautilus' private sidebar widgets (verified
+  on Nautilus 51.1). If they change, it logs one warning ("sidebar drives disabled: …") and the sidebar
+  stays as stock Nautilus.
+- Only mounted network shares are listed (mount them via *Network*).
+
 ## Requirements
 
 ```
@@ -59,7 +100,7 @@ Nautilus keeps running in the background, so a rebuild only takes effect after i
 
 ```
 nautilus -q
-G_MESSAGES_DEBUG="nautilus-utils folder-preview" nautilus    # with log messages
+G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives" nautilus    # with log messages
 ```
 
 ## Install system-wide
@@ -94,7 +135,8 @@ tools/check-safety.sh                    # strict build, gcc -fanalyzer, scan-bu
                                          # valgrind tests, coverage report. Non-zero exit = a finding.
 tools/check-safety.sh asan               # run only some steps
 tools/smoke-nautilus.sh DIR              # isolated real Nautilus with an ASan build
-tools/smoke-nautilus.sh --auto 120 DIR   # unattended: scripted scroll/zoom/hover + self-checks
+tools/smoke-nautilus.sh --auto 120 DIR   # unattended: scripted scroll/zoom/hover + sidebar steps + self-checks
+SMOKE_FAKE_NETWORK="User Drive" tools/smoke-nautilus.sh --auto 120 DIR   # also exercise the network list
 ```
 
 Logs land in `safety-logs/`.
@@ -124,6 +166,10 @@ build/tests/folder-preview/bench-core DIR  # per-stage timings of the pipeline o
 | `src/folder-preview/folder_paintable.c` | Draws the theme folder icon with a frame on its front face |
 | `src/folder-preview/view_hook.c` | **Unsupported**: hooks into Nautilus' private grid widgets |
 | `src/folder-preview/config.h` | Tunable constants |
+| `src/sidebar-drives/sidebar_drives.c` | Feature set-up / tear-down |
+| `src/sidebar-drives/drive_info.c` | OS name, local/network classification, async size queries with timeout, usage text |
+| `src/sidebar-drives/sidebar_hook.c` | **Unsupported**: hooks into Nautilus' private sidebar widgets (drive rows, OS row, network list) |
+| `src/sidebar-drives/config.h` | Tunable constants |
 | `tests/<feature>/` | GLib unit tests (`meson test`) |
 | `tools/` | Safety, smoke-test, benchmark and packaging scripts |
 | `packaging/` | Fedora RPM spec |

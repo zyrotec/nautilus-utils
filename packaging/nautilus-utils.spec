@@ -37,6 +37,9 @@ Nautilus grid view, Dolphin style (tilted photos, aspect ratio kept), and cycles
 while the pointer hovers over the folder. Thumbnails come from the shared freedesktop thumbnail cache;
 everything heavy runs in background threads.
 
+Sidebar drives: shows a usage bar and "X free of Y" on the drive rows of the sidebar, an OS drive row
+named after the installed OS (opens /), and mounted network shares below a separator.
+
 %prep
 %autosetup
 

@@ -143,7 +143,7 @@ findings and the smoke test is clean.
 | # | Feature | Dir | Status |
 |---|---|---|---|
 | 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover | `src/folder-preview/` | **v1 done** (grid view) |
-| 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **planned** (§8), awaiting approval |
+| 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
 
 Open items:
 
@@ -581,3 +581,23 @@ unmount the real disk). Verified: separator + list below the local drives, bar/c
 highlights, highlight moves to the OS row on `/`, kept across rebuilds, no warnings; light/dark.
 Still manual (owner, real share): appearance, click, eject/unmount, unmount from elsewhere removes the row,
 a slow/unreachable server never freezes Files.
+
+### 8.9 Phase 4 — Refresh & hardening, Phase 5 — Docs (2026-11-12)
+
+- Free-space refresh: on `notify::is-active` of the window (focus) and every `SD_REFRESH_S` (60 s) while the
+  sidebar is mapped; refreshes closer than 2 s are skipped; a row never has more than one query in flight.
+  Verified: a 2 GB file on `/` → OS row 445.7 → 443.5 GB free after a refresh (btrfs releases deleted space
+  with a delay; the value always matches `statvfs`).
+- Slow/dead servers: every query is async with a 3 s timeout that returns even if the backend ignores
+  cancellation (Phase 1 tests); a failed refresh keeps the last known values instead of hiding the bar.
+  Clicking a share hands navigation to Nautilus (its behaviour for unreachable servers is its own).
+- Smoke test: `tools/smoke-nautilus.sh` now also drives the sidebar under ASan (`sidebar_round`: OS row,
+  Home, network row, refresh, back to the test folder, plus random rounds), fails on `sidebar-drives`
+  warnings and if the OS row never appears; `SMOKE_FAKE_NETWORK=<label>` exercises the network list.
+  Debug commands added: `sd-refresh`, `sd-open <uri>`.
+  Result (120 s, `SMOKE_FAKE_NETWORK="User Drive"`): PASS — 45 sidebar steps, 15 sidebar self-dumps,
+  0 wrong previews, no sanitizer report mentioning our code.
+- Final `check-safety.sh`: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS; 9/9 test suites.
+  Unit-test coverage: `drive_info.c` 95.9 %, `sidebar_hook.c` 3.8 % (runs only inside Nautilus → smoke test).
+- Docs: README "Sidebar drives" section (behaviour, limitations, debug/smoke usage, layout table) and the
+  RPM description.

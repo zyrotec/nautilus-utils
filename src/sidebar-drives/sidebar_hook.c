@@ -45,6 +45,9 @@
 /* If a Nautilus window is shown but no sidebar could be hooked within this time, Nautilus changed. */
 #define DETECT_TIMEOUT_MS 3000
 
+/* Free-space refreshes (window focus, timer) closer together than this are skipped. */
+#define REFRESH_MIN_GAP_US (2 * G_USEC_PER_SEC)
+
 /* After a sidebar rebuild, re-check the OS row highlight this long after we re-inserted the row. */
 #define REBUILD_SETTLE_MS 150
 
@@ -98,6 +101,8 @@ typedef struct
   GtkWidget  *net_list;     /* Owned (sunk) ref: our GtkListBox of network shares, or NULL. */
   GHashTable *net_rows;     /* Root URI (owned) -> our network row (borrowed: owned by @net_list). */
   GHashTable *remote_uris;  /* Set of root URIs (owned) of native mounts that reported filesystem::remote. */
+  guint       refresh_id;   /* SD_REFRESH_S timer, or 0. */
+  gint64      last_refresh_us;
 } SidebarHook;
 
 typedef struct
@@ -335,7 +340,9 @@ on_usage (GObject      *source,
       g_autofree char *uri = g_file_get_uri (G_FILE (source));
       g_debug ("size of %s unavailable: %s", uri, error->message);
     }
-  show_usage (row, deco, usage);
+  /* A failed refresh (slow or dead server: G_IO_ERROR_TIMED_OUT) keeps the last known values (§8.1.2). */
+  if (usage != NULL || !gtk_widget_get_visible (deco->bar))
+    show_usage (row, deco, usage);
   if (usage != NULL)
     note_remote (row, G_FILE (source), usage->remote);
   query_ctx_free (ctx);
@@ -355,6 +362,35 @@ start_query (GtkWidget *row,
   g_weak_ref_init (&ctx->row, row);
   ctx->query = g_object_ref (deco->query);
   sd_query_usage_async (root, SD_NET_TIMEOUT_MS, deco->query, on_usage, ctx);
+}
+
+static GtkWidget *sidebar_of (GtkWidget *w);
+static gboolean is_ours (GtkWidget *row);
+
+/* Root location shown by a decorated row (our OS row, our network row or a Nautilus drive row), or NULL.
+ * Caller owns the result (g_object_unref). */
+static GFile *
+deco_row_root (GtkWidget *row)
+{
+  const char *net_uri = g_object_get_data (G_OBJECT (row), NET_URI_KEY);
+  if (net_uri != NULL)
+    return g_file_new_for_uri (net_uri);
+  if (is_ours (row))
+    return g_file_new_for_uri (OS_URI);
+  g_autoptr (GMount) mount = row_mount (row);
+  return mount != NULL ? g_mount_get_root (mount) : NULL;
+}
+
+/* Re-queries a decorated row's size unless a query is still running (never more than one per row). */
+static void
+refresh_row (GtkWidget *row)
+{
+  RowDeco *deco = g_object_get_data (G_OBJECT (row), DECO_KEY);
+  if (deco == NULL || deco->query != NULL || !gtk_widget_get_visible (row))
+    return;
+  g_autoptr (GFile) root = deco_row_root (row);
+  if (root != NULL)
+    start_query (row, deco, root);
 }
 
 /* ------------------------------------------------------------------------------------------------ */
@@ -618,6 +654,47 @@ unwatch_selection (GtkWidget *sidebar,
     return;
   g_signal_handlers_disconnect_by_func (list, G_CALLBACK (on_selection_changed), sidebar);
   g_object_set_data (G_OBJECT (list), "sd-watched", NULL);
+}
+
+/* ------------------------------------------------------------------------------------------------ */
+/* Free-space refresh (PLAN.md §8.1.2): on window focus and every SD_REFRESH_S while the sidebar is shown */
+
+static void
+refresh_usage (SidebarHook *hook)
+{
+  if (!gtk_widget_get_mapped (hook->sidebar))
+    return;
+  gint64 now = g_get_monotonic_time ();
+  if (hook->last_refresh_us != 0 && now - hook->last_refresh_us < REFRESH_MIN_GAP_US)
+    return;
+  hook->last_refresh_us = now;
+  g_autoptr (GPtrArray) rows = g_ptr_array_new ();
+  collect_rows (hook->sidebar, rows);
+  for (guint i = 0; i < rows->len; i++)
+    refresh_row (g_ptr_array_index (rows, i));
+  if (hook->net_list != NULL)
+    for (GtkWidget *c = gtk_widget_get_first_child (hook->net_list); c != NULL; c = gtk_widget_get_next_sibling (c))
+      if (GTK_IS_LIST_BOX_ROW (c))
+        refresh_row (c);
+}
+
+static gboolean
+on_refresh_tick (gpointer data)
+{
+  refresh_usage (data); /* Borrowed: sidebar_hook_free removes this timer. */
+  return G_SOURCE_CONTINUE;
+}
+
+/* "notify::is-active" on the window; @sidebar is the connect_object target. */
+static void
+on_window_active (GObject    *window,
+                  GParamSpec *pspec,
+                  gpointer    sidebar)
+{
+  (void) pspec;
+  SidebarHook *hook = g_object_get_data (G_OBJECT (sidebar), SIDEBAR_KEY);
+  if (hook != NULL && gtk_window_is_active (GTK_WINDOW (window)))
+    refresh_usage (hook);
 }
 
 /* ------------------------------------------------------------------------------------------------ */
@@ -1009,6 +1086,7 @@ apply (SidebarHook *hook)
     {
       g_object_set_data (G_OBJECT (window), "sd-watched", GINT_TO_POINTER (1));
       g_signal_connect_object (window, "notify::active-slot", G_CALLBACK (on_active_slot), hook->sidebar, 0);
+      g_signal_connect_object (window, "notify::is-active", G_CALLBACK (on_window_active), hook->sidebar, 0);
     }
   watch_slot (hook);
 
@@ -1087,6 +1165,7 @@ sidebar_hook_free (gpointer data)
   SidebarHook *hook = data;
   g_clear_handle_id (&hook->apply_id, g_source_remove);
   g_clear_handle_id (&hook->sync_id, g_source_remove);
+  g_clear_handle_id (&hook->refresh_id, g_source_remove);
   if (hook->os_row != NULL)
     {
       GtkWidget *list = gtk_widget_get_parent (hook->os_row);
@@ -1118,6 +1197,7 @@ get_or_create_hook (GtkWidget *sidebar)
   g_weak_ref_init (&hook->slot, NULL);
   hook->net_rows = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
   hook->remote_uris = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+  hook->refresh_id = g_timeout_add_seconds (SD_REFRESH_S, on_refresh_tick, hook);
   g_object_set_data_full (G_OBJECT (sidebar), SIDEBAR_KEY, hook, sidebar_hook_free);
   g_hash_table_add (sh->sidebars, hook);
   sh->n_hooked_total++;
@@ -1134,6 +1214,7 @@ detach (SidebarHook *hook)
   if (window != NULL)
     {
       g_signal_handlers_disconnect_by_func (window, G_CALLBACK (on_active_slot), sidebar);
+      g_signal_handlers_disconnect_by_func (window, G_CALLBACK (on_window_active), sidebar);
       g_object_set_data (G_OBJECT (window), "sd-watched", NULL);
     }
   g_autoptr (GObject) slot = g_weak_ref_get (&hook->slot);
@@ -1409,6 +1490,35 @@ on_debug_signal (gpointer data)
                   break;
                 }
             }
+        }
+    }
+  else if (g_str_has_prefix (cmd, "sd-open "))
+    {
+      GHashTableIter it;
+      gpointer key;
+      g_hash_table_iter_init (&it, sh->sidebars);
+      while (g_hash_table_iter_next (&it, &key, NULL))
+        {
+          SidebarHook *hook = key;
+          if (gtk_widget_get_mapped (hook->sidebar))
+            {
+              g_message ("sd: opening %s", cmd + 8);
+              gtk_widget_activate_action (hook->sidebar, "slot.open-location", "s", cmd + 8);
+              break;
+            }
+        }
+    }
+  else if (g_str_equal (cmd, "sd-refresh"))
+    {
+      GHashTableIter it;
+      gpointer key;
+      g_hash_table_iter_init (&it, sh->sidebars);
+      while (g_hash_table_iter_next (&it, &key, NULL))
+        {
+          SidebarHook *hook = key;
+          hook->last_refresh_us = 0;
+          g_message ("sd: refreshing free space");
+          refresh_usage (hook);
         }
     }
   else if (g_str_equal (cmd, "sd-click-net"))
