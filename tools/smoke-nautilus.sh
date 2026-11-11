@@ -57,7 +57,7 @@ echo "Starting an isolated Nautilus on $DIR (logs: $LOG)"
     ASAN_OPTIONS="log_path='$LOG/asan':detect_leaks=1:verify_asan_link_order=0" \
     UBSAN_OPTIONS="log_path='$LOG/ubsan':print_stacktrace=1" \
     LSAN_OPTIONS="suppressions='$ROOT/tools/lsan.supp':print_suppressions=0" \
-    G_MESSAGES_DEBUG=nautilus-utils,folder-preview \
+    G_MESSAGES_DEBUG="nautilus-utils folder-preview" \
     FP_DEBUG_DIR="$CMD_DIR" FP_DEBUG_ROOT="$DIR" ${SMOKE_XDG_CACHE:+XDG_CACHE_HOME=$SMOKE_XDG_CACHE} \
     nautilus --new-window "$DIR" >"$LOG/nautilus.log" 2>&1 &
 )

@@ -58,7 +58,7 @@ Per-feature conventions:
 | Sources | `src/<feature>/`, own `meson.build` appending to `feature_libs` / `feature_deps` |
 | Entry points | `<prefix>_feature_initialize (GTypeModule *)`, `_shutdown (void)`, `_list_types (int *)`, registered in `features[]` in `src/extension.c` |
 | Symbols | Static libraries with `gnu_symbol_visibility: 'hidden'`; the module exports only the 3 Nautilus entry points |
-| Log domain | `G_LOG_DOMAIN="<feature>"` (module glue uses `nautilus-utils`); debug with `G_MESSAGES_DEBUG=nautilus-utils,<feature>` |
+| Log domain | `G_LOG_DOMAIN="<feature>"` (module glue uses `nautilus-utils`); debug with `G_MESSAGES_DEBUG="nautilus-utils <feature>"` (space-separated) |
 | Cache | `$XDG_CACHE_HOME/nautilus-utils/<feature>/` |
 | Tests | `tests/<feature>/`, own `meson.build`, GLib `g_test` (TAP) |
 | Prefix | Short, unique C prefix per feature (`fp_` = folder preview) |

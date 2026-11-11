@@ -59,7 +59,7 @@ Nautilus keeps running in the background, so a rebuild only takes effect after i
 
 ```
 nautilus -q
-G_MESSAGES_DEBUG=nautilus-utils,folder-preview nautilus    # with log messages
+G_MESSAGES_DEBUG="nautilus-utils folder-preview" nautilus    # with log messages
 ```
 
 ## Install system-wide
