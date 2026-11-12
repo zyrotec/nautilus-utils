@@ -17,8 +17,13 @@
 # SMOKE_TOGGLES=N (--auto only, default 25): switch each feature off and on N times through the settings
 #   (PLAN.md §9) and check that nothing of ours is left while off and everything comes back when on.
 #
+# Folder views (PLAN.md §10, --auto): a test tree under the log dir (on the drive of this repo) gets per-folder
+# views set like a user would, revisited, opened in a background tab, toggled off/on and reset; every tab dump
+# must show its folder's view, and named checks (fv-expect) must match.
+#
 # Settings: the test Nautilus uses an in-memory GSettings backend and the build's schema, so the smoke test
-# never changes your real settings.
+# never changes your real settings. It also gets its own XDG_DATA_HOME (exported before dbus-run-session, so
+# gvfsd-metadata uses it too): the folder views it saves never reach your real gvfs metadata.
 #
 # Isolation: the test Nautilus runs in its own D-Bus session (dbus-run-session), so your own Nautilus
 # windows are NOT closed and the scripted driver only acts on DIR (FP_DEBUG_ROOT). A test window does
@@ -57,15 +62,20 @@ ASAN_RT="$(ldd build/libnautilus-utils.so | awk '/libasan\.so/ {print $3}')"
 
 before_pids="$(pgrep -x nautilus | sort)"
 echo "Starting an isolated Nautilus on $DIR (logs: $LOG)"
+FV_TREE="$LOG/fvtree"
+for f in A B C D; do mkdir -p "$FV_TREE/$f/sub"; for i in 1 2 3 4 5 6; do : > "$FV_TREE/$f/$f-$i.txt"; done; done
 (
   cd "$LOG" || exit 1
+  # Own gvfs metadata + data dir for the whole private session (daemons included).
+  export XDG_DATA_HOME="$LOG/xdg-data"
+  mkdir -p "$XDG_DATA_HOME"
   # LD_PRELOAD only for nautilus itself, not for the private dbus-daemon / portals.
   setsid dbus-run-session -- env \
     LD_PRELOAD="$ASAN_RT" \
     ASAN_OPTIONS="log_path='$LOG/asan':detect_leaks=1:verify_asan_link_order=0" \
     UBSAN_OPTIONS="log_path='$LOG/ubsan':print_stacktrace=1" \
     LSAN_OPTIONS="suppressions='$ROOT/tools/lsan.supp':print_suppressions=0" \
-    G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings" \
+    G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings folder-views" \
     GSETTINGS_BACKEND=memory GSETTINGS_SCHEMA_DIR="$ROOT/build/data" \
     SD_DEBUG_FAKE_NETWORK="${SMOKE_FAKE_NETWORK:-}" \
     FP_DEBUG_DIR="$CMD_DIR" FP_DEBUG_ROOT="$DIR" ${SMOKE_XDG_CACHE:+XDG_CACHE_HOME=$SMOKE_XDG_CACHE} \
@@ -98,6 +108,29 @@ toggle_round() {
   cmd "st-set folder-preview-enabled false" 0.6; cmd fp-state 0.3
   cmd "st-set sidebar-drives-enabled true" 0.8; cmd sd-dump 0.3
   cmd "st-set folder-preview-enabled true" 1.2; cmd fp-state 0.3; cmd verify 0.3
+  cmd "st-set folder-views-enabled false" 0.6; cmd fv-dump 0.3
+  cmd "st-set folder-views-enabled true" 1; cmd fv-dump 0.3
+}
+
+# Folder views (PLAN.md §10): user changes saved per folder, revisits, a background tab, off/on, Reset All.
+# fv-expect <view> <zoom> checks the selected tab (view 1 = list, 2 = grid; zoom = Nautilus' level).
+fv_open() { cmd "fv-open $FV_TREE/$1" "${2:-1.5}"; }
+fv_round() {
+  fv_open A; cmd fv-dump 0.3
+  cmd "fv-view 1" 1; cmd "fv-zoom in" 0.8; cmd "fv-expect 1 2" 0.3     # A: list, large
+  fv_open B; cmd "fv-expect 2 2" 0.3                                  # B: never changed → default (grid medium)
+  cmd "fv-zoom out" 0.8; cmd "fv-expect 2 1" 0.3                      # B: grid small-plus
+  fv_open C; cmd "fv-expect 2 2" 0.3
+  fv_open A; cmd "fv-expect 1 2" 0.3                                  # revisit (cache)
+  cmd fv-new-tab 1.5; cmd "fv-tab-open 0 $FV_TREE/B" 1.5; cmd fv-dump 0.3   # background tab
+  cmd "st-set folder-views-enabled false" 0.8; cmd fv-dump 0.3
+  fv_open D; cmd "fv-view 1" 1                                        # while off: not saved
+  cmd "st-set folder-views-enabled true" 1.2; cmd fv-dump 0.3
+  fv_open D; cmd "fv-expect 2 2" 0.3
+  fv_open A; cmd "fv-expect 1 2" 0.3
+  cmd fv-reset 1.2; cmd fv-dump 0.3; cmd "fv-expect 2 2" 0.3          # Reset All: default at once
+  fv_open B; cmd "fv-expect 2 2" 0.3                                  # old value ignored
+  cmd "sd-open $DIR_URI" 2
 }
 
 # Bar colours and show/hide (PLAN.md §9.5 Phase 5): every combination once, dumped for the visibility check.
@@ -124,6 +157,7 @@ if [ -n "$AUTO" ]; then
   style_round
   eject_round
   cmd st-dump 0.3; cmd st-open 1; cmd st-close 0.5
+  fv_round
   for _ in $(seq 1 "${SMOKE_TOGGLES:-25}"); do toggle_round; done
   sidebar_round
   cmd verify 1
@@ -133,12 +167,13 @@ if [ -n "$AUTO" ]; then
     cmd "action $a" 1.5; cmd "scroll 0.$((RANDOM % 10))" 1.5; cmd verify 0.3
   done
   while [ "$(date +%s)" -lt "$end" ]; do
-    case $((RANDOM % 7)) in
+    case $((RANDOM % 8)) in
       0|1|2) cmd "scroll 0.$((RANDOM % 100))" 0.3 ;;
       3)     cmd hover 1.6; cmd leave 0.3 ;;
       4)     cmd "action view.zoom-$([ $((RANDOM % 2)) = 0 ] && echo in || echo out)" 1 ;;
       5)     cmd verify 0.3 ;;
       6)     sidebar_round ;;
+      7)     cmd "fv-view $((1 + RANDOM % 2))" 1.2; cmd fv-dump 0.3 ;;
     esac
   done
   cmd "action view.zoom-standard" 1.5; cmd verify 0.5
@@ -162,8 +197,23 @@ reports=("$LOG"/asan.* "$LOG"/ubsan.*)
 # ASan prints our frames as "../src/<feature>/<file>.c:<line>" (with debug info) or "(…/libnautilus-utils.so+0x…)".
 our_files="$(cd "$ROOT/src" && find . -name '*.c' | sed 's,^[.]/,,; s/[.]c$//' | paste -sd'|')"
 ours_pattern="libnautilus-utils[.]so|src/(${our_files})[.]c:"
+# A leak whose allocation was made by another extension's Python runtime (pygi/libpython) is that extension's,
+# even when our code is further down the stack (e.g. our GSettings write ran its "changed" handler,
+# PLAN.md §10.8 Phase 2). Decided by the first frame below the allocator and GLib/GObject/GIO.
+third_party_alloc='_gi[.]cpython|libpython|pygi_'
 for r in "${reports[@]}"; do
-  hits="$(awk -v RS= -v pat="$ours_pattern" '$0 ~ pat {print; print ""}' "$r")"
+  hits="$(awk -v RS= -v pat="$ours_pattern" -v tp="$third_party_alloc" '
+    $0 !~ pat { next }
+    /leak of/ {
+      n = split($0, lines, "\n")
+      for (i = 1; i <= n; i++) {
+        if (lines[i] !~ /^ *#[0-9]+ /) continue
+        if (lines[i] ~ /libasan|libglib-2[.]0|libgobject-2[.]0|libgio-2[.]0/) continue
+        if (lines[i] ~ tp) next
+        break
+      }
+    }
+    { print; print "" }' "$r")"
   if [ -n "$hits" ]; then
     echo "FINDING in $r:"
     echo "$hits" | sed 's/^/    | /'
@@ -171,7 +221,7 @@ for r in "${reports[@]}"; do
   fi
 done
 
-ours_warnings="$(grep -E '(nautilus-utils|folder-preview|sidebar-drives|settings)-(WARNING|CRITICAL)' "$LOG/nautilus.log" || true)"
+ours_warnings="$(grep -E '(nautilus-utils|folder-preview|sidebar-drives|settings|folder-views)-(WARNING|CRITICAL)' "$LOG/nautilus.log" || true)"
 if [ -n "$ours_warnings" ]; then
   echo "FINDING: warnings/criticals from our log domain:"
   echo "$ours_warnings" | sed 's/^/    | /'
@@ -212,6 +262,16 @@ bad_menu="$(grep -E 'sd os-menu: shown=0|sd os-menu: .*(Unmount|Format|Eject)|OS
 n_fp_on="$(grep -cE 'fp state: off=0 hooks=[1-9]' "$LOG/nautilus.log" || true)"
 n_fp_off="$(grep -c 'fp state: off=1' "$LOG/nautilus.log" || true)"
 
+# Folder views: every tab dump shows its folder's view; named checks match; nothing attached while off.
+fv_bad="$(grep -E 'fv dump: tab=.* ok=0|fv expect: ok=0|fv: .*FAILED' "$LOG/nautilus.log" || true)"
+[ -z "$fv_bad" ] || { echo "FINDING: folder views:"; echo "$fv_bad" | head -8 | sed 's/^/    | /'; fail=1; }
+fv_off_bad="$(grep 'fv dump: off' "$LOG/nautilus.log" | grep -v 'leftover=0 keys-at-default=1' || true)"
+[ -z "$fv_off_bad" ] || { echo "FINDING: folder views left traces while switched off:"; echo "$fv_off_bad" | head -5 | sed 's/^/    | /'; fail=1; }
+n_fv_checked="$(grep -c 'fv dump: tab=.* checked=1 ok=1' "$LOG/nautilus.log" || true)"
+n_fv_expect="$(grep -c 'fv expect: ok=1' "$LOG/nautilus.log" || true)"
+n_fv_off="$(grep -c 'fv dump: off' "$LOG/nautilus.log" || true)"
+if [ -n "$AUTO" ] && [ "$n_fv_checked" -eq 0 ]; then echo "FINDING: folder views never checked a tab"; fail=1; fi
+
 loaded="$(grep -c 'folder-preview loaded' "$LOG/nautilus.log" || true)"
 sidebar_ok="$(grep -c 'sd dump: .*OS-ROW' "$LOG/nautilus.log" || true)"
 [ "$sidebar_ok" -gt 0 ] || { echo "FINDING: the sidebar-drives hook never showed its OS row"; fail=1; }
@@ -224,6 +284,7 @@ echo "  sliding eject (shown):  $n_eject"
 echo "  style dumps:            $n_style"
 echo "  OS drive menus:         $n_menu"
 echo "  settings toggles:       sidebar off-dumps $n_off, preview off-states $n_fp_off, preview re-hooked $n_fp_on"
+echo "  folder views:           tab checks $n_fv_checked, named checks $n_fv_expect, off-dumps $n_fv_off, wrong: $([ -z "$fv_bad" ] && echo 0 || echo SOME)"
 echo "  sanitizer report files: ${#reports[@]} (only blocks mentioning our code count)"
 echo "  result:                 $([ $fail -eq 0 ] && [ "$loaded" -gt 0 ] && echo PASS || echo FAIL)"
 [ "$loaded" -gt 0 ] || fail=1

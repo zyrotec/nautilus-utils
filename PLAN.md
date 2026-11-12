@@ -145,7 +145,7 @@ findings and the smoke test is clean.
 | 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover | `src/folder-preview/` | **v1 done** (grid view) |
 | 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
-| 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **Phase 3 done** (2026-11-12), branch `dev-path-view-size` |
+| 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **v1 done** (2026-11-12), pending the owner's final check |
 
 Open items:
 
@@ -1207,3 +1207,28 @@ until Apply); confirmation shown; Cancel → generation unchanged; Reset → gen
 moves the three tabs to the bottom bar.
 Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS (coverage of the Nautilus-side
 files is from the isolated-Nautilus checks above, not the unit tests).
+
+**Phase 4 — Hardening & docs (done 2026-11-12).** Smoke test (`tools/smoke-nautilus.sh`): the test Nautilus
+gets its own `XDG_DATA_HOME` (exported before `dbus-run-session`, so `gvfsd-metadata` uses it too) and the
+`folder-views` log domain; a **folder-views round** on a test tree under the log dir (NTFS, path with a space):
+user list + zoom, default for an unchanged folder, zoom saved, revisit, new tab + background tab, off (change
+while off not saved) / on, Reset All, old value ignored; folder views on/off added to every toggle round;
+random browsing also switches view types. New checks: every `fv dump: tab=` line `ok=1`, every
+`fv expect: ok=1` (new debug command: what the selected tab must show), no `FAILED`, off-dumps with 0
+tabs still hooked and Files' keys at our default, at least one checked tab. The sanitizer matcher now skips a
+**leak allocated by another extension's Python runtime** (first frame below the allocator and
+GLib/GObject/GIO in pygi/libpython) even when our frames are further down (the Phase 2 pygi case). Verified
+on sample reports: that block skipped, our own leaks (also one allocated inside a GTK call made by us) still
+reported. Docs: README (Folder views section, Settings tab, smoke isolation, layout table), RPM description
+(and libadwaita ≥ 1.6 from Phase 3).
+Final smoke (`smoke-20261112-231322`, ASan, fake network share, 150 s random browsing + every settings
+round): **PASS**. Folder views: 57 tab checks and 9 named checks, 0 wrong, 26 off-dumps without leftovers;
+the other features unchanged (38 verifies, 0 wrong previews; 26 sidebar off-dumps; 25 preview off-states
+and re-hooks; 64 style dumps; sliding eject; OS menu). No warnings, no sanitizer report mentioning our code.
+The owner's real gvfs metadata was not touched (unchanged since before the tests).
+Final `check-safety.sh`: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS; coverage `fv_state.c` 100 %,
+`nu_settings.c` 99.3 %.
+
+Still manual (owner): real mouse and keyboard (Ctrl+1/2, Ctrl +/−, Ctrl + scroll, the view menu) in a few
+of your own folders; restart Files and check they come back; a real SMB/SFTP share (untested, §10.7);
+the Folder Views tab and the Reset confirmation with a real mouse.

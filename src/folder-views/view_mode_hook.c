@@ -17,6 +17,7 @@
 
 #ifdef FV_DEBUG_DRIVER
 #include <glib-unix.h>
+#include <stdio.h>
 #include <signal.h>
 #endif
 
@@ -708,7 +709,8 @@ attach_existing (void)
  *   fv-dump                     per tab: folder, what it shows, what it should show (feature off: tabs
  *                               still hooked, must be 0, and whether Files' keys are at our default)
  *   fv-keys                     Files' global keys and our default
- *   fv-reset                    Reset All, exactly as the settings dialog's button                        */
+ *   fv-reset                    Reset All, exactly as the settings dialog's button
+ *   fv-expect <view> <zoom>     check what the selected tab shows (view 1 = list, 2 = grid)               */
 
 #ifdef FV_DEBUG_DRIVER
 static guint debug_signal_id;
@@ -857,6 +859,22 @@ on_debug_signal (gpointer data)
     }
   else if (g_str_equal (cmd, "fv-dump"))
     debug_dump (); /* fv != NULL here */
+  else if (g_str_has_prefix (cmd, "fv-expect "))
+    {
+      GtkWidget *slot = debug_slot (-1);
+      int want_view = 0, want_zoom = -1;
+      if (sscanf (cmd + 10, "%d %d", &want_view, &want_zoom) != 2)
+        g_message ("fv expect: bad arguments: %s", cmd + 10);
+      else
+        {
+          NuViewType view = 0;
+          int zoom = -1;
+          gboolean shown = slot != NULL && shown_view (slot, &view, &zoom);
+          SlotHook *hook = slot != NULL ? g_object_get_data (G_OBJECT (slot), SLOT_KEY) : NULL;
+          g_message ("fv expect: ok=%d want=%d/%d shown=%d/%d uri=%s", shown && (int) view == want_view && zoom == want_zoom,
+                     want_view, want_zoom, view, zoom, hook != NULL ? hook->uri : "-");
+        }
+    }
   else if (g_str_equal (cmd, "fv-keys"))
     {
       const NuFolderView *d = &nu_settings_get ()->folder_views_default;

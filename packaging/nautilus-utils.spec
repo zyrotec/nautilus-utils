@@ -16,7 +16,7 @@ BuildRequires:  pkgconfig(glib-2.0) >= 2.80
 BuildRequires:  pkgconfig(gio-2.0)
 BuildRequires:  pkgconfig(gmodule-2.0)
 BuildRequires:  pkgconfig(gtk4) >= 4.12
-BuildRequires:  pkgconfig(libadwaita-1) >= 1.5
+BuildRequires:  pkgconfig(libadwaita-1) >= 1.6
 BuildRequires:  pkgconfig(gnome-desktop-4)
 BuildRequires:  pkgconfig(gdk-pixbuf-2.0)
 BuildRequires:  pkgconfig(cairo) >= 1.14
@@ -41,8 +41,11 @@ everything heavy runs in background threads.
 Sidebar drives: shows a usage bar and "X free of Y" on the drive rows of the sidebar, an OS drive row
 named after the installed OS (opens /), and mounted network shares below a separator.
 
+Folder views: every folder remembers its own view type (grid or list) and icon size, like Windows File
+Explorer; folders that were never changed use the default.
+
 Settings: a "Nautilus Utils Settings" entry in the Files main menu opens a dialog to switch each feature
-on or off and adjust the drive rows.
+on or off, adjust the drive rows and reset all folder views.
 
 %prep
 %autosetup
