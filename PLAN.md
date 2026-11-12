@@ -144,7 +144,7 @@ findings and the smoke test is clean.
 |---|---|---|---|
 | 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover | `src/folder-preview/` | **v1 done** (grid view) |
 | 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
-| 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **in progress** (§9, approved 2026-11-12) |
+| 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
 
 Open items:
 
@@ -682,8 +682,9 @@ All act on `/`. Network share rows keep no menu (S6 unchanged). Implementation: 
   caption take the **full width of the row**, exactly like the OS row.
 - When the pointer is over the row **or the row has keyboard focus**, the button slides in from the right
   edge, over the content (no reflow). Under it, the row content fades out through a **gradient mask** whose
-  width equals the button plus its padding: transparent at the right edge, full opacity at the mask's left
-  edge. Pointer leaves / focus lost → slides out, mask goes away. Animation ~200 ms, ease-out; disabled when
+  width equals the button plus its padding (as planned), widened by the owner by 32 px
+  (`SD_EJECT_FADE_EXTRA_PX`): full opacity at the mask's left edge, transparent from its middle to the
+  right edge (§9.7 Phase 6). Pointer leaves / focus lost → slides out, mask goes away. Animation ~200 ms, ease-out; disabled when
   GTK's "enable-animations" is off (instant show/hide).
 - The mask fades the content itself (not a painted colour), so it works on every row background (normal,
   hover, selected, light, dark).
@@ -937,3 +938,24 @@ first frame; the stops are unchanged (transparent from the middle of the now 50 
 checked; strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind PASS.
 Owner change (2026-11-12, second): another 16 px → `SD_EJECT_FADE_EXTRA_PX` 32 (mask 66 px with a 34 px
 button, transparent from 33 px in).
+
+**Phase 7 — Hardening & docs (done 2026-11-12).** Final smoke (`smoke-20261112-202452`, ASan, fake network share, 150 s
+random browsing + every settings round: 25 on/off toggle rounds, colour modes × show/hide, sliding eject
+incl. feature off/on while sliding, OS drive menu): PASS — 26 sidebar off-dumps with 0 leftovers, 25 preview
+off-states with 0 previews shown and 25 re-hooks, 64 style dumps with visibility always matching the
+settings, 38 verifies with 0 wrong previews, no warnings, no sanitizer report mentioning our code. Final
+`check-safety.sh` (home schema hidden): strict, `-fanalyzer`, scan-build, ASan+UBSan (12/12 suites),
+valgrind all PASS. Coverage: `nu_settings.c` 99.2 %, `bar_style.c` 100 %, `fade_bin.c` 84.4 %; the
+Nautilus-internals files (`menu_hook.c`, `sidebar_hook.c`, `settings_dialog.c`) run only inside Nautilus →
+smoke test + isolated-Nautilus checks.
+Packaging (emulated, `rpm-build` not installed): release build with Fedora's `%{optflags}` and
+`-Dwerror=false` warning-free; staged `DESTDIR` install contains exactly the two `%files` entries (module +
+schema; `glib-compile-schemas` post-install correctly skipped under `DESTDIR`, Fedora's file trigger compiles
+it); schema valid (`glib-compile-schemas --strict`); `%check` set (`--no-suite thumbnailers --no-suite
+latency`) 9/9 with no home schema; module still exports only the 3 Nautilus entry points.
+Docs: README (Settings section, dev schema install/uninstall, sidebar section, smoke options, layout table),
+RPM description.
+
+Still manual (owner): real right-click / Menu key on the OS row and the menu's position; hover/focus feel of
+the sliding eject and a real eject from a slid-in button (on a removable drive or share); custom/gradient bars
+in the light and high-contrast themes; the settings dialog with a real mouse and keyboard.
