@@ -13,4 +13,9 @@ void sd_sidebar_hook_init (void);
 /* Main thread. Removes our rows/decorations' live state and frees everything; safe without init. */
 void sd_sidebar_hook_shutdown (void);
 
+/* Switches the feature on or off at runtime (settings, PLAN.md §9.2.4). Off: our rows, network list and
+ * decorations are removed and Nautilus' rows restored; On: open sidebars are decorated again. No-op if the
+ * hook disabled itself (graceful failure) or isn't initialised. */
+void sd_sidebar_hook_set_enabled (gboolean enabled);
+
 G_END_DECLS

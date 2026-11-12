@@ -77,6 +77,7 @@ typedef struct
   GType           row_type;          /* NautilusSidebarRow. */
   gboolean        validated;
   gboolean        disabled;
+  gboolean        off;               /* Switched off in the settings (PLAN.md §9): stock sidebar, map ignored. */
   int             section_mounts;    /* NAUTILUS_SIDEBAR_SECTION_MOUNTS */
   int             place_internal;    /* NAUTILUS_SIDEBAR_ROW_INTERNAL_MOUNT */
   GHashTable     *sidebars;          /* Set of SidebarHook* (borrowed: owned by the sidebars' qdata). */
@@ -266,6 +267,38 @@ decorate (GtkWidget  *row,
 
   g_object_set_data_full (G_OBJECT (row), DECO_KEY, deco, row_deco_free);
   return deco;
+}
+
+/* Undoes decorate() on one of Nautilus' rows: its label goes back into the row box where it was, our box
+ * (bar + caption) is removed and the decoration freed (cancelling its size query). */
+static void
+undecorate (GtkWidget *row)
+{
+  RowDeco *deco = g_object_get_data (G_OBJECT (row), DECO_KEY);
+  if (deco == NULL)
+    return;
+  GtkWidget *info = gtk_widget_get_parent (deco->bar);
+  GtkWidget *box = info != NULL ? gtk_widget_get_parent (info) : NULL;
+  if (GTK_IS_BOX (info) && GTK_IS_BOX (box))
+    {
+      GtkWidget *label = NULL;
+      for (GtkWidget *c = gtk_widget_get_first_child (info); c != NULL; c = gtk_widget_get_next_sibling (c))
+        if (GTK_IS_LABEL (c) && c != deco->caption)
+          {
+            label = c;
+            break;
+          }
+      if (label != NULL)
+        {
+          g_object_ref (label);
+          gtk_box_remove (GTK_BOX (info), label);
+          gtk_box_insert_child_after (GTK_BOX (box), label, info);
+          g_object_unref (label);
+        }
+      gtk_box_remove (GTK_BOX (box), info); /* destroys the bar and caption */
+    }
+  gtk_accessible_reset_property (GTK_ACCESSIBLE (row), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION);
+  g_object_set_data (G_OBJECT (row), DECO_KEY, NULL); /* runs row_deco_free */
 }
 
 static void
@@ -1147,7 +1180,7 @@ apply_idle (gpointer data)
 {
   SidebarHook *hook = data; /* Borrowed: sidebar_hook_free removes this idle. */
   hook->apply_id = 0;
-  if (sh != NULL && !sh->disabled)
+  if (sh != NULL && !sh->disabled && !sh->off)
     apply (hook);
   return G_SOURCE_REMOVE;
 }
@@ -1232,6 +1265,8 @@ detach (SidebarHook *hook)
           g_object_set_data (G_OBJECT (row), HIDDEN_KEY, NULL);
           gtk_widget_set_visible (row, TRUE);
         }
+      if (!is_ours (row))
+        undecorate (row);
     }
   g_object_set_data (G_OBJECT (sidebar), SIDEBAR_KEY, NULL); /* frees @hook, removes our OS row */
 }
@@ -1332,6 +1367,8 @@ on_widget_map (GSignalInvocationHint *ihint,
         sh->map_hook_id = 0; /* returning FALSE removes the hook */
       return FALSE;
     }
+  if (sh->off)
+    return TRUE; /* keep the hook: switching back on must not need a restart */
   GObject *obj = g_value_get_object (&params[0]); /* borrowed */
 
   if (sh->detect_timer == 0 && sh->n_hooked_total == 0 && GTK_IS_WINDOW (obj) &&
@@ -1390,9 +1427,34 @@ find_real_computer_row (GtkWidget *sidebar)
 }
 
 
+/* Our traces anywhere below @w: rows of ours, our info boxes, our network list/separator, hidden rows. */
+static guint
+count_leftovers (GtkWidget *w)
+{
+  guint n = (GTK_IS_LIST_BOX_ROW (w) && is_ours (w)) || gtk_widget_has_css_class (w, "sd-drive-info") ||
+            gtk_widget_has_css_class (w, "sd-net-list") || gtk_widget_has_css_class (w, "sd-net-separator") ||
+            g_object_get_data (G_OBJECT (w), HIDDEN_KEY) != NULL || g_object_get_data (G_OBJECT (w), DECO_KEY) != NULL;
+  for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL; c = gtk_widget_get_next_sibling (c))
+    n += count_leftovers (c);
+  return n;
+}
+
 static void
 debug_dump (void)
 {
+  if (sh->off)
+    {
+      guint leftovers = 0;
+      GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+      for (guint i = 0; i < g_list_model_get_n_items (toplevels); i++)
+        {
+          g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
+          leftovers += count_leftovers (window);
+        }
+      g_message ("sd dump: OFF sidebars=%u leftovers=%u", g_hash_table_size (sh->sidebars), leftovers);
+      return;
+    }
+
   GHashTableIter it;
   gpointer key;
   g_hash_table_iter_init (&it, sh->sidebars);
@@ -1576,6 +1638,56 @@ sd_sidebar_hook_init (void)
 #ifdef SD_DEBUG_DRIVER
   debug_signal_id = g_unix_signal_add (SIGUSR2, on_debug_signal, NULL);
 #endif
+}
+
+/* Hooks every mapped NautilusSidebar below @w (feature switched on while windows are open). */
+static void
+hook_mapped_sidebars (GtkWidget *w)
+{
+  if (!gtk_widget_get_mapped (w))
+    return;
+  if (G_TYPE_CHECK_INSTANCE_TYPE (w, sh->sidebar_type))
+    {
+      schedule_apply (get_or_create_hook (w));
+      return;
+    }
+  for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL; c = gtk_widget_get_next_sibling (c))
+    hook_mapped_sidebars (c);
+}
+
+void
+sd_sidebar_hook_set_enabled (gboolean enabled)
+{
+  if (sh == NULL || sh->disabled || sh->off == !enabled)
+    return;
+  sh->off = !enabled;
+  if (sh->off)
+    {
+      g_clear_handle_id (&sh->detect_timer, g_source_remove);
+      detach_all (); /* our rows removed, Nautilus' rows restored */
+      g_debug ("sidebar drives switched off");
+      return;
+    }
+  g_debug ("sidebar drives switched on");
+  if (sh->sidebar_type == 0 || sh->row_type == 0)
+    {
+      sh->sidebar_type = g_type_from_name (internal_name ("NautilusSidebar", "types"));
+      sh->row_type = g_type_from_name ("NautilusSidebarRow");
+      if (sh->sidebar_type == 0 || sh->row_type == 0)
+        return; /* no sidebar exists yet: the map hook will find it */
+    }
+  if (!sh->validated)
+    {
+      if (!validate ())
+        return;
+      sh->validated = TRUE;
+    }
+  GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+  for (guint i = 0; i < g_list_model_get_n_items (toplevels); i++)
+    {
+      g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
+      hook_mapped_sidebars (window);
+    }
 }
 
 void

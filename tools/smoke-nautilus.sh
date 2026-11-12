@@ -14,6 +14,11 @@
 # SMOKE_XDG_CACHE=DIR: give the test Nautilus its own cache dir (thumbnails + frames), e.g. the benchmark's.
 # SMOKE_FAKE_NETWORK=LABEL: show that local drive as a network share in the sidebar (exercises the network
 #   list; the smoke test never ejects anything).
+# SMOKE_TOGGLES=N (--auto only, default 25): switch each feature off and on N times through the settings
+#   (PLAN.md §9) and check that nothing of ours is left while off and everything comes back when on.
+#
+# Settings: the test Nautilus uses an in-memory GSettings backend and the build's schema, so the smoke test
+# never changes your real settings.
 #
 # Isolation: the test Nautilus runs in its own D-Bus session (dbus-run-session), so your own Nautilus
 # windows are NOT closed and the scripted driver only acts on DIR (FP_DEBUG_ROOT). A test window does
@@ -60,7 +65,8 @@ echo "Starting an isolated Nautilus on $DIR (logs: $LOG)"
     ASAN_OPTIONS="log_path='$LOG/asan':detect_leaks=1:verify_asan_link_order=0" \
     UBSAN_OPTIONS="log_path='$LOG/ubsan':print_stacktrace=1" \
     LSAN_OPTIONS="suppressions='$ROOT/tools/lsan.supp':print_suppressions=0" \
-    G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives" \
+    G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings" \
+    GSETTINGS_BACKEND=memory GSETTINGS_SCHEMA_DIR="$ROOT/build/data" \
     SD_DEBUG_FAKE_NETWORK="${SMOKE_FAKE_NETWORK:-}" \
     FP_DEBUG_DIR="$CMD_DIR" FP_DEBUG_ROOT="$DIR" ${SMOKE_XDG_CACHE:+XDG_CACHE_HOME=$SMOKE_XDG_CACHE} \
     nautilus --new-window "$DIR" >"$LOG/nautilus.log" 2>&1 &
@@ -85,8 +91,18 @@ sidebar_round() {
   cmd sd-refresh 1; cmd sd-dump 0.3; cmd "sd-open $DIR_URI" 2
 }
 
+# Settings (PLAN.md §9.5 Phase 3): live on/off of both features; the dialog opens and closes.
+toggle_round() {
+  cmd "st-set sidebar-drives-enabled false" 0.6; cmd sd-dump 0.3
+  cmd "st-set folder-preview-enabled false" 0.6; cmd fp-state 0.3
+  cmd "st-set sidebar-drives-enabled true" 0.8; cmd sd-dump 0.3
+  cmd "st-set folder-preview-enabled true" 1.2; cmd fp-state 0.3; cmd verify 0.3
+}
+
 if [ -n "$AUTO" ]; then
   end=$(( $(date +%s) + AUTO ))
+  cmd st-dump 0.3; cmd st-open 1; cmd st-close 0.5
+  for _ in $(seq 1 "${SMOKE_TOGGLES:-25}"); do toggle_round; done
   sidebar_round
   cmd verify 1
   for f in 0.5 1.0 0.25 0.75 0.0; do cmd "scroll $f" 2; cmd verify 0.3; done
@@ -133,7 +149,7 @@ for r in "${reports[@]}"; do
   fi
 done
 
-ours_warnings="$(grep -E '(nautilus-utils|folder-preview|sidebar-drives)-(WARNING|CRITICAL)' "$LOG/nautilus.log" || true)"
+ours_warnings="$(grep -E '(nautilus-utils|folder-preview|sidebar-drives|settings)-(WARNING|CRITICAL)' "$LOG/nautilus.log" || true)"
 if [ -n "$ours_warnings" ]; then
   echo "FINDING: warnings/criticals from our log domain:"
   echo "$ours_warnings" | sed 's/^/    | /'
@@ -148,6 +164,14 @@ if [ -n "$wrong" ]; then
   fail=1
 fi
 
+left="$(grep -E 'sd dump: OFF .*leftovers=[1-9]' "$LOG/nautilus.log" || true)"
+[ -z "$left" ] || { echo "FINDING: sidebar-drives left traces while switched off:"; echo "$left" | sed 's/^/    | /'; fail=1; }
+stale="$(grep -E 'fp state: off=1 .*installed=[1-9]' "$LOG/nautilus.log" || true)"
+[ -z "$stale" ] || { echo "FINDING: folder previews still shown while switched off:"; echo "$stale" | sed 's/^/    | /'; fail=1; }
+n_off="$(grep -c 'sd dump: OFF' "$LOG/nautilus.log" || true)"
+n_fp_on="$(grep -cE 'fp state: off=0 hooks=[1-9]' "$LOG/nautilus.log" || true)"
+n_fp_off="$(grep -c 'fp state: off=1' "$LOG/nautilus.log" || true)"
+
 loaded="$(grep -c 'folder-preview loaded' "$LOG/nautilus.log" || true)"
 sidebar_ok="$(grep -c 'sd dump: .*OS-ROW' "$LOG/nautilus.log" || true)"
 [ "$sidebar_ok" -gt 0 ] || { echo "FINDING: the sidebar-drives hook never showed its OS row"; fail=1; }
@@ -156,6 +180,7 @@ echo "Smoke summary:"
 echo "  module loaded:          $([ "$loaded" -gt 0 ] && echo yes || echo NO)"
 echo "  self-checks (verify):   $n_verify, wrong previews: $([ -z "$wrong" ] && echo 0 || echo SOME)"
 echo "  sidebar self-dumps:     $sidebar_ok"
+echo "  settings toggles:       sidebar off-dumps $n_off, preview off-states $n_fp_off, preview re-hooked $n_fp_on"
 echo "  sanitizer report files: ${#reports[@]} (only blocks mentioning our code count)"
 echo "  result:                 $([ $fail -eq 0 ] && [ "$loaded" -gt 0 ] && echo PASS || echo FAIL)"
 [ "$loaded" -gt 0 ] || fail=1

@@ -23,7 +23,7 @@ sd_feature_lib = static_library('sd-feature',
   'sidebar_hook.c',
   c_args: sd_feature_c_args,
   dependencies: sd_core_deps + [gtk_dep],
-  include_directories: sd_inc,
+  include_directories: [sd_inc, nu_common_inc], # nu_settings.h (PLAN.md §9)
   pic: true,
   gnu_symbol_visibility: 'hidden',
 )

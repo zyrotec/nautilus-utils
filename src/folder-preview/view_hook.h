@@ -19,6 +19,14 @@ void fp_view_hook_init (FpCache *cache);
  * not initialised. */
 void fp_view_hook_shutdown (void);
 
+/* Switches the feature on or off at runtime (settings, PLAN.md §9.2.4). Off: every icon is given back to
+ * Nautilus and new icons are left alone. On: icons already on screen are hooked again. No-op if the hook
+ * disabled itself (graceful failure) or isn't initialised. */
+void fp_view_hook_set_enabled (gboolean enabled);
+
+/* TRUE while previews are being drawn (initialised, not disabled, not switched off). */
+gboolean fp_view_hook_get_enabled (void);
+
 /* Nautilus reported that the folder @uri changed: forget its cached frames and refresh visible icons. */
 void fp_view_hook_folder_changed (const char *uri);
 

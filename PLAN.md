@@ -850,3 +850,25 @@ the folder-preview tests now get `GSETTINGS_SCHEMA_DIR` = the build's compiled s
 with the home schema hidden (`XDG_DATA_HOME=/nonexistent`).
 Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS (10/10 suites). Unit coverage of
 the dialog/menu is low (dialog 0 %, menu 13 %: they need a Nautilus window) → smoke test (Phase 7).
+
+**Phase 3 — Feature toggles (done 2026-11-12).** Both features follow their on/off switch live (one
+notification per Apply):
+- Folder preview: `fp_view_hook_set_enabled`. Off → every icon given back to Nautilus (`detach_all`),
+  map events and folder-change notifications ignored (the map emission hook stays, so switching back on
+  needs no restart). On → the mapped widget trees of all toplevels are walked and visible icons hooked
+  again (they are not mapped a second time).
+- Sidebar drives: `sd_sidebar_hook_set_enabled`. Off → `detach_all`, which now also **undecorates**
+  Nautilus' drive rows (label moved back to its place, our bar/caption box removed, size query cancelled,
+  accessible description reset) on top of removing our OS row/network list and unhiding hidden rows — the
+  graceful-failure path benefits too. On → types resolved/validated if needed, mapped sidebars re-hooked.
+- Initial state comes from the settings in each feature's initialize (settings feature runs first).
+Debug driver (debug builds only): `st-set <key> <GVariant>` (as Apply would), `st-open`, `st-close`,
+`st-dump`; `fp-state` (hooks + icons still showing our paintable); `sd-dump` while off reports our
+leftovers anywhere in the windows. The smoke test now runs Nautilus with an **in-memory GSettings backend**
+and the build's schema (never touches the owner's settings) and toggles both features `SMOKE_TOGGLES`
+(25) times, failing on any leftover while off or preview shown while off.
+Smoke (`smoke-20261112-184138`, ASan, ~/Pictures, 60 s + 25 toggle rounds): PASS — 25/25 sidebar off-dumps with
+0 leftovers and OS row + bars back after every switch-on; 25/25 preview off-states with 0 icons showing
+previews and icons re-hooked after every switch-on; 38 verifies, 0 wrong previews; no warnings; no sanitizer
+report mentioning our code. Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS
+(home schema hidden).
