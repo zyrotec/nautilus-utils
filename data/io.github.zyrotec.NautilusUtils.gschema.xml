@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- nautilus-utils settings (PLAN.md §9.3). Defaults = the behaviour before settings existed. -->
+<schemalist>
+  <enum id="io.github.zyrotec.NautilusUtils.BarColourMode">
+    <value nick="accent" value="0"/>
+    <value nick="custom" value="1"/>
+    <value nick="gradient" value="2"/>
+  </enum>
+
+  <schema id="io.github.zyrotec.NautilusUtils" path="/io/github/zyrotec/NautilusUtils/">
+    <key name="folder-preview-enabled" type="b">
+      <default>true</default>
+      <summary>Show previews on folder icons</summary>
+    </key>
+
+    <key name="sidebar-drives-enabled" type="b">
+      <default>true</default>
+      <summary>Enhanced drive rows in the sidebar</summary>
+    </key>
+
+    <key name="bar-colour-mode" enum="io.github.zyrotec.NautilusUtils.BarColourMode">
+      <default>'accent'</default>
+      <summary>Usage bar colour</summary>
+      <description>accent = the GNOME accent colour; custom = bar-colour; gradient = bar-gradient-start to bar-gradient-end across the filled part.</description>
+    </key>
+
+    <key name="bar-colour" type="s">
+      <default>'#3584e4'</default>
+      <summary>Custom usage bar colour (#rrggbb)</summary>
+    </key>
+
+    <key name="bar-gradient-start" type="s">
+      <default>'#3584e4'</default>
+      <summary>Gradient start colour (#rrggbb)</summary>
+    </key>
+
+    <key name="bar-gradient-end" type="s">
+      <default>'#9141ac'</default>
+      <summary>Gradient end colour (#rrggbb)</summary>
+    </key>
+
+    <key name="show-usage-bars" type="b">
+      <default>true</default>
+      <summary>Show usage bars on drive rows</summary>
+    </key>
+
+    <key name="show-size-labels" type="b">
+      <default>true</default>
+      <summary>Show the "free of" size labels on drive rows</summary>
+    </key>
+
+    <key name="eject-slide" type="b">
+      <default>false</default>
+      <summary>Slide the eject button in on hover or focus</summary>
+    </key>
+  </schema>
+</schemalist>

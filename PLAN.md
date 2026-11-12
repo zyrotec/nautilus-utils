@@ -812,3 +812,19 @@ rows (move the label back, remove the info box, restore the eject button), and b
 that re-scans already-mapped widgets (the map emission hook only sees widgets mapped later). Phase 3.
 
 **Phase 0 status: done** (2026-11-12). Design change → N6.
+
+### 9.7 Phase results
+
+**Phase 1 — Settings core (done 2026-11-12).** `data/io.github.zyrotec.NautilusUtils.gschema.xml` (keys
+§9.3, enum `BarColourMode`), compiled into the build dir for tests and installed to
+`$datadir/glib-2.0/schemas` with `glib-compile-schemas` as post-install. `src/common/nu_settings.c` (first
+shared code, §3; GLib/GIO only): typed `NuConfig` snapshot, `#rrggbb` parse/format (an invalid stored colour
+falls back to the default), schema looked up before `g_settings_new_full` (missing schema → defaults + one
+warning), `nu_settings_new_delayed()` for the dialog (delay-apply), and listeners notified **once per batch**
+from an idle with the changed groups (`NuChanged`), safe against listeners removing listeners or shutting
+the service down mid-dispatch. Not wired into the module yet (Phase 2).
+Tests: `tests/common/test-settings.c`, 12 tests (C defaults = schema defaults, stored values, invalid
+colours, delayed apply → one notification, revert, every key group, missing schema, use without init,
+re-entrancy, 300-cycle init/apply/shutdown stress). Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan,
+valgrind all PASS (10/10 suites under ASan); coverage of `nu_settings.c` 99.2 % (never run: the guard for a
+schema key missing from the key→group table).

@@ -50,6 +50,8 @@ ext_deps = [glib_dep, gobject_dep, gio_dep, nautilus_dep]
 feature_libs = []
 feature_deps = []
 
+subdir('data')
+subdir('src/common')
 subdir('src/folder-preview')
 subdir('src/sidebar-drives')
 
@@ -65,6 +67,7 @@ nu_module = shared_module('nautilus-utils',
   install_dir: extensiondir,
 )
 
+subdir('tests/common')
 subdir('tests/folder-preview')
 subdir('tests/sidebar-drives')
 
