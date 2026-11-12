@@ -86,8 +86,10 @@ The settings are stored with GSettings (schema `io.github.zyrotec.NautilusUtils`
 `gsettings list-recursively io.github.zyrotec.NautilusUtils`). If the schema isn't installed, the features
 run with their defaults, the dialog says so, and Files logs one warning.
 
-*Work in progress (PLAN.md §9): the dialog and the stored settings work; the features start following
-them in the next phases.*
+Custom colours and the gradient replace the warning/error colours of nearly full drives; with the accent
+colour a drive turns the warning colour from 90 % and the error colour from 95 % full.
+
+*Work in progress (PLAN.md §9): everything above works live except the sliding eject button.*
 
 ## Requirements
 

@@ -7,9 +7,11 @@ sd_inc = include_directories('.')
 # Nautilus-free core (Phase 1): OS name, classification, async size queries, usage text. Testable standalone.
 sd_core_lib = static_library('sd-core',
   'drive_info.c',
+  'bar_style.c',
   c_args: sd_c_args,
   dependencies: sd_core_deps,
-  include_directories: sd_inc,
+  include_directories: [sd_inc, nu_common_inc],
+  link_with: nu_common_lib,
   pic: true,
   gnu_symbol_visibility: 'hidden',
 )

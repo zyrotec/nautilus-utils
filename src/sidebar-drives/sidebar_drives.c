@@ -14,6 +14,8 @@ on_settings_changed (NuChanged changed,
   (void) data;
   if (changed & NU_CHANGED_SIDEBAR_DRIVES)
     sd_sidebar_hook_set_enabled (nu_settings_get ()->sidebar_drives_enabled);
+  if (changed & (NU_CHANGED_BAR_COLOUR | NU_CHANGED_ROW_CONTENT))
+    sd_sidebar_hook_style_changed ();
 }
 
 void

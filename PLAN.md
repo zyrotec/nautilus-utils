@@ -887,3 +887,19 @@ Verified in an isolated Nautilus (debug commands `sd-os-menu`, `sd-os-menu-dump`
 again after switching back on. Smoke (`smoke-20261112-185718`, ASan, 5 toggle rounds + 60 s): PASS, menu checked for
 Properties and for the absence of Unmount/Format/Eject. Safety: strict, `-fanalyzer`, scan-build,
 ASan+UBSan, valgrind all PASS. Still manual (owner): a real right-click, Menu key, and the popover's position.
+
+**Phase 5 — Bar options (done 2026-11-12).** `src/sidebar-drives/bar_style.c` (GLib only, in the core
+library): `sd_bar_colour_css` turns the colour settings into one CSS rule for every filled block incl. the
+warning/full states — accent: empty (built-in accent/warning/error rules apply), custom: the colour,
+gradient: `linear-gradient(to right, start, end)` on the filled block, which is exactly as wide as the used
+part (N2). Loaded into a second `GtkCssProvider` at APPLICATION + 1 and reloaded on every colour change.
+Rows remember whether a size is known; bar and caption visibility = known ∧ show-usage-bars /
+show-size-labels, re-synced on every row (Nautilus drive rows, OS row, network rows) when those settings
+change; both off → one-line rows. Tests: `tests/sidebar-drives/test-bar-style.c` (4 tests, incl. GTK parses
+every generated rule without errors); `bar_style.c` 100 % covered.
+Verified in an isolated Nautilus with rendered PNGs (debug commands `sd-png <path>`, `sd-resize W H`):
+accent, custom red, green→red gradient across the filled part, labels hidden, both hidden (one line), bars
+hidden, back to accent — all live, no warnings. Smoke (`smoke-20261112-191813`, ASan): PASS with a style round (colour
+modes × all four show/hide combinations) and a check that visibility always matches the settings
+(19 style dumps). Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+Still manual (owner): light theme and high-contrast look of custom/gradient bars.

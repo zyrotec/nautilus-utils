@@ -100,8 +100,19 @@ toggle_round() {
   cmd "st-set folder-preview-enabled true" 1.2; cmd fp-state 0.3; cmd verify 0.3
 }
 
+# Bar colours and show/hide (PLAN.md §9.5 Phase 5): every combination once, dumped for the visibility check.
+style_round() {
+  cmd "st-set bar-colour '#e01b24'" 0.3; cmd "st-set bar-colour-mode 'custom'" 0.5; cmd sd-dump 0.3
+  cmd "st-set bar-colour-mode 'gradient'" 0.5; cmd sd-dump 0.3
+  for b in false true; do for l in false true; do
+    cmd "st-set show-usage-bars $b" 0.4; cmd "st-set show-size-labels $l" 0.5; cmd sd-dump 0.3
+  done; done
+  cmd "st-set bar-colour-mode 'accent'" 0.5; cmd sd-dump 0.3
+}
+
 if [ -n "$AUTO" ]; then
   end=$(( $(date +%s) + AUTO ))
+  style_round
   cmd st-dump 0.3; cmd st-open 1; cmd st-close 0.5
   for _ in $(seq 1 "${SMOKE_TOGGLES:-25}"); do toggle_round; done
   sidebar_round
@@ -170,6 +181,12 @@ left="$(grep -E 'sd dump: OFF .*leftovers=[1-9]' "$LOG/nautilus.log" || true)"
 stale="$(grep -E 'fp state: off=1 .*installed=[1-9]' "$LOG/nautilus.log" || true)"
 [ -z "$stale" ] || { echo "FINDING: folder previews still shown while switched off:"; echo "$stale" | sed 's/^/    | /'; fail=1; }
 n_off="$(grep -c 'sd dump: OFF' "$LOG/nautilus.log" || true)"
+# Bars/captions of rows with a known size must be visible exactly when the settings say so.
+vis_bad="$(awk '/sd dump: style bars=/ { match($0, /bars=[01]/); bars = substr($0, RSTART + 5, 1); match($0, /labels=[01]/); labels = substr($0, RSTART + 7, 1); next }
+  /sd dump: +(OS-ROW|drive) / && /caption=.[0-9]/ { match($0, / bar=[01]/); b = substr($0, RSTART + 5, 1); match($0, /cap-visible=[01]/); c = substr($0, RSTART + 12, 1);
+    if (bars != "" && (b != bars || c != labels)) print }' "$LOG/nautilus.log")"
+[ -z "$vis_bad" ] || { echo "FINDING: bar/label visibility doesn't follow the settings:"; echo "$vis_bad" | head -5 | sed 's/^/    | /'; fail=1; }
+n_style="$(grep -c 'sd dump: style' "$LOG/nautilus.log" || true)"
 # OS drive menu (PLAN.md §9.1.3): Nautilus' own menu, with Properties and without Unmount/Format.
 n_menu="$(grep -c 'sd os-menu: shown=1 .*Properties' "$LOG/nautilus.log" || true)"
 bad_menu="$(grep -E 'sd os-menu: shown=0|sd os-menu: .*(Unmount|Format|Eject)|OS menu UNAVAILABLE' "$LOG/nautilus.log" || true)"
@@ -186,6 +203,7 @@ echo "Smoke summary:"
 echo "  module loaded:          $([ "$loaded" -gt 0 ] && echo yes || echo NO)"
 echo "  self-checks (verify):   $n_verify, wrong previews: $([ -z "$wrong" ] && echo 0 || echo SOME)"
 echo "  sidebar self-dumps:     $sidebar_ok"
+echo "  style dumps:            $n_style"
 echo "  OS drive menus:         $n_menu"
 echo "  settings toggles:       sidebar off-dumps $n_off, preview off-states $n_fp_off, preview re-hooked $n_fp_on"
 echo "  sanitizer report files: ${#reports[@]} (only blocks mentioning our code count)"

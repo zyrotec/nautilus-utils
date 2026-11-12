@@ -30,6 +30,9 @@
 #include <signal.h>
 #endif
 
+#include <stdio.h>
+
+#include "bar_style.h"
 #include "config.h"
 #include "drive_info.h"
 
@@ -82,6 +85,7 @@ typedef struct
   int             place_internal;    /* NAUTILUS_SIDEBAR_ROW_INTERNAL_MOUNT */
   GHashTable     *sidebars;          /* Set of SidebarHook* (borrowed: owned by the sidebars' qdata). */
   GtkCssProvider *css;               /* Owned. */
+  GtkCssProvider *colour_css;        /* Owned: bar colours from the settings (PLAN.md §9.1.5), above @css. */
   GPtrArray      *css_displays;      /* Borrowed GdkDisplay* the provider was added to (displays outlive us). */
   char           *os_name;           /* Owned. */
   guint           detect_timer;      /* DETECT_TIMEOUT_MS watchdog. */
@@ -111,6 +115,7 @@ typedef struct
   GtkWidget    *bar;      /* Borrowed: child of the row, lives as long as the row (our owner). */
   GtkWidget    *caption;  /* Borrowed: same. */
   GCancellable *query;    /* Owned: the size query this row waits for, or NULL. */
+  gboolean      known;    /* A size was shown (bar/caption have content); visibility also follows settings. */
 } RowDeco;
 
 static void disable (const char *reason);
@@ -178,11 +183,17 @@ ensure_css (GtkWidget *widget)
     {
       sh->css = gtk_css_provider_new ();
       gtk_css_provider_load_from_string (sh->css, sd_css);
+      sh->colour_css = gtk_css_provider_new ();
+      g_autofree char *colours = sd_bar_colour_css (nu_settings_get ());
+      gtk_css_provider_load_from_string (sh->colour_css, colours);
     }
   if (!g_ptr_array_find (sh->css_displays, display, NULL))
     {
       gtk_style_context_add_provider_for_display (display, GTK_STYLE_PROVIDER (sh->css),
                                                   GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+      /* One step higher so a chosen colour beats the built-in accent/warning rules. */
+      gtk_style_context_add_provider_for_display (display, GTK_STYLE_PROVIDER (sh->colour_css),
+                                                  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
       g_ptr_array_add (sh->css_displays, display);
     }
 }
@@ -301,6 +312,15 @@ undecorate (GtkWidget *row)
   g_object_set_data (G_OBJECT (row), DECO_KEY, NULL); /* runs row_deco_free */
 }
 
+/* Bar and caption are shown when a size is known and the settings ask for them (PLAN.md §9.1.2). */
+static void
+sync_visibility (RowDeco *deco)
+{
+  const NuConfig *config = nu_settings_get ();
+  gtk_widget_set_visible (deco->bar, deco->known && config->show_usage_bars);
+  gtk_widget_set_visible (deco->caption, deco->known && config->show_size_labels);
+}
+
 static void
 show_usage (GtkWidget     *row,
             RowDeco       *deco,
@@ -309,8 +329,8 @@ show_usage (GtkWidget     *row,
   if (usage == NULL || !usage->known)
     {
       /* Network server without size info (S2), or the query failed: name only. */
-      gtk_widget_set_visible (deco->bar, FALSE);
-      gtk_widget_set_visible (deco->caption, FALSE);
+      deco->known = FALSE;
+      sync_visibility (deco);
       gtk_accessible_reset_property (GTK_ACCESSIBLE (row), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION);
       return;
     }
@@ -328,8 +348,8 @@ show_usage (GtkWidget     *row,
   else
     gtk_widget_remove_css_class (deco->bar, "sd-full");
   gtk_label_set_text (GTK_LABEL (deco->caption), text);
-  gtk_widget_set_visible (deco->bar, TRUE);
-  gtk_widget_set_visible (deco->caption, TRUE);
+  deco->known = TRUE;
+  sync_visibility (deco);
   gtk_accessible_update_property (GTK_ACCESSIBLE (row), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, text, -1);
 }
 
@@ -1548,14 +1568,15 @@ debug_dump (void)
           GtkWidget *list = gtk_widget_get_parent (row);
           gboolean selected = GTK_IS_LIST_BOX (list) &&
                               gtk_list_box_get_selected_row (GTK_LIST_BOX (list)) == GTK_LIST_BOX_ROW (row);
-          g_message ("sd dump:   %s index=%d header=%d label='%s' bar=%d value=%.3f warn=%d full=%d caption='%s' selected=%d",
+          g_message ("sd dump:   %s index=%d header=%d label='%s' bar=%d value=%.3f warn=%d full=%d caption='%s' cap-visible=%d selected=%d",
                      is_ours (row) ? "OS-ROW" : "drive ", gtk_list_box_row_get_index (GTK_LIST_BOX_ROW (row)),
                      gtk_list_box_row_get_header (GTK_LIST_BOX_ROW (row)) != NULL, label,
                      deco != NULL && gtk_widget_get_visible (deco->bar),
                      deco != NULL ? gtk_level_bar_get_value (GTK_LEVEL_BAR (deco->bar)) : -1.0,
                      deco != NULL && gtk_widget_has_css_class (deco->bar, "sd-warning"),
                      deco != NULL && gtk_widget_has_css_class (deco->bar, "sd-full"),
-                     deco != NULL ? gtk_label_get_text (GTK_LABEL (deco->caption)) : "", selected);
+                     deco != NULL ? gtk_label_get_text (GTK_LABEL (deco->caption)) : "",
+                     deco != NULL && gtk_widget_get_visible (deco->caption), selected);
         }
       guint hidden = 0;
       for (guint i = 0; i < rows->len; i++)
@@ -1580,6 +1601,30 @@ debug_dump (void)
     }
 }
 
+/* Renders the first Nautilus window to a PNG (owner review of the sidebar look; debug builds only). */
+static void
+debug_png (const char *path)
+{
+  GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+  for (guint i = 0; i < g_list_model_get_n_items (toplevels); i++)
+    {
+      g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
+      if (!g_str_equal (G_OBJECT_TYPE_NAME (window), "NautilusWindow") || !gtk_widget_get_mapped (window))
+        continue;
+      int w = gtk_widget_get_width (window), h = gtk_widget_get_height (window);
+      g_autoptr (GdkPaintable) paintable = gtk_widget_paintable_new (window);
+      g_autoptr (GtkSnapshot) snapshot = gtk_snapshot_new ();
+      gdk_paintable_snapshot (paintable, snapshot, w, h);
+      g_autoptr (GskRenderNode) node = gtk_snapshot_free_to_node (g_steal_pointer (&snapshot));
+      if (node == NULL)
+        return;
+      GskRenderer *renderer = gtk_native_get_renderer (GTK_NATIVE (window)); /* borrowed */
+      g_autoptr (GdkTexture) texture = gsk_renderer_render_texture (renderer, node, &GRAPHENE_RECT_INIT (0, 0, w, h));
+      g_message ("sd png: %s %s", path, gdk_texture_save_to_png (texture, path) ? "saved" : "FAILED");
+      return;
+    }
+}
+
 static gboolean
 on_debug_signal (gpointer data)
 {
@@ -1591,7 +1636,28 @@ on_debug_signal (gpointer data)
     return G_SOURCE_CONTINUE;
   g_strstrip (cmd);
   if (g_str_equal (cmd, "sd-dump"))
-    debug_dump ();
+    {
+      g_autofree char *colours = sd_bar_colour_css (nu_settings_get ());
+      g_message ("sd dump: style bars=%d labels=%d colour-css='%s'", nu_settings_get ()->show_usage_bars,
+                 nu_settings_get ()->show_size_labels, g_strchomp (colours));
+      debug_dump ();
+    }
+  else if (g_str_has_prefix (cmd, "sd-png "))
+    debug_png (cmd + 7);
+  else if (g_str_has_prefix (cmd, "sd-resize "))
+    {
+      int w = 0, h = 0;
+      if (sscanf (cmd + 10, "%d %d", &w, &h) == 2)
+        {
+          GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+          for (guint i = 0; i < g_list_model_get_n_items (toplevels); i++)
+            {
+              g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
+              if (g_str_equal (G_OBJECT_TYPE_NAME (window), "NautilusWindow"))
+                gtk_window_set_default_size (GTK_WINDOW (window), w, h);
+            }
+        }
+    }
   else if (g_str_equal (cmd, "sd-open-home"))
     {
       g_autofree char *home = g_filename_to_uri (g_get_home_dir (), NULL, NULL);
@@ -1800,6 +1866,40 @@ sd_sidebar_hook_set_enabled (gboolean enabled)
     }
 }
 
+/* Every decorated row of @hook: Nautilus' drive rows, our OS row and our network rows. */
+static void
+sync_hook_visibility (SidebarHook *hook)
+{
+  g_autoptr (GPtrArray) rows = g_ptr_array_new ();
+  collect_rows (hook->sidebar, rows);
+  if (hook->net_list != NULL)
+    for (GtkWidget *c = gtk_widget_get_first_child (hook->net_list); c != NULL; c = gtk_widget_get_next_sibling (c))
+      g_ptr_array_add (rows, c);
+  for (guint i = 0; i < rows->len; i++)
+    {
+      RowDeco *deco = g_object_get_data (G_OBJECT (g_ptr_array_index (rows, i)), DECO_KEY);
+      if (deco != NULL)
+        sync_visibility (deco);
+    }
+}
+
+void
+sd_sidebar_hook_style_changed (void)
+{
+  if (sh == NULL)
+    return;
+  if (sh->colour_css != NULL)
+    {
+      g_autofree char *colours = sd_bar_colour_css (nu_settings_get ());
+      gtk_css_provider_load_from_string (sh->colour_css, colours);
+    }
+  GHashTableIter it;
+  gpointer key;
+  g_hash_table_iter_init (&it, sh->sidebars);
+  while (g_hash_table_iter_next (&it, &key, NULL))
+    sync_hook_visibility (key);
+}
+
 void
 sd_sidebar_hook_shutdown (void)
 {
@@ -1816,9 +1916,14 @@ sd_sidebar_hook_shutdown (void)
   detach_all ();
   if (sh->css != NULL)
     for (guint i = 0; i < sh->css_displays->len; i++)
-      gtk_style_context_remove_provider_for_display (g_ptr_array_index (sh->css_displays, i),
-                                                     GTK_STYLE_PROVIDER (sh->css));
+      {
+        gtk_style_context_remove_provider_for_display (g_ptr_array_index (sh->css_displays, i),
+                                                       GTK_STYLE_PROVIDER (sh->css));
+        gtk_style_context_remove_provider_for_display (g_ptr_array_index (sh->css_displays, i),
+                                                       GTK_STYLE_PROVIDER (sh->colour_css));
+      }
   g_clear_object (&sh->css);
+  g_clear_object (&sh->colour_css);
   g_clear_pointer (&sh->css_displays, g_ptr_array_unref);
   g_clear_pointer (&sh->sidebars, g_hash_table_unref);
   g_clear_pointer (&sh->os_name, g_free);
