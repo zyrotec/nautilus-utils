@@ -33,6 +33,17 @@ double sd_fade_bin_get_fade_width (SdFadeBin *self);
 void sd_fade_bin_follow (SdFadeBin   *self,
                          GtkRevealer *revealer);
 
+/* Extra fade in px beyond the followed revealer (the fade starts this much further from the button). It
+ * grows in proportionally with the slide, so a hidden button still means no fade. */
+void sd_fade_bin_set_fade_extra (SdFadeBin *self,
+                                 double     extra);
+
+/* Fade width while following (exposed for tests): @revealer_width (current, animated) plus @extra scaled by
+ * how far the slide has got (@revealer_width / @full_width). 0 while the revealer has no width. */
+double sd_fade_follow_width (double revealer_width,
+                             double full_width,
+                             double extra);
+
 /* The mask (exposed for tests): a horizontal gradient from @opaque (outer edge of the button) to @clear
  * (end of the row) with these stops — opaque at the button's outer edge, transparent from its middle on,
  * so the content has faded out before it reaches the icon. */

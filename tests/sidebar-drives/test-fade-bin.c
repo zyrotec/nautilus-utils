@@ -44,6 +44,17 @@ test_mask_line (void)
 }
 
 static void
+test_follow_width (void)
+{
+  g_assert_cmpfloat (sd_fade_follow_width (0.0, 34.0, 16.0), ==, 0.0);   /* hidden: no fade */
+  g_assert_cmpfloat (sd_fade_follow_width (34.0, 34.0, 16.0), ==, 50.0); /* shown: button + 16 px */
+  g_assert_cmpfloat (sd_fade_follow_width (17.0, 34.0, 16.0), ==, 25.0); /* half-way: extra grows in */
+  g_assert_cmpfloat (sd_fade_follow_width (40.0, 34.0, 16.0), ==, 56.0); /* wider than measured: full extra */
+  g_assert_cmpfloat (sd_fade_follow_width (34.0, 34.0, -3.0), ==, 34.0); /* negative extra ignored */
+  g_assert_cmpfloat (sd_fade_follow_width (10.0, 0.0, 16.0), ==, 0.0);   /* nothing measured */
+}
+
+static void
 test_child (void)
 {
   NEED_DISPLAY ();
@@ -67,6 +78,7 @@ test_child (void)
   GtkWidget *f = g_object_ref_sink (sd_fade_bin_new ());
   sd_fade_bin_set_fade_width (SD_FADE_BIN (f), 34.0);
   g_assert_cmpfloat (sd_fade_bin_get_fade_width (SD_FADE_BIN (f)), ==, 34.0);
+  sd_fade_bin_set_fade_extra (SD_FADE_BIN (f), 16.0);
   sd_fade_bin_set_fade_width (SD_FADE_BIN (f), -5.0); /* clamped to 0 */
   g_assert_cmpfloat (sd_fade_bin_get_fade_width (SD_FADE_BIN (f)), ==, 0.0);
   g_object_unref (f);
@@ -123,6 +135,7 @@ main (int argc, char **argv)
   g_test_init (&argc, &argv, NULL);
   have_display = gtk_init_check ();
   g_test_add_func ("/fade-bin/mask-line", test_mask_line);
+  g_test_add_func ("/fade-bin/follow-width", test_follow_width);
   g_test_add_func ("/fade-bin/child", test_child);
   g_test_add_func ("/fade-bin/follow-lifecycle", test_follow_lifecycle);
   return g_test_run ();

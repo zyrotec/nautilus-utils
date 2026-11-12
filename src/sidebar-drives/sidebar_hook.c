@@ -359,6 +359,7 @@ eject_slide_attach (GtkWidget *row,
   gtk_box_insert_child_after (GTK_BOX (box), overlay, info_prev);
   g_object_unref (info);
   g_object_unref (eject);
+  sd_fade_bin_set_fade_extra (SD_FADE_BIN (fade), SD_EJECT_FADE_EXTRA_PX);
   sd_fade_bin_follow (SD_FADE_BIN (fade), GTK_REVEALER (revealer));
 
   deco->eject_overlay = overlay;

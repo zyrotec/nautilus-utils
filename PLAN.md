@@ -724,7 +724,8 @@ All act on `/`. Network share rows keep no menu (S6 unchanged). Implementation: 
 | `show-size-labels` | b | true |
 | `eject-slide` | b | false |
 
-Constants: `SD_EJECT_SLIDE_MS` 200.
+Constants: `SD_EJECT_SLIDE_MS` 200, `SD_EJECT_FADE_EXTRA_PX` 16 (fade = button + padding + 16 px, owner
+2026-11-12).
 
 ### 9.4 Decisions (owner, 2026-11-12)
 
@@ -929,3 +930,8 @@ bars on local and network rows; mid-slide; shown with content faded out before t
 hidden; option off → identical to before. Smoke (`smoke-20261112-200421`, ASan, fake network share, eject round incl.
 feature off/on while sliding): PASS. Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
 Still manual (owner): real hover/focus, real eject from a slid-in button, the animation's feel, light theme.
+Owner change (2026-11-12): fade **16 px wider** than the button (`SD_EJECT_FADE_EXTRA_PX`). The extra grows
+in with the slide (`sd_fade_follow_width`: revealer width + 16 × slide progress, progress = revealer width /
+the button's natural width incl. margins), so a hidden button still means no fade and nothing jumps on the
+first frame; the stops are unchanged (transparent from the middle of the now 50 px mask). Test added; render
+checked; strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind PASS.

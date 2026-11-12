@@ -6,6 +6,7 @@ struct _SdFadeBin
   GtkWidget  parent_instance;
   GtkWidget *child;       /* Owned via gtk_widget_set_parent; unparented in dispose / set_child. */
   double     fade_width;  /* px; 0 = no mask */
+  double     fade_extra;  /* px added to the followed revealer's width when fully revealed */
   GWeakRef   revealer;    /* The revealer being followed, or empty */
   gulong     reveal_id;   /* notify::reveal-child on the revealer */
   guint      tick_id;     /* Frame tick while the revealer animates, or 0 */
@@ -13,8 +14,20 @@ struct _SdFadeBin
 
 G_DEFINE_FINAL_TYPE (SdFadeBin, sd_fade_bin, GTK_TYPE_WIDGET)
 
-/* The fade in effect now: the followed revealer's current (animated) width, read after layout so the mask
- * matches the button exactly on every frame; otherwise the fixed fade width. */
+double
+sd_fade_follow_width (double revealer_width,
+                      double full_width,
+                      double extra)
+{
+  if (revealer_width <= 0.0 || full_width <= 0.0)
+    return 0.0;
+  double progress = CLAMP (revealer_width / full_width, 0.0, 1.0);
+  return revealer_width + MAX (extra, 0.0) * progress;
+}
+
+/* The fade in effect now: the followed revealer's current (animated) width plus the extra fade (grown in
+ * with the slide), read after layout so the mask matches the button on every frame; otherwise the fixed
+ * fade width. */
 static double
 current_fade (SdFadeBin *self)
 {
@@ -24,7 +37,10 @@ current_fade (SdFadeBin *self)
   GtkWidget *child = gtk_revealer_get_child (revealer);
   if (!gtk_widget_get_mapped (GTK_WIDGET (revealer)) || child == NULL || !gtk_widget_get_visible (child))
     return 0.0;
-  return (double) gtk_widget_get_width (GTK_WIDGET (revealer));
+  int full = 0;
+  gtk_widget_measure (child, GTK_ORIENTATION_HORIZONTAL, -1, NULL, &full, NULL, NULL); /* incl. margins */
+  return sd_fade_follow_width ((double) gtk_widget_get_width (GTK_WIDGET (revealer)), (double) full,
+                               self->fade_extra);
 }
 
 const GskColorStop sd_fade_mask_stops[SD_FADE_MASK_N_STOPS] = {
@@ -134,6 +150,15 @@ sd_fade_bin_set_fade_width (SdFadeBin *self,
   if (width == self->fade_width)
     return;
   self->fade_width = width;
+  gtk_widget_queue_draw (GTK_WIDGET (self));
+}
+
+void
+sd_fade_bin_set_fade_extra (SdFadeBin *self,
+                            double     extra)
+{
+  g_return_if_fail (SD_IS_FADE_BIN (self));
+  self->fade_extra = MAX (extra, 0.0);
   gtk_widget_queue_draw (GTK_WIDGET (self));
 }
 
