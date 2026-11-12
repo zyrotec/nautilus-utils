@@ -71,6 +71,24 @@ Known limitations:
   stays as stock Nautilus.
 - Only mounted network shares are listed (mount them via *Network*).
 
+### Settings
+
+Files' main menu (☰) gets a **Nautilus Utils Settings** entry above *Preferences*. It opens a dialog with
+one tab per feature; every tab can switch its feature on or off. Changes only take effect when you press
+**Apply**; closing the dialog without Apply discards them.
+
+- **Folder Preview**: show previews on folder icons (on/off).
+- **Sidebar Drives**: enhanced drive rows (on/off), bar colour (accent colour, a custom colour, or a
+  two-colour gradient), show/hide the usage bars and the size labels, and slide the eject button in only
+  on hover.
+
+The settings are stored with GSettings (schema `io.github.zyrotec.NautilusUtils`, inspect with
+`gsettings list-recursively io.github.zyrotec.NautilusUtils`). If the schema isn't installed, the features
+run with their defaults, the dialog says so, and Files logs one warning.
+
+*Work in progress (PLAN.md §9): the dialog and the stored settings work; the features start following
+them in the next phases.*
+
 ## Requirements
 
 ```
@@ -96,11 +114,19 @@ build output there **once**; after that every rebuild is picked up without sudo:
 sudo ln -sf "$PWD/build/libnautilus-utils.so" /usr/lib64/nautilus/extensions-4/libnautilus-utils.so
 ```
 
+Install the settings schema into your home folder (repeat when `data/*.gschema.xml` changes):
+
+```
+mkdir -p ~/.local/share/glib-2.0/schemas
+cp data/io.github.zyrotec.NautilusUtils.gschema.xml ~/.local/share/glib-2.0/schemas/
+glib-compile-schemas ~/.local/share/glib-2.0/schemas
+```
+
 Nautilus keeps running in the background, so a rebuild only takes effect after it quits:
 
 ```
 nautilus -q
-G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives" nautilus    # with log messages
+G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings" nautilus    # with log messages
 ```
 
 ## Install system-wide
@@ -126,6 +152,9 @@ Remove the dev symlink first if you made one.
 nautilus -q
 sudo rm /usr/lib64/nautilus/extensions-4/libnautilus-utils.so     # dev symlink or meson install
 # or: sudo dnf remove nautilus-utils
+# dev schema, if installed:
+rm ~/.local/share/glib-2.0/schemas/io.github.zyrotec.NautilusUtils.gschema.xml
+glib-compile-schemas ~/.local/share/glib-2.0/schemas
 ```
 
 ## Safety checks
@@ -170,6 +199,10 @@ build/tests/folder-preview/bench-core DIR  # per-stage timings of the pipeline o
 | `src/sidebar-drives/drive_info.c` | OS name, local/network classification, async size queries with timeout, usage text |
 | `src/sidebar-drives/sidebar_hook.c` | **Unsupported**: hooks into Nautilus' private sidebar widgets (drive rows, OS row, network list) |
 | `src/sidebar-drives/config.h` | Tunable constants |
+| `src/common/nu_settings.c` | Shared settings service (GSettings snapshot + change notifications) |
+| `src/settings/settings_dialog.c` | The "Nautilus Utils Settings" dialog |
+| `src/settings/menu_hook.c` | **Unsupported**: adds the entry to Nautilus' private main menu |
+| `data/*.gschema.xml` | GSettings schema |
 | `tests/<feature>/` | GLib unit tests (`meson test`) |
 | `tools/` | Safety, smoke-test, benchmark and packaging scripts |
 | `packaging/` | Fedora RPM spec |

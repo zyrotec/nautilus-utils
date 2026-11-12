@@ -828,3 +828,25 @@ colours, delayed apply → one notification, revert, every key group, missing sc
 re-entrancy, 300-cycle init/apply/shutdown stress). Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan,
 valgrind all PASS (10/10 suites under ASan); coverage of `nu_settings.c` 99.2 % (never run: the guard for a
 schema key missing from the key→group table).
+
+**Phase 2 — Window + menu (done 2026-11-12).** `src/settings/`: `settings.c` (feature entry, initialized
+**first** in `features[]` so the other features can read settings; starts `nu_settings`),
+`menu_hook.c` (the only file using Nautilus internals: finds new `NautilusWindow`s through GTK's toplevel
+list → idle scan, inserts our section before the `app.preferences` section + action group
+`nautilus-utils`; removed again on shutdown; one warning if the menu isn't found), `settings_dialog.c`
+(`AdwDialog`, tabs via `AdwViewSwitcher`, `AdwViewSwitcherBar` + breakpoint below 500 sp, Apply button
+bound to `has-unapplied`, controls bound to the delayed GSettings with mappings for the enum and
+`#rrggbb` ↔ `GdkRGBA`, colour rows only visible in their mode, feature options insensitive while the
+feature switch is off — following the pending value; without schema: an "Settings Unavailable" status
+page and no Apply). Links `libadwaita-1` (≥ 1.5).
+Verified in an isolated Nautilus (memory GSettings backend, so the owner's settings are never touched):
+menu sections exactly as §9.1.1; edits leave the stored values unchanged and enable Apply; Apply stores
+them and disables Apply; a pending edit is discarded on close; reopening shows the applied values;
+narrow layout (bottom sheet, tabs at the bottom); no-schema path (one warning, entry still shown, status
+page); no warnings. Packaging: schema in `%files`, `libadwaita-1` BuildRequires; README: Settings section,
+dev schema install into `~/.local/share/glib-2.0/schemas`.
+Finding: the module-load test failed under ASan on a clean machine (fatal "schema not installed" warning) —
+the folder-preview tests now get `GSETTINGS_SCHEMA_DIR` = the build's compiled schema; all suites verified
+with the home schema hidden (`XDG_DATA_HOME=/nonexistent`).
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS (10/10 suites). Unit coverage of
+the dialog/menu is low (dialog 0 %, menu 13 %: they need a Nautilus window) → smoke test (Phase 7).

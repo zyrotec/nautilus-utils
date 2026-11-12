@@ -54,6 +54,7 @@ subdir('data')
 subdir('src/common')
 subdir('src/folder-preview')
 subdir('src/sidebar-drives')
+subdir('src/settings')
 
 # Built at the build root as build/libnautilus-utils.so, which is what the dev symlink points at (README.md).
 nu_module = shared_module('nautilus-utils',
