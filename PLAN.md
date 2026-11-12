@@ -145,6 +145,7 @@ findings and the smoke test is clean.
 | 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover | `src/folder-preview/` | **v1 done** (grid view) |
 | 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
+| 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **planned** (2026-11-12), branch `dev-path-view-size` |
 
 Open items:
 
@@ -959,3 +960,108 @@ RPM description.
 Still manual (owner): real right-click / Menu key on the OS row and the menu's position; hover/focus feel of
 the sliding eject and a real eject from a slid-in button (on a removable drive or share); custom/gradient bars
 in the light and high-contrast themes; the settings dialog with a real mouse and keyboard.
+
+---
+
+## 10. Feature 4 — Folder views (per-folder view type and icon size)
+
+Every folder remembers its **own view type** (grid / list) and **icon size**, like Windows File Explorer.
+Files itself keeps one global view type and one global icon size per view type, so changing them in one
+folder changes them everywhere. With this feature, a change only applies to the folder it was made in.
+Prefix `fv_`, log domain `folder-views`, dir `src/folder-views/`, branch `dev-path-view-size`.
+
+### 10.1 Behaviour
+
+- **Opening a folder** (any window, tab, back/forward, typed path, sidebar, bookmark): if the folder has a
+  saved view, show it with that view type and that view type's icon size; otherwise use **our default**
+  (§10.1.1). This happens before the folder's files are shown (no visible flash of the previous folder's
+  view; verified in Phase 0).
+- **Changing the view in a folder** (the grid/list toggle, Ctrl+1 / Ctrl+2, zoom in/out/reset in the view
+  menu, Ctrl +/−/0, Ctrl+scroll): saved for **that folder only**. A folder stores its view type plus one icon
+  size per view type (switching a folder from grid to list and back keeps its grid size).
+- **Other open windows and tabs** are not changed by a change in another folder; each tab follows the
+  folder it shows.
+- **Not saved, always our default:** locations that can't store metadata (§10.1.2), and Files' global search.
+  The Network view keeps Files' own Network view.
+- Sort order is not part of this feature: Files already saves it per folder.
+
+#### 10.1.1 Our default (owner: "Files default", F1)
+
+Files writes its global keys (`org.gnome.nautilus.preferences default-folder-viewer`,
+`org.gnome.nautilus.icon-view default-zoom-level`, `org.gnome.nautilus.list-view default-zoom-level`) every
+time the view or size is changed anywhere, and its Preferences window doesn't show them. So the default
+would drift with every per-folder change. Instead the feature keeps **its own copy of the default**,
+captured once from Files' keys the first time the feature runs, and unchanged by per-folder changes.
+Turning the feature off writes that default back into Files' keys, so Files behaves exactly as before the
+feature was used.
+
+#### 10.1.2 Storage (owner: GIO metadata, F2)
+
+- One GIO metadata attribute per folder, `metadata::nautilus-utils-folder-view` (Files stores its per-folder
+  sort order the same way), value `1;<generation>;<view>;<grid-zoom>;<list-zoom>` (format version 1).
+  It follows folders renamed or moved inside Files (gvfs metadata).
+- Reads and writes are asynchronous (`g_file_query_info_async`, `g_file_set_attributes_async`) with a
+  `GCancellable`; nothing blocks the main thread.
+- Locations whose filesystem can't store metadata (checked in Phase 0: Trash, Recent, Starred, search,
+  `other-locations`, some network shares) use our default and save nothing.
+- Malformed, unknown-version or out-of-range values are ignored (= our default).
+
+#### 10.1.3 Reset all (owner, F3)
+
+"Reset All Folder Views" on the settings tab forgets every saved folder view: it increments the
+`folder-views-generation` key, and saved values with an older generation are ignored (no need to find every
+folder that was ever saved). Open windows switch to our default immediately. Asks for confirmation first
+(`AdwAlertDialog`, destructive style), because it can't be undone.
+
+### 10.2 Settings tab "Folder Views" (in the existing Nautilus Utils Settings dialog, §9.1.2)
+
+- Group "Folder Views": switch row **"Remember View per Folder"** (feature on/off), subtitle "Each folder
+  keeps its own view type and icon size".
+- Group "Saved Views": button row **"Reset All Folder Views…"** (`.destructive-action`), insensitive while
+  the feature is off. Unlike the other controls it acts immediately after confirmation (it is not a pending
+  setting, so the Apply button doesn't apply to it).
+- On/off still waits for **Apply** like every other setting (N5).
+
+### 10.3 Rules
+
+1. All §4 and §9.2 rules. Nautilus-internals code (slots, view switching, zoom actions) only in
+   `src/folder-views/view_mode_hook.c`; the encoding/decoding, generation and default logic in a
+   Nautilus-free, unit-tested `fv_state.c`.
+2. Only Nautilus' **own actions** change the view: `slot.files-view-mode` (u: grid/list) and
+   `view.zoom-in` / `view.zoom-out` / `view.zoom-standard`. No private structs, no private headers.
+3. Our own view/zoom changes must never be mistaken for user changes (no save loops), and a save never
+   writes the same value twice.
+4. Turning the feature off stops applying and saving, restores Files' global keys to our default and leaves
+   saved metadata in place (turning it back on brings the folders' views back). Repeated toggling must not
+   leak (smoke test).
+5. If an expected action or widget is missing: one warning, the feature switches itself off, Files keeps
+   working with its normal global behaviour.
+
+### 10.4 Settings keys (added to `io.github.zyrotec.NautilusUtils`)
+
+| Key | Type | Default |
+|---|---|---|
+| `folder-views-enabled` | b | true |
+| `folder-views-generation` | u | 0 |
+| `folder-views-default-view` | enum grid / list | grid |
+| `folder-views-default-grid-zoom` | enum small / small-plus / medium / large / extra-large | medium |
+| `folder-views-default-list-zoom` | enum small / medium / large | medium |
+| `folder-views-defaults-captured` | b | false (set true after the one-time capture, §10.1.1) |
+
+### 10.5 Decisions (owner, 2026-11-12)
+
+| # | Decision |
+|---|---|
+| F1 | A folder with no saved view uses **Files' default**; changing one folder never changes that default (§10.1.1). |
+| F2 | Saved in **GIO metadata**, like Files' per-folder sort order (§10.1.2). |
+| F3 | Settings tab: **on/off** and a **Reset All** button (§10.2). |
+
+### 10.6 Phases
+
+| Phase | Work | Acceptance |
+|---|---|---|
+| 0 Spike | Probe (not built): the earliest point a slot's new location is known (slot `notify::location`, `notify::loading`, view `notify::...`) and whether switching `slot.files-view-mode` there shows no flash of the old view; how to read a view's current zoom level and step it with `view.zoom-*` (also for background tabs, whose `view` action group isn't on the window); detecting user changes (action state changes, view `icon-size` notify) vs ours; metadata read latency on the owner's drives (ext4/btrfs, NTFS `ntfs3`, SMB/SFTP) and which locations can store metadata. | Every question answered and recorded here; anything infeasible reported before building. |
+| 1 Core | Schema keys, `fv_state.c` (encode/decode, validation, generation, defaults capture), unit tests. | Tests + `check-safety.sh` pass. |
+| 2 Apply & save | `view_mode_hook.c`: apply on navigation in every slot, save on user change, async metadata, global keys kept at our default. | Folders keep their own view type and size across navigation, tabs, windows and restarts; no flash; no save loops; 16 ms probe clean. |
+| 3 Settings tab | "Folder Views" tab, live on/off with full undo, Reset All with confirmation. | Off = stock Files behaviour with our default restored; Reset All resets every folder; toggling 50× in the smoke test without leaks/warnings. |
+| 4 Hardening & docs | Smoke-test rounds (navigate, change views, reopen, reset, toggle), `check-safety.sh`, README + RPM. | All PASS. |
