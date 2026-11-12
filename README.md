@@ -89,7 +89,12 @@ run with their defaults, the dialog says so, and Files logs one warning.
 Custom colours and the gradient replace the warning/error colours of nearly full drives; with the accent
 colour a drive turns the warning colour from 90 % and the error colour from 95 % full.
 
-*Work in progress (PLAN.md §9): everything above works live except the sliding eject button.*
+With **Slide In on Hover**, the eject buttons stay hidden and the bars use the full row width (like the OS
+drive); hovering a drive (or giving it keyboard focus) slides its eject button in, and the row's text and bar
+fade out underneath it.
+
+Right-clicking the OS drive (or the Menu key) opens Files' own drive menu for it: Open, Open in New Tab,
+Open in New Window and Properties.
 
 ## Requirements
 
@@ -200,6 +205,8 @@ build/tests/folder-preview/bench-core DIR  # per-stage timings of the pipeline o
 | `src/sidebar-drives/sidebar_drives.c` | Feature set-up / tear-down |
 | `src/sidebar-drives/drive_info.c` | OS name, local/network classification, async size queries with timeout, usage text |
 | `src/sidebar-drives/sidebar_hook.c` | **Unsupported**: hooks into Nautilus' private sidebar widgets (drive rows, OS row, network list) |
+| `src/sidebar-drives/bar_style.c` | Bar colours from the settings, as CSS |
+| `src/sidebar-drives/fade_bin.c` | Container that fades its content out under the sliding eject button |
 | `src/sidebar-drives/config.h` | Tunable constants |
 | `src/common/nu_settings.c` | Shared settings service (GSettings snapshot + change notifications) |
 | `src/settings/settings_dialog.c` | The "Nautilus Utils Settings" dialog |

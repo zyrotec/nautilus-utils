@@ -18,8 +18,8 @@ void sd_sidebar_hook_shutdown (void);
  * hook disabled itself (graceful failure) or isn't initialised. */
 void sd_sidebar_hook_set_enabled (gboolean enabled);
 
-/* The bar colour or the show-bars/show-labels settings changed: reload the colour CSS and update every
- * decorated row (PLAN.md §9.1.2, §9.1.5). */
+/* The bar colour, show-bars/show-labels or eject-slide settings changed: reload the colour CSS and update
+ * every decorated row (PLAN.md §9.1.2, §9.1.4, §9.1.5). */
 void sd_sidebar_hook_style_changed (void);
 
 G_END_DECLS

@@ -110,9 +110,19 @@ style_round() {
   cmd "st-set bar-colour-mode 'accent'" 0.5; cmd sd-dump 0.3
 }
 
+# Sliding eject (PLAN.md §9.5 Phase 6): slide in/out, feature off/on while sliding, back to fixed.
+eject_round() {
+  cmd "st-set eject-slide true" 0.6; cmd sd-dump 0.3
+  cmd "sd-eject-reveal 1" 0.5; cmd sd-dump 0.3; cmd "sd-eject-reveal 0" 0.5
+  cmd "st-set sidebar-drives-enabled false" 0.6; cmd sd-dump 0.3
+  cmd "st-set sidebar-drives-enabled true" 0.8; cmd sd-dump 0.3
+  cmd "st-set eject-slide false" 0.6; cmd sd-dump 0.3
+}
+
 if [ -n "$AUTO" ]; then
   end=$(( $(date +%s) + AUTO ))
   style_round
+  eject_round
   cmd st-dump 0.3; cmd st-open 1; cmd st-close 0.5
   for _ in $(seq 1 "${SMOKE_TOGGLES:-25}"); do toggle_round; done
   sidebar_round
@@ -187,6 +197,13 @@ vis_bad="$(awk '/sd dump: style bars=/ { match($0, /bars=[01]/); bars = substr($
     if (bars != "" && (b != bars || c != labels)) print }' "$LOG/nautilus.log")"
 [ -z "$vis_bad" ] || { echo "FINDING: bar/label visibility doesn't follow the settings:"; echo "$vis_bad" | head -5 | sed 's/^/    | /'; fail=1; }
 n_style="$(grep -c 'sd dump: style' "$LOG/nautilus.log" || true)"
+# While sliding, Nautilus' eject button must sit in our revealer with its clicked handler; when the option is
+# off again, no row may still be in slide mode.
+ej_bad="$(awk '/st: set eject-slide = / { slide = $NF; next }
+  /sd dump: +eject: slide/ { n++; if (slide != "true" || $0 !~ /button-in-revealer=1 clicked-handler=1/) print }
+  END { if (n == 0) print "no sliding eject rows were ever dumped" }' "$LOG/nautilus.log")"
+[ -z "$ej_bad" ] || { echo "FINDING: sliding eject:"; echo "$ej_bad" | head -5 | sed 's/^/    | /'; fail=1; }
+n_eject="$(grep -c 'sd dump: *eject: slide revealed=1' "$LOG/nautilus.log" || true)"
 # OS drive menu (PLAN.md §9.1.3): Nautilus' own menu, with Properties and without Unmount/Format.
 n_menu="$(grep -c 'sd os-menu: shown=1 .*Properties' "$LOG/nautilus.log" || true)"
 bad_menu="$(grep -E 'sd os-menu: shown=0|sd os-menu: .*(Unmount|Format|Eject)|OS menu UNAVAILABLE' "$LOG/nautilus.log" || true)"
@@ -203,6 +220,7 @@ echo "Smoke summary:"
 echo "  module loaded:          $([ "$loaded" -gt 0 ] && echo yes || echo NO)"
 echo "  self-checks (verify):   $n_verify, wrong previews: $([ -z "$wrong" ] && echo 0 || echo SOME)"
 echo "  sidebar self-dumps:     $sidebar_ok"
+echo "  sliding eject (shown):  $n_eject"
 echo "  style dumps:            $n_style"
 echo "  OS drive menus:         $n_menu"
 echo "  settings toggles:       sidebar off-dumps $n_off, preview off-states $n_fp_off, preview re-hooked $n_fp_on"

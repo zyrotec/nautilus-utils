@@ -34,6 +34,7 @@
 
 #include "bar_style.h"
 #include "config.h"
+#include "fade_bin.h"
 #include "drive_info.h"
 
 #define SIDEBAR_KEY "sd-sidebar-hook"
@@ -116,6 +117,14 @@ typedef struct
   GtkWidget    *caption;  /* Borrowed: same. */
   GCancellable *query;    /* Owned: the size query this row waits for, or NULL. */
   gboolean      known;    /* A size was shown (bar/caption have content); visibility also follows settings. */
+  /* Sliding eject (PLAN.md §9.1.4); all NULL while the button sits in the row box as usual. All borrowed:
+   * children/controllers of the row, which owns this decoration and so outlives it. */
+  GtkWidget          *eject_overlay;   /* Replaces our info box in the row box: fade bin + revealer */
+  GtkWidget          *eject_revealer;  /* Holds the eject button, slides in at the end of the row */
+  GtkWidget          *eject_button;    /* Nautilus' (or our network row's) eject button */
+  GtkWidget          *eject_prev;      /* Its previous sibling in the row box, to put it back; may be NULL */
+  GtkEventController *eject_motion;    /* contains-pointer → reveal */
+  GtkEventController *eject_focus;     /* contains-focus → reveal */
 } RowDeco;
 
 static void disable (const char *reason);
@@ -280,6 +289,133 @@ decorate (GtkWidget  *row,
   return deco;
 }
 
+/* Hover or keyboard focus anywhere in the row slides the eject button in (N1). */
+static void
+update_eject_reveal (GtkWidget *row)
+{
+  RowDeco *deco = g_object_get_data (G_OBJECT (row), DECO_KEY);
+  if (deco == NULL || deco->eject_revealer == NULL)
+    return;
+  gboolean pointer = gtk_event_controller_motion_contains_pointer (GTK_EVENT_CONTROLLER_MOTION (deco->eject_motion));
+  gboolean focus = gtk_event_controller_focus_contains_focus (GTK_EVENT_CONTROLLER_FOCUS (deco->eject_focus));
+  gtk_revealer_set_reveal_child (GTK_REVEALER (deco->eject_revealer), pointer || focus);
+}
+
+static void
+on_eject_trigger (GObject    *controller,
+                  GParamSpec *pspec,
+                  gpointer    data)
+{
+  (void) pspec;
+  (void) data;
+  update_eject_reveal (gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (controller)));
+}
+
+/* Eject-slide mode on (PLAN.md §9.1.4): the row box's [info, …, eject] becomes [overlay(fade bin(info),
+ * revealer(eject)), …], so name, bar and caption take the full width (like the OS row) and the button slides
+ * in over their end, which fades out underneath. Rows without an eject button (the OS row) are left as is. */
+static void
+eject_slide_attach (GtkWidget *row,
+                    RowDeco   *deco)
+{
+  if (deco->eject_revealer != NULL || is_ours (row))
+    return; /* our OS row has no eject button (its template button stays hidden) */
+  GtkWidget *info = gtk_widget_get_parent (deco->bar);
+  GtkWidget *box = info != NULL ? gtk_widget_get_parent (info) : NULL;
+  if (!GTK_IS_BOX (box))
+    return;
+  GtkWidget *eject = NULL;
+  for (GtkWidget *c = gtk_widget_get_first_child (box); c != NULL; c = gtk_widget_get_next_sibling (c))
+    if (GTK_IS_BUTTON (c) && gtk_widget_has_css_class (c, "sidebar-button"))
+      {
+        eject = c;
+        break;
+      }
+  if (eject == NULL)
+    return;
+
+  deco->eject_prev = gtk_widget_get_prev_sibling (eject); /* may be @info itself (network rows) */
+  GtkWidget *info_prev = gtk_widget_get_prev_sibling (info);
+  g_object_ref (info);
+  g_object_ref (eject);
+  gtk_box_remove (GTK_BOX (box), eject);
+  gtk_box_remove (GTK_BOX (box), info);
+
+  GtkWidget *fade = sd_fade_bin_new ();
+  gtk_widget_set_hexpand (fade, TRUE);
+  sd_fade_bin_set_child (SD_FADE_BIN (fade), info);
+  GtkWidget *revealer = gtk_revealer_new ();
+  gboolean rtl = gtk_widget_get_direction (row) == GTK_TEXT_DIR_RTL;
+  gtk_revealer_set_transition_type (GTK_REVEALER (revealer), rtl ? GTK_REVEALER_TRANSITION_TYPE_SLIDE_RIGHT
+                                                                 : GTK_REVEALER_TRANSITION_TYPE_SLIDE_LEFT);
+  gtk_revealer_set_transition_duration (GTK_REVEALER (revealer), SD_EJECT_SLIDE_MS);
+  gtk_widget_set_halign (revealer, GTK_ALIGN_END);
+  gtk_revealer_set_child (GTK_REVEALER (revealer), eject);
+  GtkWidget *overlay = gtk_overlay_new ();
+  gtk_widget_add_css_class (overlay, "sd-eject-overlay");
+  gtk_widget_set_hexpand (overlay, TRUE);
+  gtk_overlay_set_child (GTK_OVERLAY (overlay), fade);
+  gtk_overlay_add_overlay (GTK_OVERLAY (overlay), revealer);
+  gtk_box_insert_child_after (GTK_BOX (box), overlay, info_prev);
+  g_object_unref (info);
+  g_object_unref (eject);
+  sd_fade_bin_follow (SD_FADE_BIN (fade), GTK_REVEALER (revealer));
+
+  deco->eject_overlay = overlay;
+  deco->eject_revealer = revealer;
+  deco->eject_button = eject;
+  deco->eject_motion = gtk_event_controller_motion_new ();
+  g_signal_connect (deco->eject_motion, "notify::contains-pointer", G_CALLBACK (on_eject_trigger), NULL);
+  gtk_widget_add_controller (row, deco->eject_motion); /* row owns it */
+  deco->eject_focus = gtk_event_controller_focus_new ();
+  g_signal_connect (deco->eject_focus, "notify::contains-focus", G_CALLBACK (on_eject_trigger), NULL);
+  gtk_widget_add_controller (row, deco->eject_focus);
+  update_eject_reveal (row);
+}
+
+/* Eject-slide mode off: the button and the info box go back exactly where they were. */
+static void
+eject_slide_detach (GtkWidget *row,
+                    RowDeco   *deco)
+{
+  if (deco->eject_revealer == NULL)
+    return;
+  gtk_widget_remove_controller (row, deco->eject_motion);
+  gtk_widget_remove_controller (row, deco->eject_focus);
+  GtkWidget *overlay = deco->eject_overlay;
+  GtkWidget *box = gtk_widget_get_parent (overlay);
+  GtkWidget *fade = gtk_overlay_get_child (GTK_OVERLAY (overlay));
+  GtkWidget *info = SD_IS_FADE_BIN (fade) ? sd_fade_bin_get_child (SD_FADE_BIN (fade)) : NULL;
+  GtkWidget *eject = deco->eject_button;
+  if (GTK_IS_BOX (box) && info != NULL)
+    {
+      g_object_ref (info);
+      g_object_ref (eject);
+      sd_fade_bin_follow (SD_FADE_BIN (fade), NULL);
+      sd_fade_bin_set_child (SD_FADE_BIN (fade), NULL);
+      gtk_revealer_set_child (GTK_REVEALER (deco->eject_revealer), NULL);
+      gtk_box_insert_child_after (GTK_BOX (box), info, overlay);
+      gtk_box_remove (GTK_BOX (box), overlay); /* destroys the fade bin and the revealer */
+      GtkWidget *prev = deco->eject_prev != NULL && gtk_widget_get_parent (deco->eject_prev) == box ? deco->eject_prev : info;
+      gtk_box_insert_child_after (GTK_BOX (box), eject, prev);
+      g_object_unref (info);
+      g_object_unref (eject);
+    }
+  deco->eject_overlay = deco->eject_revealer = deco->eject_button = deco->eject_prev = NULL;
+  deco->eject_motion = deco->eject_focus = NULL;
+}
+
+/* Puts @row's eject button into the mode the settings ask for. */
+static void
+sync_eject_mode (GtkWidget *row,
+                 RowDeco   *deco)
+{
+  if (nu_settings_get ()->eject_slide)
+    eject_slide_attach (row, deco);
+  else
+    eject_slide_detach (row, deco);
+}
+
 /* Undoes decorate() on one of Nautilus' rows: its label goes back into the row box where it was, our box
  * (bar + caption) is removed and the decoration freed (cancelling its size query). */
 static void
@@ -288,6 +424,7 @@ undecorate (GtkWidget *row)
   RowDeco *deco = g_object_get_data (G_OBJECT (row), DECO_KEY);
   if (deco == NULL)
     return;
+  eject_slide_detach (row, deco);
   GtkWidget *info = gtk_widget_get_parent (deco->bar);
   GtkWidget *box = info != NULL ? gtk_widget_get_parent (info) : NULL;
   if (GTK_IS_BOX (info) && GTK_IS_BOX (box))
@@ -1104,6 +1241,8 @@ create_net_row (SidebarHook *hook,
   gtk_box_append (GTK_BOX (box), eject);
 
   RowDeco *deco = decorate (row, NULL); /* moves our label into name + bar + caption */
+  if (deco != NULL)
+    sync_eject_mode (row, deco);
   gtk_list_box_insert (GTK_LIST_BOX (hook->net_list), row, -1);
   g_hash_table_insert (hook->net_rows, g_strdup (uri), row);
   if (deco != NULL)
@@ -1238,6 +1377,7 @@ apply (SidebarHook *hook)
           g_debug ("drive row without the expected label box; left untouched");
           continue;
         }
+      sync_eject_mode (row, deco);
       g_autoptr (GFile) root = g_mount_get_root (mount);
       if (g_log_writer_default_would_drop (G_LOG_LEVEL_DEBUG, G_LOG_DOMAIN) == FALSE)
         {
@@ -1516,6 +1656,7 @@ count_leftovers (GtkWidget *w)
 {
   guint n = (GTK_IS_LIST_BOX_ROW (w) && is_ours (w)) || gtk_widget_has_css_class (w, "sd-drive-info") ||
             gtk_widget_has_css_class (w, "sd-net-list") || gtk_widget_has_css_class (w, "sd-net-separator") ||
+            gtk_widget_has_css_class (w, "sd-eject-overlay") || SD_IS_FADE_BIN (w) ||
             g_object_get_data (G_OBJECT (w), HIDDEN_KEY) != NULL || g_object_get_data (G_OBJECT (w), DECO_KEY) != NULL;
   for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL; c = gtk_widget_get_next_sibling (c))
     n += count_leftovers (c);
@@ -1568,6 +1709,12 @@ debug_dump (void)
           GtkWidget *list = gtk_widget_get_parent (row);
           gboolean selected = GTK_IS_LIST_BOX (list) &&
                               gtk_list_box_get_selected_row (GTK_LIST_BOX (list)) == GTK_LIST_BOX_ROW (row);
+          if (deco != NULL && deco->eject_revealer != NULL)
+            g_message ("sd dump:     eject: slide revealed=%d button-in-revealer=%d clicked-handler=%d fade-width=%d",
+                       gtk_revealer_get_child_revealed (GTK_REVEALER (deco->eject_revealer)),
+                       gtk_widget_get_parent (deco->eject_button) == deco->eject_revealer,
+                       g_signal_has_handler_pending (deco->eject_button, g_signal_lookup ("clicked", GTK_TYPE_BUTTON), 0, FALSE),
+                       gtk_widget_get_width (deco->eject_revealer));
           g_message ("sd dump:   %s index=%d header=%d label='%s' bar=%d value=%.3f warn=%d full=%d caption='%s' cap-visible=%d selected=%d",
                      is_ours (row) ? "OS-ROW" : "drive ", gtk_list_box_row_get_index (GTK_LIST_BOX_ROW (row)),
                      gtk_list_box_row_get_header (GTK_LIST_BOX_ROW (row)) != NULL, label,
@@ -1644,6 +1791,29 @@ on_debug_signal (gpointer data)
     }
   else if (g_str_has_prefix (cmd, "sd-png "))
     debug_png (cmd + 7);
+  /* Simulates hover on every sliding eject button (1 = slide in, 0 = out), for renders. */
+  else if (g_str_has_prefix (cmd, "sd-eject-reveal "))
+    {
+      gboolean reveal = cmd[16] == '1';
+      GHashTableIter it;
+      gpointer key;
+      g_hash_table_iter_init (&it, sh->sidebars);
+      while (g_hash_table_iter_next (&it, &key, NULL))
+        {
+          SidebarHook *hook = key;
+          g_autoptr (GPtrArray) rows = g_ptr_array_new ();
+          collect_rows (hook->sidebar, rows);
+          if (hook->net_list != NULL)
+            for (GtkWidget *c = gtk_widget_get_first_child (hook->net_list); c != NULL; c = gtk_widget_get_next_sibling (c))
+              g_ptr_array_add (rows, c);
+          for (guint i = 0; i < rows->len; i++)
+            {
+              RowDeco *deco = g_object_get_data (G_OBJECT (g_ptr_array_index (rows, i)), DECO_KEY);
+              if (deco != NULL && deco->eject_revealer != NULL)
+                gtk_revealer_set_reveal_child (GTK_REVEALER (deco->eject_revealer), reveal);
+            }
+        }
+    }
   else if (g_str_has_prefix (cmd, "sd-resize "))
     {
       int w = 0, h = 0;
@@ -1877,9 +2047,12 @@ sync_hook_visibility (SidebarHook *hook)
       g_ptr_array_add (rows, c);
   for (guint i = 0; i < rows->len; i++)
     {
-      RowDeco *deco = g_object_get_data (G_OBJECT (g_ptr_array_index (rows, i)), DECO_KEY);
-      if (deco != NULL)
-        sync_visibility (deco);
+      GtkWidget *row = g_ptr_array_index (rows, i);
+      RowDeco *deco = g_object_get_data (G_OBJECT (row), DECO_KEY);
+      if (deco == NULL)
+        continue;
+      sync_visibility (deco);
+      sync_eject_mode (row, deco);
     }
 }
 

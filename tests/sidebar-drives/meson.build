@@ -17,3 +17,10 @@ test_bar_style = executable('test-bar-style', 'test-bar-style.c',
   include_directories: [sd_inc, nu_common_inc],
 )
 test('bar-style', test_bar_style, env: sd_test_env, protocol: 'tap', args: ['--tap'], suite: 'sidebar-drives')
+
+test_fade_bin = executable('test-fade-bin', 'test-fade-bin.c',
+  link_with: sd_ui_lib,
+  dependencies: [gtk_dep],
+  include_directories: [sd_inc],
+)
+test('fade-bin', test_fade_bin, env: sd_test_env, protocol: 'tap', args: ['--tap'], suite: 'sidebar-drives')

@@ -6,6 +6,7 @@
 #define SD_WARN_FRACTION    0.90   /* Bar turns warning colour at this fill level */
 #define SD_FULL_FRACTION    0.95   /* Bar turns error colour at this fill level */
 #define SD_BAR_HEIGHT_PX    4      /* Usage bar height */
+#define SD_EJECT_SLIDE_MS   200    /* Sliding eject button animation (PLAN.md §9.1.4) */
 
 /* Label of the OS drive row when the OS has no PRETTY_NAME (§8.1.1). */
 #define SD_OS_FALLBACK_NAME "Computer"

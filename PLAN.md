@@ -903,3 +903,29 @@ hidden, back to accent — all live, no warnings. Smoke (`smoke-20261112-191813`
 modes × all four show/hide combinations) and a check that visibility always matches the settings
 (19 style dumps). Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
 Still manual (owner): light theme and high-contrast look of custom/gradient bars.
+
+**Phase 6 — Sliding eject (done 2026-11-12).** `src/sidebar-drives/fade_bin.c` (plain GTK, own library
+`sd-ui`): `SdFadeBin`, a one-child container whose snapshot pushes an alpha mask (`gtk_snapshot_push_mask`)
+— a linear gradient over the button's width, opaque at the button's outer edge and **transparent from its
+middle on** (owner-visible refinement: with a plain linear ramp the text showed half-transparent right under
+the icon); mirrored for RTL. The mask width is read **at draw time** from the followed revealer's allocated
+width (button + margins), so it matches the slide on every frame; a tick callback only redraws while the
+revealer animates; 0 when Nautilus hides the button. Weak in both directions.
+Hook (`eject_slide_attach/detach`, `sync_eject_mode`): with eject-slide on, every decorated row with an
+eject button (Nautilus' drive rows, our network rows; not the OS row) gets `[overlay(fade bin(info),
+revealer(eject)), …]` instead of `[info, …, eject]`: info takes the full width like the OS row, the revealer
+(`halign END`, slide-left/right, `SD_EJECT_SLIDE_MS` 200 ms, GTK's enable-animations respected) shows the
+button while the row `contains-pointer` (motion controller) or `contains-focus` (focus controller, N1).
+Off → button and info go back to their exact places (previous sibling remembered); undecorate detaches first.
+Nautilus' eject keeps working: its handler is on the button's own `clicked` (verified in the source and in
+every smoke dump: `clicked-handler=1`, button inside our revealer).
+Tests: `tests/sidebar-drives/test-fade-bin.c` (mask geometry incl. RTL/clamping and the stops, child
+handling, 300-cycle follow lifecycle with either side destroyed first). They deliberately don't map a
+window: mapped rendering loads fontconfig/pango/GPU caches that LSan reports and that hang under valgrind
+(first attempt) — on-screen behaviour is covered by renders and the smoke test. Coverage `fade_bin.c`
+84.7 % (rest = the mapped animation path).
+Verified in an isolated Nautilus with renders (`sd-eject-reveal 0|1` simulates hover): hidden → full-width
+bars on local and network rows; mid-slide; shown with content faded out before the icon; slid out; labels
+hidden; option off → identical to before. Smoke (`smoke-20261112-200421`, ASan, fake network share, eject round incl.
+feature off/on while sliding): PASS. Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+Still manual (owner): real hover/focus, real eject from a slid-in button, the animation's feel, light theme.
