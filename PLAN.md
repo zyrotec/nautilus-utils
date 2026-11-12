@@ -1232,3 +1232,38 @@ Final `check-safety.sh`: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind 
 Still manual (owner): real mouse and keyboard (Ctrl+1/2, Ctrl +/−, Ctrl + scroll, the view menu) in a few
 of your own folders; restart Files and check they come back; a real SMB/SFTP share (untested, §10.7);
 the Folder Views tab and the Reset confirmation with a real mouse.
+
+### 10.9 Smooth transitions (owner, 2026-11-12: "The transition between folders needs to be more smooth")
+
+What was rough (§10.7): when a folder needs another view type or icon size than the one before it, Files
+re-lays out the **old** folder's files in the new layout (they jump), then the new files pop in; the switch
+also blocks the main loop for 30–300 ms.
+
+Now (`view_mode_hook.c`, "Smooth transitions"), only when something actually changes:
+1. **Cover:** before switching, a static picture of the current view (`gtk_widget_paintable_new` →
+   `gdk_paintable_get_current_image`, a render-node copy, no pixel readback) goes on top of it. It sits in a
+   box with the `view` style, so nothing shows through, as an extra child of the files view's `GtkOverlay`,
+   just above the view and below Files' floating "Loading…" bar. It is not a target for clicks or focus and
+   is hidden from accessibility.
+2. **Switch:** view type and zoom change underneath. The old files' jump and the main-loop block happen
+   behind an unchanged picture.
+3. **Fade:** when the tab stops loading (`notify::loading` false, i.e. the new files are in), or after
+   `FV_COVER_MAX_MS` (1 s) for slow folders, the cover fades out over `FV_FADE_MS` (180 ms, ease-out cubic,
+   `AdwTimedAnimation`, so it is instant with GTK animations off) and is removed. Another folder change during
+   the cover keeps the same picture and restarts the wait.
+4. Background tabs (not mapped) and folders that already match get no cover. Feature off or tab closed →
+   the cover is removed with the hook.
+
+Measured (isolated Nautilus, normal debug build, 180-file folders and a 10 000-file folder): the cover is up
+from the click until 210–950 ms (= when Files has loaded the folder, the same moment stock Files would show
+it), then fades in 180 ms. Whole-window renders during list → grid and grid → list: the old view stays
+still, then crossfades into the new layout, with no jump or flash and the same background. The switch
+underneath still costs 105–325 ms of main loop (Files' own view rebuild), but the screen doesn't change
+during it.
+Smoke (ASan, fake network share, 150 s + every round): `smoke-20261112-234613` **PASS**. Folder views: 57 tab
+checks, 9 named checks, 0 wrong; 26 off-dumps without leftovers; 6 transitions completed (cover up →
+fade → removed). The run before it (`smoke-20261112-234043`) failed only the sidebar's OS-drive-menu check
+("row not in the places list" right after the network-row click, `sidebar_hook.c`, Feature 3). That code is
+not touched by this change, and it passed in the re-run and in the Phase 4 run: an intermittent timing issue
+in that check, recorded here for Feature 3's follow-up.
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.

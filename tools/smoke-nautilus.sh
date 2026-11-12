@@ -270,6 +270,7 @@ fv_off_bad="$(grep 'fv dump: off' "$LOG/nautilus.log" | grep -v 'leftover=0 keys
 n_fv_checked="$(grep -c 'fv dump: tab=.* checked=1 ok=1' "$LOG/nautilus.log" || true)"
 n_fv_expect="$(grep -c 'fv expect: ok=1' "$LOG/nautilus.log" || true)"
 n_fv_off="$(grep -c 'fv dump: off' "$LOG/nautilus.log" || true)"
+n_fv_trans="$(grep -c 'transition: done' "$LOG/nautilus.log" || true)"
 if [ -n "$AUTO" ] && [ "$n_fv_checked" -eq 0 ]; then echo "FINDING: folder views never checked a tab"; fail=1; fi
 
 loaded="$(grep -c 'folder-preview loaded' "$LOG/nautilus.log" || true)"
@@ -284,7 +285,7 @@ echo "  sliding eject (shown):  $n_eject"
 echo "  style dumps:            $n_style"
 echo "  OS drive menus:         $n_menu"
 echo "  settings toggles:       sidebar off-dumps $n_off, preview off-states $n_fp_off, preview re-hooked $n_fp_on"
-echo "  folder views:           tab checks $n_fv_checked, named checks $n_fv_expect, off-dumps $n_fv_off, wrong: $([ -z "$fv_bad" ] && echo 0 || echo SOME)"
+echo "  folder views:           tab checks $n_fv_checked, named checks $n_fv_expect, off-dumps $n_fv_off, smooth transitions $n_fv_trans, wrong: $([ -z "$fv_bad" ] && echo 0 || echo SOME)"
 echo "  sanitizer report files: ${#reports[@]} (only blocks mentioning our code count)"
 echo "  result:                 $([ $fail -eq 0 ] && [ "$loaded" -gt 0 ] && echo PASS || echo FAIL)"
 [ "$loaded" -gt 0 ] || fail=1

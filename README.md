@@ -95,9 +95,10 @@ Known limitations:
 - **Nautilus updates may switch the feature off.** It relies on Nautilus' private tab and view widgets
   (verified on Nautilus 51.1). If they change, it logs one warning ("folder views disabled: …") and Files
   keeps its normal global view.
-- When two folders in a row have different view types, opening the second one costs what Ctrl+1 / Ctrl+2
-  costs in Files (about 0.05–0.1 s, more when leaving a very large folder), and the old folder's files are
-  briefly re-laid out before the new ones appear.
+- When two folders in a row have different view types (or icon sizes), the old folder stays on screen as a
+  still picture while the new one loads, then fades into the new layout (180 ms; instant with animations
+  off). The switch underneath costs what Ctrl+1 / Ctrl+2 costs in Files (0.1–0.3 s, more when leaving a
+  very large folder), and the window doesn't redraw during it.
 - Network shares (SMB, SFTP) haven't been tested yet; reading a saved view never blocks Files.
 
 ### Settings

@@ -21,3 +21,8 @@
 /* Nautilus' view types must be registered this long after a tab first reports a location (D3), otherwise
  * the feature assumes Nautilus changed and switches itself off. */
 #define FV_TYPES_TIMEOUT_MS 5000
+
+/* Smooth folder changes (PLAN.md §10.9): when a folder needs another view type or icon size, a frozen picture
+ * of the old view covers the switch and fades out once the new folder's files are in. */
+#define FV_FADE_MS      180  /* fade-out of the cover (instant when GTK animations are off) */
+#define FV_COVER_MAX_MS 1000 /* fade anyway this long after the switch if the folder is still loading */

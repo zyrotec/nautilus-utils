@@ -38,6 +38,10 @@ typedef struct
   gboolean      applying;      /* Our own view/zoom change is running: its notifications aren't the user */
   guint         user_idle;     /* Idle that classifies a view switch as the user's, or 0 */
   GCancellable *read_cancel;   /* Owned; the pending metadata read, or NULL */
+  GWeakRef      cover;         /* Our frozen picture over the view during a switch (§10.9), or empty */
+  AdwAnimation *fade;          /* Owned; the cover's fade-out, or NULL */
+  guint         cover_cap;     /* Timeout fading the cover if loading takes too long, or 0 */
+  gint64        cover_since;   /* Monotonic time the cover went up (debug log) */
 } SlotHook;
 
 typedef struct
@@ -237,6 +241,118 @@ rebind_list_base (SlotHook  *hook,
     hook->icon_size_id = g_signal_connect (lb, "notify::icon-size", G_CALLBACK (on_icon_size), hook);
 }
 
+/* ------------------------------------------------------------------------------------------------ */
+/* Smooth transitions (PLAN.md §10.9)                                                               */
+/*                                                                                                  */
+/* At a folder change the old folder's files are still on screen and the new ones arrive 0.2–1 s later   */
+/* (§10.7). Switching the view type or zoom right away re-lays out the old files and blocks the main loop */
+/* for 30–90 ms. Instead, a static picture of the old view goes on top first (an extra child of the       */
+/* files view's GtkOverlay, below Nautilus' floating loading bar), the switch happens underneath it, and   */
+/* it fades out when the slot stops loading (or after FV_COVER_MAX_MS), then is removed.                    */
+
+/* The files view's GtkOverlay (its only child), or NULL. Borrowed. */
+static GtkWidget *
+view_overlay_of (GtkWidget *slot)
+{
+  GtkWidget *files_view = files_view_of (slot);
+  GtkWidget *child = files_view != NULL && ADW_IS_BIN (files_view) ? adw_bin_get_child (ADW_BIN (files_view)) : NULL;
+  return child != NULL && GTK_IS_OVERLAY (child) ? child : NULL;
+}
+
+/* Takes the cover out of the overlay and drops the animation/timer. */
+static void
+cover_remove (SlotHook *hook)
+{
+  g_clear_handle_id (&hook->cover_cap, g_source_remove);
+  if (hook->fade != NULL)
+    adw_animation_reset (hook->fade);
+  g_clear_object (&hook->fade);
+  g_autoptr (GtkWidget) cover = g_weak_ref_get (&hook->cover);
+  GtkWidget *overlay = cover != NULL ? gtk_widget_get_parent (cover) : NULL;
+  if (overlay != NULL && GTK_IS_OVERLAY (overlay))
+    gtk_overlay_remove_overlay (GTK_OVERLAY (overlay), cover);
+  g_weak_ref_set (&hook->cover, NULL);
+}
+
+static void
+on_fade_done (AdwAnimation *animation,
+              gpointer      data)
+{
+  (void) animation;
+  SlotHook *hook = data; /* alive: hook_free resets and drops the animation first */
+  g_debug ("transition: done after %.0f ms in %s", (g_get_monotonic_time () - hook->cover_since) / 1000.0,
+           hook->uri);
+  cover_remove (hook);
+}
+
+/* Starts the fade-out (once). */
+static void
+cover_fade (SlotHook *hook)
+{
+  g_clear_handle_id (&hook->cover_cap, g_source_remove);
+  g_autoptr (GtkWidget) cover = g_weak_ref_get (&hook->cover);
+  if (cover == NULL || hook->fade != NULL)
+    return;
+  g_debug ("transition: fading after %.0f ms in %s", (g_get_monotonic_time () - hook->cover_since) / 1000.0,
+           hook->uri);
+  AdwAnimationTarget *target = adw_property_animation_target_new (G_OBJECT (cover), "opacity"); /* consumed */
+  hook->fade = adw_timed_animation_new (cover, 1.0, 0.0, FV_FADE_MS, target);
+  adw_timed_animation_set_easing (ADW_TIMED_ANIMATION (hook->fade), ADW_EASE_OUT_CUBIC);
+  g_signal_connect (hook->fade, "done", G_CALLBACK (on_fade_done), hook);
+  adw_animation_play (hook->fade); /* instant when GTK animations are off */
+}
+
+static gboolean
+cover_cap_timeout (gpointer data)
+{
+  SlotHook *hook = data; /* alive: hook_free removes this timeout */
+  hook->cover_cap = 0;
+  cover_fade (hook);
+  return G_SOURCE_REMOVE;
+}
+
+/* Puts a frozen picture of the current view over it (or keeps the one already there, at full opacity). */
+static void
+cover_begin (SlotHook  *hook,
+             GtkWidget *slot)
+{
+  g_autoptr (GtkWidget) existing = g_weak_ref_get (&hook->cover);
+  if (existing != NULL)
+    {
+      if (hook->fade != NULL)
+        adw_animation_reset (hook->fade); /* back to opacity 1 */
+      g_clear_object (&hook->fade);
+      gtk_widget_set_opacity (existing, 1.0);
+    }
+  else
+    {
+      GtkWidget *overlay = view_overlay_of (slot);
+      GtkWidget *view = overlay != NULL ? gtk_overlay_get_child (GTK_OVERLAY (overlay)) : NULL;
+      if (view == NULL || !gtk_widget_get_mapped (view))
+        return; /* background tab or nothing shown: nothing to smooth */
+      g_autoptr (GdkPaintable) live = gtk_widget_paintable_new (view);
+      g_autoptr (GdkPaintable) frozen = gdk_paintable_get_current_image (live); /* static copy */
+      GtkWidget *picture = gtk_picture_new_for_paintable (frozen);
+      gtk_picture_set_content_fit (GTK_PICTURE (picture), GTK_CONTENT_FIT_FILL);
+      gtk_picture_set_can_shrink (GTK_PICTURE (picture), TRUE);
+      gtk_widget_set_hexpand (picture, TRUE);
+      gtk_widget_set_vexpand (picture, TRUE);
+      /* The "view" style paints the view background behind the picture, so nothing shows through. */
+      GtkWidget *cover = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+      gtk_widget_add_css_class (cover, "view");
+      gtk_box_append (GTK_BOX (cover), picture);
+      gtk_widget_set_can_target (cover, FALSE);
+      gtk_widget_set_can_focus (cover, FALSE);
+      gtk_accessible_update_state (GTK_ACCESSIBLE (cover), GTK_ACCESSIBLE_STATE_HIDDEN, TRUE, -1);
+      gtk_overlay_add_overlay (GTK_OVERLAY (overlay), cover); /* the overlay owns it */
+      gtk_widget_insert_after (cover, overlay, view); /* below Nautilus' floating loading bar */
+      g_weak_ref_set (&hook->cover, cover);
+    }
+  hook->cover_since = g_get_monotonic_time ();
+  g_clear_handle_id (&hook->cover_cap, g_source_remove);
+  hook->cover_cap = g_timeout_add (FV_COVER_MAX_MS, cover_cap_timeout, hook);
+}
+
 /* Shows @v in @slot with Nautilus' own actions; our notifications are ignored while @applying is set. */
 static void
 apply (SlotHook           *hook,
@@ -253,6 +369,9 @@ apply (SlotHook           *hook,
   gint64 start = g_get_monotonic_time ();
   NuViewType was = view;
   int was_zoom = zoom;
+  if (view == v->view && zoom == fv_folder_view_zoom (v))
+    return; /* already right: nothing changes on screen */
+  cover_begin (hook, slot);
   hook->applying = TRUE;
   if (view != v->view)
     {
@@ -271,6 +390,11 @@ apply (SlotHook           *hook,
   hook->applying = FALSE;
   rebind_list_base (hook, slot);
   schedule_restore ();
+  gboolean loading = TRUE;
+  if (g_object_class_find_property (G_OBJECT_GET_CLASS (slot), "loading") != NULL)
+    g_object_get (slot, "loading", &loading, NULL);
+  if (!loading)
+    cover_fade (hook); /* the folder was already loaded: reveal now */
   g_debug ("applied view %d zoom %d to %s (was view %d zoom %d) in %.1f ms", v->view, target, hook->uri, was, was_zoom,
            (g_get_monotonic_time () - start) / 1000.0);
 }
@@ -528,6 +652,10 @@ on_loading (GObject    *slot,
   SlotHook *hook = data;
   if (!fv->disabled && hook->uri == NULL)
     slot_location_changed (hook, GTK_WIDGET (slot));
+  gboolean loading = TRUE;
+  g_object_get (slot, "loading", &loading, NULL);
+  if (!loading)
+    cover_fade (hook); /* the new folder's files are in: fade the old picture out */
 }
 
 static void
@@ -552,6 +680,8 @@ hook_free (gpointer data)
     g_hash_table_remove (fv->hooks, hook);
   g_clear_handle_id (&hook->user_idle, g_source_remove);
   cancel_read (hook);
+  cover_remove (hook);
+  g_weak_ref_clear (&hook->cover);
   g_autoptr (GObject) lb = g_weak_ref_get (&hook->list_base);
   if (lb != NULL && hook->icon_size_id != 0)
     g_signal_handler_disconnect (lb, hook->icon_size_id);
@@ -615,6 +745,7 @@ attach_slot (GtkWidget *slot)
   SlotHook *hook = g_new0 (SlotHook, 1); /* owned by the slot's qdata, freed by hook_free */
   g_weak_ref_init (&hook->slot, slot);
   g_weak_ref_init (&hook->list_base, NULL);
+  g_weak_ref_init (&hook->cover, NULL);
   hook->kind = FV_LOCATION_IGNORE;
   g_object_set_data_full (G_OBJECT (slot), SLOT_KEY, hook, hook_free);
   g_hash_table_add (fv->hooks, hook);
@@ -769,12 +900,13 @@ debug_dump (void)
       gboolean shown = shown_view (slot, &view, &zoom);
       gboolean checked = hook != NULL && hook->known && hook->kind != FV_LOCATION_IGNORE && shown;
       gboolean ok = !checked || (view == hook->value.view && zoom == fv_folder_view_zoom (&hook->value));
+      g_autoptr (GtkWidget) cover = hook != NULL ? g_weak_ref_get (&hook->cover) : NULL;
       g_message ("fv dump: tab=%d selected=%d hooked=%d uri=%s kind=%d known=%d shown=%d/%d expect=%d/%d "
-                 "checked=%d ok=%d",
+                 "cover=%d checked=%d ok=%d",
                  i, page == adw_tab_view_get_selected_page (tv), hook != NULL, hook != NULL ? hook->uri : "-",
                  hook != NULL ? (int) hook->kind : -1, hook != NULL && hook->known, view, zoom,
                  hook != NULL ? (int) hook->value.view : 0, hook != NULL ? fv_folder_view_zoom (&hook->value) : -1,
-                 checked, ok);
+                 cover != NULL, checked, ok);
     }
   g_message ("fv dump: tabs=%d hooks=%u cache=%u disabled=%d", n, g_hash_table_size (fv->hooks),
              fv_cache_size (fv->cache), fv->disabled);
