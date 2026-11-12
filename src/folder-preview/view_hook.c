@@ -88,6 +88,7 @@ typedef struct
   GType       view_cell_type; /* NautilusViewCell (has the "item" property). */
   gboolean    validated;
   gboolean    disabled;
+  gboolean    off;            /* Switched off in the settings (PLAN.md §9): no hooks, map events ignored. */
   GHashTable *hooks;          /* Set of ImageHook* (borrowed: owned by the images' qdata). */
   guint       hover_timer;    /* The single hover timer in the process (PLAN.md §6.1.3). */
   ImageHook  *hover;          /* Borrowed; cleared by hook_free / hover_stop. */
@@ -847,6 +848,8 @@ on_widget_map_impl (GSignalInvocationHint *ihint, guint n_params, const GValue *
         vh->map_hook_id = 0; /* returning FALSE removes the hook */
       return FALSE;
     }
+  if (vh->off)
+    return TRUE; /* keep the hook: switching back on must not need a restart */
   GObject *obj = g_value_get_object (&params[0]); /* borrowed */
 
   /* Watchdog: the first time a Nautilus grid view appears, expect icons to be hooked soon. */
@@ -1199,6 +1202,35 @@ debug_stats_reset (void)
   probe_expected_us = g_get_monotonic_time () + 16000;
 }
 
+/* Counts icons that currently show our paintable, in every window (must be 0 while switched off). */
+static guint
+count_installed (GtkWidget *w)
+{
+  guint n = 0;
+  if (vh->image_type != 0 && G_TYPE_CHECK_INSTANCE_TYPE (w, vh->image_type))
+    {
+      g_autoptr (GdkPaintable) fallback = NULL;
+      g_object_get (w, "fallback", &fallback, NULL);
+      return fallback != NULL && FP_IS_FOLDER_PAINTABLE (fallback) ? 1 : 0;
+    }
+  for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL; c = gtk_widget_get_next_sibling (c))
+    n += count_installed (c);
+  return n;
+}
+
+static void
+debug_state (void)
+{
+  guint installed = 0;
+  GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+  for (guint i = 0; i < g_list_model_get_n_items (toplevels); i++)
+    {
+      g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
+      installed += count_installed (window);
+    }
+  g_message ("fp state: off=%d hooks=%u installed=%u", vh->off, g_hash_table_size (vh->hooks), installed);
+}
+
 static gboolean
 on_debug_signal (gpointer data)
 {
@@ -1211,6 +1243,11 @@ on_debug_signal (gpointer data)
   g_strstrip (cmd);
   GtkWidget *grid = first_mapped_grid ();
   g_message ("debug cmd: %s", cmd);
+  if (g_str_equal (cmd, "fp-state"))
+    {
+      debug_state ();
+      return G_SOURCE_CONTINUE;
+    }
   if (grid == NULL && (g_str_has_prefix (cmd, "scroll ") || g_str_has_prefix (cmd, "action ")))
     g_message ("debug cmd: no grid");
   if (g_str_has_prefix (cmd, "scroll ") && grid != NULL)
@@ -1333,6 +1370,56 @@ fp_view_hook_shutdown (void)
   g_clear_pointer (&vh, g_free);
 }
 
+/* Hooks every mapped NautilusImage below @w that isn't hooked or known to be irrelevant yet (used when the
+ * feature is switched on while windows are open: their icons won't be mapped again). */
+static void
+attach_mapped (GtkWidget *w)
+{
+  if (!gtk_widget_get_mapped (w))
+    return;
+  if (G_TYPE_CHECK_INSTANCE_TYPE (w, vh->image_type))
+    {
+      if (g_object_get_data (G_OBJECT (w), HOOK_KEY) == NULL && g_object_get_data (G_OBJECT (w), IGNORE_KEY) == NULL)
+        maybe_attach (w);
+      return;
+    }
+  for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL && vh != NULL && !vh->disabled;
+       c = gtk_widget_get_next_sibling (c))
+    attach_mapped (c);
+}
+
+void
+fp_view_hook_set_enabled (gboolean enabled)
+{
+  if (vh == NULL || vh->disabled || vh->off == !enabled)
+    return;
+  vh->off = !enabled;
+  if (vh->off)
+    {
+      g_clear_handle_id (&vh->detect_timer, g_source_remove);
+      detach_all (); /* gives every icon back to Nautilus */
+      g_debug ("folder previews switched off");
+      return;
+    }
+  g_debug ("folder previews switched on");
+  if (vh->image_type == 0)
+    vh->image_type = g_type_from_name (internal_name ("NautilusImage", "types"));
+  if (vh->image_type == 0)
+    return; /* no Nautilus icon was ever created: the map hook will find them */
+  GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+  for (guint i = 0; i < g_list_model_get_n_items (toplevels) && vh != NULL && !vh->disabled; i++)
+    {
+      g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
+      attach_mapped (window);
+    }
+}
+
+gboolean
+fp_view_hook_get_enabled (void)
+{
+  return vh != NULL && !vh->disabled && !vh->off;
+}
+
 static void folder_changed_impl (const char *uri);
 
 void
@@ -1346,7 +1433,7 @@ fp_view_hook_folder_changed (const char *uri)
 static void
 folder_changed_impl (const char *uri)
 {
-  if (vh == NULL || vh->disabled || uri == NULL)
+  if (vh == NULL || vh->disabled || vh->off || uri == NULL)
     return;
   /* Nautilus calls this for every folder when a directory loads; only act if we had cached something. */
   if (!fp_cache_invalidate (vh->cache, uri))

@@ -52,15 +52,17 @@ Turns the drive rows of the sidebar into rows with a usage bar and free space, l
 ```
 
 - **OS drive**: a row named after the installed OS (`PRETTY_NAME` from os-release) directly above the other
-  drives; clicking it opens `/`. Nautilus' own "Computer" row is left untouched.
+  drives; clicking it opens `/`, right-clicking it opens Files' own drive menu (Open, Open in New Tab,
+  Open in New Window, Properties). Nautilus' own "Computer" row is left untouched.
 - **Local drives**: Nautilus' drive rows get a bar and "X free of Y" under their name; eject, right-click
   menu and drag-and-drop work as before.
 - **Network shares** (mounted ones, e.g. SMB/SFTP, or NFS/CIFS mounted by the system) are listed below a
   separator under the local drives, with a bar when the server reports its size. Click opens the share,
   the eject button unmounts it. Their right-click menu and dropping files onto them are not available
   (Nautilus sorts shares above the local drives and its rows can't be re-sorted, so these are our own rows).
-- Bars use the accent colour, the warning colour from 90 % full and the error colour from 95 %; light, dark
-  and high-contrast themes are followed. Free space is refreshed when a window gets focus and every 60 s.
+- Bars use the accent colour by default (another colour or a gradient can be chosen in the settings), the
+  warning colour from 90 % full and the error colour from 95 %; light, dark and high-contrast themes are
+  followed. Bars, size labels and a sliding eject button are configurable (see *Settings*). Free space is refreshed when a window gets focus and every 60 s.
   A slow or unreachable server never blocks Files: its size query gives up after 3 s and keeps the last
   values.
 
@@ -70,6 +72,31 @@ Known limitations:
   on Nautilus 51.1). If they change, it logs one warning ("sidebar drives disabled: …") and the sidebar
   stays as stock Nautilus.
 - Only mounted network shares are listed (mount them via *Network*).
+
+### Settings
+
+Files' main menu (☰) gets a **Nautilus Utils Settings** entry above *Preferences*. It opens a dialog with
+one tab per feature; every tab can switch its feature on or off. Changes only take effect when you press
+**Apply**; closing the dialog without Apply discards them.
+
+- **Folder Preview**: show previews on folder icons (on/off).
+- **Sidebar Drives**: enhanced drive rows (on/off), bar colour (accent colour, a custom colour, or a
+  two-colour gradient), show/hide the usage bars and the size labels, and slide the eject button in only
+  on hover.
+
+The settings are stored with GSettings (schema `io.github.zyrotec.NautilusUtils`, inspect with
+`gsettings list-recursively io.github.zyrotec.NautilusUtils`). If the schema isn't installed, the features
+run with their defaults, the dialog says so, and Files logs one warning.
+
+Custom colours and the gradient replace the warning/error colours of nearly full drives; with the accent
+colour a drive turns the warning colour from 90 % and the error colour from 95 % full.
+
+With **Slide In on Hover**, the eject buttons stay hidden and the bars use the full row width (like the OS
+drive); hovering a drive (or giving it keyboard focus) slides its eject button in, and the row's text and bar
+fade out underneath it.
+
+Right-clicking the OS drive (or the Menu key) opens Files' own drive menu for it: Open, Open in New Tab,
+Open in New Window and Properties.
 
 ## Requirements
 
@@ -96,11 +123,19 @@ build output there **once**; after that every rebuild is picked up without sudo:
 sudo ln -sf "$PWD/build/libnautilus-utils.so" /usr/lib64/nautilus/extensions-4/libnautilus-utils.so
 ```
 
+Install the settings schema into your home folder (repeat when `data/*.gschema.xml` changes):
+
+```
+mkdir -p ~/.local/share/glib-2.0/schemas
+cp data/io.github.zyrotec.NautilusUtils.gschema.xml ~/.local/share/glib-2.0/schemas/
+glib-compile-schemas ~/.local/share/glib-2.0/schemas
+```
+
 Nautilus keeps running in the background, so a rebuild only takes effect after it quits:
 
 ```
 nautilus -q
-G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives" nautilus    # with log messages
+G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings" nautilus    # with log messages
 ```
 
 ## Install system-wide
@@ -126,6 +161,9 @@ Remove the dev symlink first if you made one.
 nautilus -q
 sudo rm /usr/lib64/nautilus/extensions-4/libnautilus-utils.so     # dev symlink or meson install
 # or: sudo dnf remove nautilus-utils
+# dev schema, if installed:
+rm ~/.local/share/glib-2.0/schemas/io.github.zyrotec.NautilusUtils.gschema.xml
+glib-compile-schemas ~/.local/share/glib-2.0/schemas
 ```
 
 ## Safety checks
@@ -137,9 +175,11 @@ tools/check-safety.sh asan               # run only some steps
 tools/smoke-nautilus.sh DIR              # isolated real Nautilus with an ASan build
 tools/smoke-nautilus.sh --auto 120 DIR   # unattended: scripted scroll/zoom/hover + sidebar steps + self-checks
 SMOKE_FAKE_NETWORK="User Drive" tools/smoke-nautilus.sh --auto 120 DIR   # also exercise the network list
+SMOKE_TOGGLES=5 tools/smoke-nautilus.sh --auto 60 DIR   # fewer settings on/off rounds (default 25)
 ```
 
-Logs land in `safety-logs/`.
+Logs land in `safety-logs/`. The smoke test also drives the settings (colours, show/hide, sliding eject,
+feature on/off) through an in-memory settings store, so it never changes your own settings.
 
 ## Benchmarks (folder preview)
 
@@ -169,7 +209,13 @@ build/tests/folder-preview/bench-core DIR  # per-stage timings of the pipeline o
 | `src/sidebar-drives/sidebar_drives.c` | Feature set-up / tear-down |
 | `src/sidebar-drives/drive_info.c` | OS name, local/network classification, async size queries with timeout, usage text |
 | `src/sidebar-drives/sidebar_hook.c` | **Unsupported**: hooks into Nautilus' private sidebar widgets (drive rows, OS row, network list) |
+| `src/sidebar-drives/bar_style.c` | Bar colours from the settings, as CSS |
+| `src/sidebar-drives/fade_bin.c` | Container that fades its content out under the sliding eject button |
 | `src/sidebar-drives/config.h` | Tunable constants |
+| `src/common/nu_settings.c` | Shared settings service (GSettings snapshot + change notifications) |
+| `src/settings/settings_dialog.c` | The "Nautilus Utils Settings" dialog |
+| `src/settings/menu_hook.c` | **Unsupported**: adds the entry to Nautilus' private main menu |
+| `data/*.gschema.xml` | GSettings schema |
 | `tests/<feature>/` | GLib unit tests (`meson test`) |
 | `tools/` | Safety, smoke-test, benchmark and packaging scripts |
 | `packaging/` | Fedora RPM spec |

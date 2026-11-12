@@ -52,7 +52,7 @@ fp_feature_lib = static_library('fp-feature',
   'view_hook.c',
   c_args: fp_feature_c_args,
   dependencies: ext_deps + core_deps,
-  include_directories: conf_inc,
+  include_directories: [conf_inc, nu_common_inc], # nu_settings.h (PLAN.md §9)
   pic: true,
   gnu_symbol_visibility: 'hidden',
 )

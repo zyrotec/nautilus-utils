@@ -4,6 +4,7 @@ test_env.set('G_TEST_SRCDIR', meson.current_source_dir())
 test_env.set('G_TEST_BUILDDIR', meson.current_build_dir())
 test_env.set('GIO_USE_VFS', 'local')        # no gvfs daemons in tests
 test_env.set('GSETTINGS_BACKEND', 'memory')
+test_env.set('GSETTINGS_SCHEMA_DIR', nu_schema_dir) # the module starts the settings service (PLAN.md §9)
 test_env.set('FP_MODULE_PATH', nu_module.full_path())
 test_env.set('LC_ALL', 'en_US.utf8')        # deterministic natural-order collation
 
@@ -22,7 +23,7 @@ test_module = executable('test-module', 'test-module.c',
   link_with: fake_lib,
   dependencies: ext_deps + [gmodule_dep],
 )
-test('module', test_module, env: test_env, protocol: 'tap', args: ['--tap'], depends: nu_module)
+test('module', test_module, env: test_env, protocol: 'tap', args: ['--tap'], depends: [nu_module, nu_schemas_compiled])
 
 
 test_util_lib = static_library('test-util', 'test-util.c', dependencies: core_deps)

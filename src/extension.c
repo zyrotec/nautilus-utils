@@ -5,6 +5,7 @@
 #include <nautilus-extension.h>
 
 #include "folder-preview/folder_preview.h"
+#include "settings/settings.h"
 #include "sidebar-drives/sidebar_drives.h"
 
 typedef struct
@@ -15,6 +16,8 @@ typedef struct
 } NuFeature;
 
 static const NuFeature features[] = {
+  /* First: the other features read the shared settings it starts (PLAN.md §9.2.3). */
+  { st_feature_initialize, st_feature_shutdown, st_feature_list_types },
   { fp_feature_initialize, fp_feature_shutdown, fp_feature_list_types },
   { sd_feature_initialize, sd_feature_shutdown, sd_feature_list_types },
 };

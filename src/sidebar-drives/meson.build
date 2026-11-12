@@ -7,14 +7,26 @@ sd_inc = include_directories('.')
 # Nautilus-free core (Phase 1): OS name, classification, async size queries, usage text. Testable standalone.
 sd_core_lib = static_library('sd-core',
   'drive_info.c',
+  'bar_style.c',
   c_args: sd_c_args,
   dependencies: sd_core_deps,
-  include_directories: sd_inc,
+  include_directories: [sd_inc, nu_common_inc],
+  link_with: nu_common_lib,
   pic: true,
   gnu_symbol_visibility: 'hidden',
 )
 
 gtk_dep = dependency('gtk4', version: '>= 4.12')
+
+# Plain-GTK widgets (no Nautilus internals), shared by the module and their unit test.
+sd_ui_lib = static_library('sd-ui',
+  'fade_bin.c',
+  c_args: sd_c_args,
+  dependencies: sd_core_deps + [gtk_dep],
+  include_directories: sd_inc,
+  pic: true,
+  gnu_symbol_visibility: 'hidden',
+)
 
 # Feature entry points + the sidebar hook (the only file using Nautilus internals, PLAN.md §8.1.4).
 sd_feature_c_args = sd_c_args + (get_option('debug_driver') ? ['-DSD_DEBUG_DRIVER'] : [])
@@ -23,10 +35,10 @@ sd_feature_lib = static_library('sd-feature',
   'sidebar_hook.c',
   c_args: sd_feature_c_args,
   dependencies: sd_core_deps + [gtk_dep],
-  include_directories: sd_inc,
+  include_directories: [sd_inc, nu_common_inc], # nu_settings.h (PLAN.md §9)
   pic: true,
   gnu_symbol_visibility: 'hidden',
 )
 
-feature_libs += [sd_feature_lib, sd_core_lib]
+feature_libs += [sd_feature_lib, sd_ui_lib, sd_core_lib]
 feature_deps += [gtk_dep]

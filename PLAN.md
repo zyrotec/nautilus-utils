@@ -144,6 +144,7 @@ findings and the smoke test is clean.
 |---|---|---|---|
 | 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover | `src/folder-preview/` | **v1 done** (grid view) |
 | 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
+| 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
 
 Open items:
 
@@ -601,3 +602,360 @@ a slow/unreachable server never freezes Files.
   Unit-test coverage: `drive_info.c` 95.9 %, `sidebar_hook.c` 3.8 % (runs only inside Nautilus → smoke test).
 - Docs: README "Sidebar drives" section (behaviour, limitations, debug/smoke usage, layout table) and the
   RPM description.
+
+---
+
+## 9. Feature 3 — Settings (and sidebar-drives v2)
+
+A "Nautilus Utils Settings" window, opened from Nautilus' main menu, with one tab per feature. Every tab
+can switch its feature on or off; the Sidebar drives tab also controls the bar colour, what the drive rows
+show and a sliding eject button. Also adds a right-click menu to the OS drive row. Prefix `nu_` (shared
+settings core) / `st_` (window + menu hook), log domain `settings`, branch `dev-settings`.
+
+### 9.1 Behaviour
+
+#### 9.1.1 Menu entry
+
+Nautilus' main (hamburger) menu gets one entry, **"Nautilus Utils Settings"**, directly above
+"Preferences", in its own section so a separator sits below it (and the existing separator above it):
+
+```
+  Undo Trash / Redo
+  ─────────────────────────
+  Nautilus Utils Settings      ← new
+  ─────────────────────────    ← new
+  Preferences
+  Keyboard Shortcuts / Help / About Files
+```
+
+No other menu item is changed, moved or hidden. If the menu can't be found, log one warning and skip the
+entry (the features keep working with their stored settings).
+
+#### 9.1.2 Settings window (GNOME HIG, libadwaita)
+
+An `AdwDialog` presented over the Nautilus window it was opened from: `AdwToolbarView` with an
+`AdwHeaderBar` holding an `AdwViewSwitcher` (one tab per feature, each an `AdwPreferencesPage`) and an
+**Apply** button (`.suggested-action`) at the header bar's end. Controls only change a pending copy of the
+settings (GSettings in delay-apply mode, `g_settings_delay`); **Apply** writes them
+(`g_settings_apply`) and every open Nautilus window then updates live (no restart). Apply is insensitive
+until something has changed (`has-unapplied`). Closing the dialog with unapplied changes discards them
+(`g_settings_revert`). One dialog at a time per window (N5).
+
+**Tab "Folder Preview"**
+- Group "Folder Preview": switch row **"Show previews on folder icons"** (feature on/off).
+
+**Tab "Sidebar Drives"**
+- Group "Sidebar Drives": switch row **"Enhanced drive rows"** (feature on/off). Off = the stock Nautilus
+  sidebar (no OS row, no bars, network shares back in Nautilus' own list). All other rows on this tab are
+  insensitive while it is off.
+- Group "Usage Bar":
+  - Combo row **"Bar Colour"**: *Accent Colour* (follows the GNOME accent colour, live) / *Custom Colour* /
+    *Gradient*.
+  - **"Colour"** (`GtkColorDialogButton`), visible only for *Custom Colour*.
+  - **"Start Colour"** and **"End Colour"**, visible only for *Gradient*: a two-point linear gradient,
+    left → right, stretched across the **filled part** of the bar (N2).
+  - Switch **"Show Usage Bars"**, switch **"Show Size Labels"** (the "x free of y" caption). Both off →
+    drive rows go back to one line (name only), still in our order with the OS row.
+- Group "Eject Button": switch **"Slide In on Hover"** (§9.1.4).
+
+Every row has an accessible label; the dialog is fully keyboard-usable; light/dark/high-contrast follow the
+system.
+
+#### 9.1.3 OS drive context menu
+
+Right-click (and long-press / Menu key) on the OS drive row opens a popover menu styled like Nautilus'
+drive menu, without Unmount/Format and their separator:
+
+```
+  Open
+  Open in New Tab
+  Open in New Window
+  ─────────────────
+  Properties
+```
+
+All act on `/`. Network share rows keep no menu (S6 unchanged). Implementation: Nautilus' own menu (N6, §9.6).
+
+#### 9.1.4 Sliding eject button (when "Slide In on Hover" is on)
+
+- The eject button of every ejectable drive row (local and network) is hidden; the row's text, bar and
+  caption take the **full width of the row**, exactly like the OS row.
+- When the pointer is over the row **or the row has keyboard focus**, the button slides in from the right
+  edge, over the content (no reflow). Under it, the row content fades out through a **gradient mask** whose
+  width equals the button plus its padding (as planned), widened by the owner by 32 px
+  (`SD_EJECT_FADE_EXTRA_PX`): full opacity at the mask's left edge, transparent from its middle to the
+  right edge (§9.7 Phase 6). Pointer leaves / focus lost → slides out, mask goes away. Animation ~200 ms, ease-out; disabled when
+  GTK's "enable-animations" is off (instant show/hide).
+- The mask fades the content itself (not a painted colour), so it works on every row background (normal,
+  hover, selected, light, dark).
+- Off → today's layout (button always visible, bars end before it).
+
+#### 9.1.5 Bar colours
+
+- *Accent Colour*: `var(--accent-bg-color)`, follows accent changes live.
+- *Custom Colour* / *Gradient*: the chosen colours; stored as `#rrggbb`.
+- Warning (≥ 90 %) / error (≥ 95 %) colours apply **only with Accent Colour**; a custom colour or gradient
+  is always shown as chosen (N3).
+
+### 9.2 Rules
+
+1. All §4 rules. The settings window and menu entry only exist on the main thread; no I/O in them except
+   GSettings (dconf, async by design).
+2. Nautilus-internals code stays in one file per feature: menu injection in `src/settings/menu_hook.c`,
+   everything sidebar-related in `src/sidebar-drives/sidebar_hook.c`, folder preview in `view_hook.c`.
+3. Settings live in **GSettings**, schema `io.github.zyrotec.NautilusUtils` (installed by Meson/RPM).
+   If the schema isn't installed, log one warning and run with the built-in defaults (= today's behaviour).
+   A shared, Nautilus-free wrapper `src/common/nu_settings.c` (first shared code, §3) gives typed getters +
+   change notifications and is unit-tested.
+4. Turning a feature off must fully undo its changes on open windows (folder icons back to stock, sidebar
+   rows restored, our rows/CSS removed) and stop its timers/monitors; turning it on re-applies. Repeated
+   toggling must not leak (stress test + smoke test).
+5. Never alter Nautilus' existing UI beyond what is listed here (menu: one added section).
+
+### 9.3 Settings keys (defaults = current behaviour)
+
+| Key | Type | Default |
+|---|---|---|
+| `folder-preview-enabled` | b | true |
+| `sidebar-drives-enabled` | b | true |
+| `bar-colour-mode` | enum accent / custom / gradient | accent |
+| `bar-colour` | s `#rrggbb` | `#3584e4` |
+| `bar-gradient-start` / `bar-gradient-end` | s `#rrggbb` | `#3584e4` / `#9141ac` |
+| `show-usage-bars` | b | true |
+| `show-size-labels` | b | true |
+| `eject-slide` | b | false |
+
+Constants: `SD_EJECT_SLIDE_MS` 200, `SD_EJECT_FADE_EXTRA_PX` 32 (fade = button + padding + 32 px, owner
+2026-11-12).
+
+### 9.4 Decisions (owner, 2026-11-12)
+
+| # | Decision |
+|---|---|
+| N1 | Eject button slides in on **hover or keyboard focus**. |
+| N2 | Gradient spans the **filled part** of the bar (every bar shows the whole gradient). |
+| N3 | Warning/error colours are **dropped** for Custom/Gradient, **kept** for Accent Colour (owner confirmed). |
+| N5 | The dialog has an **Apply** button; controls change nothing until it is pressed; closing without Apply discards. |
+| N6 | OS drive menu = **Nautilus' own row menu**, opened for our row via the sidebar's long-press gesture (§9.6); no menu code of our own. |
+| N4 | OS drive menu: Open / Open in New Tab / Open in New Window / — / Properties. Network rows: no menu. |
+
+### 9.5 Phases
+
+| Phase | Work | Acceptance |
+|---|---|---|
+| 0 Spike | Probe (not built): how Nautilus builds its main menu (`GtkMenuButton` → `GMenuModel`, mutable?), insert a section above Preferences + our own action group; how Nautilus opens a location in a new tab / window and shows Properties (window/slot actions, else the public `org.freedesktop.FileManager1.ShowItemProperties` D-Bus call); right-click popover on our OS row; eject button moved into a `GtkOverlay` over the row content while keeping Nautilus' click handling; content mask via `gtk_snapshot_push_mask` in a small container widget; live undo of folder preview and sidebar drives. | Every question answered and recorded here; anything infeasible reported before building. |
+| 1 Settings core | Schema + Meson install, `nu_settings.c` (typed getters, colour parsing/validation, change signals), unit tests. | Tests + `check-safety.sh` pass. |
+| 2 Window + menu | Dialog with both tabs bound to a delayed GSettings, Apply button; menu entry + separator. | Entry above Preferences with separator below; nothing changes before Apply; Apply persists across restarts; close discards; light/dark. |
+| 3 Feature toggles | Live on/off for folder preview and sidebar drives, full undo. | Toggle 50× in the smoke test without leaks/warnings; stock UI restored when off. |
+| 4 OS row menu | Popover menu, actions on `/`. | All four items work; Computer row and other rows unchanged. |
+| 5 Bar options | Colour modes (accent/custom/gradient), hide bars/labels. | Matches spec in light/dark; changes live. |
+| 6 Eject slide | Hidden eject button, slide + gradient mask, full-width bars, focus support, reduced motion. | Works on local and network rows; eject still unmounts; no reflow; 16 ms probe clean. |
+| 7 Hardening & docs | Smoke-test coverage for settings changes, `check-safety.sh`, README section + RPM (schema install). | All PASS. |
+
+### 9.6 Phase 0 findings (2026-11-12, Nautilus 51.1 / GTK 4.24.1 / libadwaita 1.10)
+
+Method: Nautilus 51.1 source read for reference (not vendored); throwaway probe `LD_PRELOAD`ed into an
+isolated Nautilus (own D-Bus session) alongside the real module, rendering widgets to PNG. No eject was
+ever pressed. Not in the repo.
+
+**Main menu.** Defined in `nautilus-window.blp` as `menu app_menu` (template child, so **one `GMenu` per
+window**), set on the header bar's `GtkMenuButton` (`icon-name open-menu-symbolic`). Three sections:
+New Window/Tab/Show All Tabs · Undo/Redo · Preferences/Keyboard Shortcuts/Help/About. Nautilus only
+rewrites the *contents* of the Undo section (`nautilus_gmenu_set_from_model`), never the top-level list.
+- `g_menu_insert_section (menu, <index of the section whose first item is app.preferences>, NULL, ours)`
+  gives exactly the requested layout (separator above and below our entry). ✅ (rendered)
+- Our action: `gtk_widget_insert_action_group (window, "nautilus-utils", group)`; the menu's popover
+  resolves `nautilus-utils.settings` through the window. ✅
+- Inject per window when it maps; find the section by action name (not index) and mark the window so it
+  happens once.
+
+**Settings dialog.** `AdwDialog` + `AdwToolbarView` + `AdwHeaderBar` (title widget `AdwViewSwitcher`,
+policy wide) + `AdwViewStack` of `AdwPreferencesPage`s + Apply button (`.suggested-action`, pack end)
+presents over the Nautilus window with the usual dimmed backdrop; `GtkColorDialogButton` works. ✅
+libadwaita 1.10 is already in Nautilus' process; we link `libadwaita-1` (same library).
+
+**GSettings.** The default schema source finds a compiled schema in `$XDG_DATA_HOME/glib-2.0/schemas`
+(✅ with a test schema) and not otherwise, so: RPM/`meson install` → `/usr/share/glib-2.0/schemas`;
+development → install the schema into `~/.local/share/glib-2.0/schemas` (README). Missing schema →
+defaults + one warning (§9.2.3), never a crash (`g_settings_new` aborts on an unknown schema, so we look
+it up with `g_settings_schema_source_lookup` first).
+
+**OS drive menu — use Nautilus' own menu (better than building our own).** Nautilus' row menu
+(`create_row_popover`) builds its items from the row's properties; for our OS row (`uri file:///`, no
+mount/volume/drive) that is exactly **Open / Open in New Tab / Open in New Window / — / Properties**
+(no Unmount/Format; the bookmark section is hidden-when-disabled). It is reached from the row's own click
+gesture (which our row lacks), the Menu key / Shift+F10 on the selected row (already works for our row),
+and the sidebar's touch long-press gesture, whose handler takes `gtk_list_box_get_row_at_y (list, y)`.
+- Right-click on our row → emit `pressed (x, y)` on the sidebar's `GtkGestureLongPress` with our row's
+  centre in list coordinates → Nautilus shows its native popover for our row. ✅ (rendered: identical to
+  the owner's screenshot minus Unmount/Format)
+- Actions go through Nautilus' `row.*` group with our row as context row: `open_row()` and
+  `properties_cb()` only read the row's `uri`. Verified: *Open in New Tab* added a background tab
+  (1 → 2 tabs), *Properties* opened Nautilus' properties dialog for `/`; no warnings. ✅
+- Difference to native rows: the popover points at the row, not the click position (long-press path).
+- Fallback: no long-press gesture found → no menu, one debug message (row still works).
+
+**Sliding eject.** Row box children: `[GtkImage, our .sd-drive-info box, GtkImage (end, hidden),
+GtkButton.sidebar-button (eject, natural width 30 px, margin-start 4 px), AdwSpinner]`.
+- Moving Nautilus' eject button into a `GtkOverlay` (child: a small container that holds our info box,
+  overlay: `GtkRevealer` slide-left, `halign END`) keeps its 3 controllers; Nautilus keeps its pointer to
+  the button. ✅
+- Hidden → the bar spans the full row width (like the OS row) ✅. Revealed → the button sits over the
+  right end and the content under it fades out through `gtk_snapshot_push_mask` (alpha mask, linear
+  gradient over the last *button width + margins* = 34 px) ✅ (rendered).
+- The fade width follows the revealer's animated width each frame (tick callback while animating).
+- `on_net_eject` looks Nautilus' eject button up inside its (hidden) row, so the lookup must search
+  descendants, not only direct children of the row box (Phase 6).
+
+**Live on/off.** Both hooks already have a full "disable" path (graceful failure): folder preview gives
+every image back to Nautilus (`detach_all`), sidebar drives removes our rows/network list and unhides
+Nautilus' rows. Missing for a clean live toggle: sidebar drives must also **undecorate** Nautilus' drive
+rows (move the label back, remove the info box, restore the eject button), and both hooks need a "re-enable"
+that re-scans already-mapped widgets (the map emission hook only sees widgets mapped later). Phase 3.
+
+**Phase 0 status: done** (2026-11-12). Design change → N6.
+
+### 9.7 Phase results
+
+**Phase 1 — Settings core (done 2026-11-12).** `data/io.github.zyrotec.NautilusUtils.gschema.xml` (keys
+§9.3, enum `BarColourMode`), compiled into the build dir for tests and installed to
+`$datadir/glib-2.0/schemas` with `glib-compile-schemas` as post-install. `src/common/nu_settings.c` (first
+shared code, §3; GLib/GIO only): typed `NuConfig` snapshot, `#rrggbb` parse/format (an invalid stored colour
+falls back to the default), schema looked up before `g_settings_new_full` (missing schema → defaults + one
+warning), `nu_settings_new_delayed()` for the dialog (delay-apply), and listeners notified **once per batch**
+from an idle with the changed groups (`NuChanged`), safe against listeners removing listeners or shutting
+the service down mid-dispatch. Not wired into the module yet (Phase 2).
+Tests: `tests/common/test-settings.c`, 12 tests (C defaults = schema defaults, stored values, invalid
+colours, delayed apply → one notification, revert, every key group, missing schema, use without init,
+re-entrancy, 300-cycle init/apply/shutdown stress). Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan,
+valgrind all PASS (10/10 suites under ASan); coverage of `nu_settings.c` 99.2 % (never run: the guard for a
+schema key missing from the key→group table).
+
+**Phase 2 — Window + menu (done 2026-11-12).** `src/settings/`: `settings.c` (feature entry, initialized
+**first** in `features[]` so the other features can read settings; starts `nu_settings`),
+`menu_hook.c` (the only file using Nautilus internals: finds new `NautilusWindow`s through GTK's toplevel
+list → idle scan, inserts our section before the `app.preferences` section + action group
+`nautilus-utils`; removed again on shutdown; one warning if the menu isn't found), `settings_dialog.c`
+(`AdwDialog`, tabs via `AdwViewSwitcher`, `AdwViewSwitcherBar` + breakpoint below 500 sp, Apply button
+bound to `has-unapplied`, controls bound to the delayed GSettings with mappings for the enum and
+`#rrggbb` ↔ `GdkRGBA`, colour rows only visible in their mode, feature options insensitive while the
+feature switch is off — following the pending value; without schema: an "Settings Unavailable" status
+page and no Apply). Links `libadwaita-1` (≥ 1.5).
+Verified in an isolated Nautilus (memory GSettings backend, so the owner's settings are never touched):
+menu sections exactly as §9.1.1; edits leave the stored values unchanged and enable Apply; Apply stores
+them and disables Apply; a pending edit is discarded on close; reopening shows the applied values;
+narrow layout (bottom sheet, tabs at the bottom); no-schema path (one warning, entry still shown, status
+page); no warnings. Packaging: schema in `%files`, `libadwaita-1` BuildRequires; README: Settings section,
+dev schema install into `~/.local/share/glib-2.0/schemas`.
+Finding: the module-load test failed under ASan on a clean machine (fatal "schema not installed" warning) —
+the folder-preview tests now get `GSETTINGS_SCHEMA_DIR` = the build's compiled schema; all suites verified
+with the home schema hidden (`XDG_DATA_HOME=/nonexistent`).
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS (10/10 suites). Unit coverage of
+the dialog/menu is low (dialog 0 %, menu 13 %: they need a Nautilus window) → smoke test (Phase 7).
+
+**Phase 3 — Feature toggles (done 2026-11-12).** Both features follow their on/off switch live (one
+notification per Apply):
+- Folder preview: `fp_view_hook_set_enabled`. Off → every icon given back to Nautilus (`detach_all`),
+  map events and folder-change notifications ignored (the map emission hook stays, so switching back on
+  needs no restart). On → the mapped widget trees of all toplevels are walked and visible icons hooked
+  again (they are not mapped a second time).
+- Sidebar drives: `sd_sidebar_hook_set_enabled`. Off → `detach_all`, which now also **undecorates**
+  Nautilus' drive rows (label moved back to its place, our bar/caption box removed, size query cancelled,
+  accessible description reset) on top of removing our OS row/network list and unhiding hidden rows — the
+  graceful-failure path benefits too. On → types resolved/validated if needed, mapped sidebars re-hooked.
+- Initial state comes from the settings in each feature's initialize (settings feature runs first).
+Debug driver (debug builds only): `st-set <key> <GVariant>` (as Apply would), `st-open`, `st-close`,
+`st-dump`; `fp-state` (hooks + icons still showing our paintable); `sd-dump` while off reports our
+leftovers anywhere in the windows. The smoke test now runs Nautilus with an **in-memory GSettings backend**
+and the build's schema (never touches the owner's settings) and toggles both features `SMOKE_TOGGLES`
+(25) times, failing on any leftover while off or preview shown while off.
+Smoke (`smoke-20261112-184138`, ASan, ~/Pictures, 60 s + 25 toggle rounds): PASS — 25/25 sidebar off-dumps with
+0 leftovers and OS row + bars back after every switch-on; 25/25 preview off-states with 0 icons showing
+previews and icons re-hooked after every switch-on; 38 verifies, 0 wrong previews; no warnings; no sanitizer
+report mentioning our code. Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS
+(home schema hidden).
+
+**Phase 4 — OS row menu (done 2026-11-12).** Right-click (secondary button) and Menu / Shift+F10 on our OS
+row open **Nautilus' own drive menu** for it (N6): `show_os_menu` emits `pressed` on the sidebar's
+`GtkGestureLongPress` at the row's centre in places-list coordinates, after checking that
+`gtk_list_box_get_row_at_y` returns our row there. Items (from Nautilus, for a row without mount):
+Open / Open in New Tab / Open in New Window / — / Properties; the hidden bookmark/unmount sections don't
+show. No gesture found → no menu, one debug message, the row keeps working. Primary click still opens `/`.
+Safety: Nautilus keeps a raw pointer to the menu's row (`context_row`), so before our OS row is removed
+(switch-off, graceful failure, shutdown) an open row menu is closed first.
+Verified in an isolated Nautilus (debug commands `sd-os-menu`, `sd-os-menu-dump`,
+`sd-os-menu-activate <action> [int]`, `sd-os-menu-close`): items as above, *Open in New Tab* and
+*Properties* run, switching the feature off with the menu open leaves 0 leftovers and no crash, menu works
+again after switching back on. Smoke (`smoke-20261112-185718`, ASan, 5 toggle rounds + 60 s): PASS, menu checked for
+Properties and for the absence of Unmount/Format/Eject. Safety: strict, `-fanalyzer`, scan-build,
+ASan+UBSan, valgrind all PASS. Still manual (owner): a real right-click, Menu key, and the popover's position.
+
+**Phase 5 — Bar options (done 2026-11-12).** `src/sidebar-drives/bar_style.c` (GLib only, in the core
+library): `sd_bar_colour_css` turns the colour settings into one CSS rule for every filled block incl. the
+warning/full states — accent: empty (built-in accent/warning/error rules apply), custom: the colour,
+gradient: `linear-gradient(to right, start, end)` on the filled block, which is exactly as wide as the used
+part (N2). Loaded into a second `GtkCssProvider` at APPLICATION + 1 and reloaded on every colour change.
+Rows remember whether a size is known; bar and caption visibility = known ∧ show-usage-bars /
+show-size-labels, re-synced on every row (Nautilus drive rows, OS row, network rows) when those settings
+change; both off → one-line rows. Tests: `tests/sidebar-drives/test-bar-style.c` (4 tests, incl. GTK parses
+every generated rule without errors); `bar_style.c` 100 % covered.
+Verified in an isolated Nautilus with rendered PNGs (debug commands `sd-png <path>`, `sd-resize W H`):
+accent, custom red, green→red gradient across the filled part, labels hidden, both hidden (one line), bars
+hidden, back to accent — all live, no warnings. Smoke (`smoke-20261112-191813`, ASan): PASS with a style round (colour
+modes × all four show/hide combinations) and a check that visibility always matches the settings
+(19 style dumps). Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+Still manual (owner): light theme and high-contrast look of custom/gradient bars.
+
+**Phase 6 — Sliding eject (done 2026-11-12).** `src/sidebar-drives/fade_bin.c` (plain GTK, own library
+`sd-ui`): `SdFadeBin`, a one-child container whose snapshot pushes an alpha mask (`gtk_snapshot_push_mask`)
+— a linear gradient over the button's width, opaque at the button's outer edge and **transparent from its
+middle on** (owner-visible refinement: with a plain linear ramp the text showed half-transparent right under
+the icon); mirrored for RTL. The mask width is read **at draw time** from the followed revealer's allocated
+width (button + margins), so it matches the slide on every frame; a tick callback only redraws while the
+revealer animates; 0 when Nautilus hides the button. Weak in both directions.
+Hook (`eject_slide_attach/detach`, `sync_eject_mode`): with eject-slide on, every decorated row with an
+eject button (Nautilus' drive rows, our network rows; not the OS row) gets `[overlay(fade bin(info),
+revealer(eject)), …]` instead of `[info, …, eject]`: info takes the full width like the OS row, the revealer
+(`halign END`, slide-left/right, `SD_EJECT_SLIDE_MS` 200 ms, GTK's enable-animations respected) shows the
+button while the row `contains-pointer` (motion controller) or `contains-focus` (focus controller, N1).
+Off → button and info go back to their exact places (previous sibling remembered); undecorate detaches first.
+Nautilus' eject keeps working: its handler is on the button's own `clicked` (verified in the source and in
+every smoke dump: `clicked-handler=1`, button inside our revealer).
+Tests: `tests/sidebar-drives/test-fade-bin.c` (mask geometry incl. RTL/clamping and the stops, child
+handling, 300-cycle follow lifecycle with either side destroyed first). They deliberately don't map a
+window: mapped rendering loads fontconfig/pango/GPU caches that LSan reports and that hang under valgrind
+(first attempt) — on-screen behaviour is covered by renders and the smoke test. Coverage `fade_bin.c`
+84.7 % (rest = the mapped animation path).
+Verified in an isolated Nautilus with renders (`sd-eject-reveal 0|1` simulates hover): hidden → full-width
+bars on local and network rows; mid-slide; shown with content faded out before the icon; slid out; labels
+hidden; option off → identical to before. Smoke (`smoke-20261112-200421`, ASan, fake network share, eject round incl.
+feature off/on while sliding): PASS. Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+Still manual (owner): real hover/focus, real eject from a slid-in button, the animation's feel, light theme.
+Owner change (2026-11-12): fade **16 px wider** than the button (`SD_EJECT_FADE_EXTRA_PX`). The extra grows
+in with the slide (`sd_fade_follow_width`: revealer width + 16 × slide progress, progress = revealer width /
+the button's natural width incl. margins), so a hidden button still means no fade and nothing jumps on the
+first frame; the stops are unchanged (transparent from the middle of the now 50 px mask). Test added; render
+checked; strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind PASS.
+Owner change (2026-11-12, second): another 16 px → `SD_EJECT_FADE_EXTRA_PX` 32 (mask 66 px with a 34 px
+button, transparent from 33 px in).
+
+**Phase 7 — Hardening & docs (done 2026-11-12).** Final smoke (`smoke-20261112-202452`, ASan, fake network share, 150 s
+random browsing + every settings round: 25 on/off toggle rounds, colour modes × show/hide, sliding eject
+incl. feature off/on while sliding, OS drive menu): PASS — 26 sidebar off-dumps with 0 leftovers, 25 preview
+off-states with 0 previews shown and 25 re-hooks, 64 style dumps with visibility always matching the
+settings, 38 verifies with 0 wrong previews, no warnings, no sanitizer report mentioning our code. Final
+`check-safety.sh` (home schema hidden): strict, `-fanalyzer`, scan-build, ASan+UBSan (12/12 suites),
+valgrind all PASS. Coverage: `nu_settings.c` 99.2 %, `bar_style.c` 100 %, `fade_bin.c` 84.4 %; the
+Nautilus-internals files (`menu_hook.c`, `sidebar_hook.c`, `settings_dialog.c`) run only inside Nautilus →
+smoke test + isolated-Nautilus checks.
+Packaging (emulated, `rpm-build` not installed): release build with Fedora's `%{optflags}` and
+`-Dwerror=false` warning-free; staged `DESTDIR` install contains exactly the two `%files` entries (module +
+schema; `glib-compile-schemas` post-install correctly skipped under `DESTDIR`, Fedora's file trigger compiles
+it); schema valid (`glib-compile-schemas --strict`); `%check` set (`--no-suite thumbnailers --no-suite
+latency`) 9/9 with no home schema; module still exports only the 3 Nautilus entry points.
+Docs: README (Settings section, dev schema install/uninstall, sidebar section, smoke options, layout table),
+RPM description.
+
+Still manual (owner): real right-click / Menu key on the OS row and the menu's position; hover/focus feel of
+the sliding eject and a real eject from a slid-in button (on a removable drive or share); custom/gradient bars
+in the light and high-contrast themes; the settings dialog with a real mouse and keyboard.

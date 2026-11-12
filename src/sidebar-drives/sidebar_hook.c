@@ -30,7 +30,11 @@
 #include <signal.h>
 #endif
 
+#include <stdio.h>
+
+#include "bar_style.h"
 #include "config.h"
+#include "fade_bin.h"
 #include "drive_info.h"
 
 #define SIDEBAR_KEY "sd-sidebar-hook"
@@ -77,10 +81,12 @@ typedef struct
   GType           row_type;          /* NautilusSidebarRow. */
   gboolean        validated;
   gboolean        disabled;
+  gboolean        off;               /* Switched off in the settings (PLAN.md §9): stock sidebar, map ignored. */
   int             section_mounts;    /* NAUTILUS_SIDEBAR_SECTION_MOUNTS */
   int             place_internal;    /* NAUTILUS_SIDEBAR_ROW_INTERNAL_MOUNT */
   GHashTable     *sidebars;          /* Set of SidebarHook* (borrowed: owned by the sidebars' qdata). */
   GtkCssProvider *css;               /* Owned. */
+  GtkCssProvider *colour_css;        /* Owned: bar colours from the settings (PLAN.md §9.1.5), above @css. */
   GPtrArray      *css_displays;      /* Borrowed GdkDisplay* the provider was added to (displays outlive us). */
   char           *os_name;           /* Owned. */
   guint           detect_timer;      /* DETECT_TIMEOUT_MS watchdog. */
@@ -110,6 +116,15 @@ typedef struct
   GtkWidget    *bar;      /* Borrowed: child of the row, lives as long as the row (our owner). */
   GtkWidget    *caption;  /* Borrowed: same. */
   GCancellable *query;    /* Owned: the size query this row waits for, or NULL. */
+  gboolean      known;    /* A size was shown (bar/caption have content); visibility also follows settings. */
+  /* Sliding eject (PLAN.md §9.1.4); all NULL while the button sits in the row box as usual. All borrowed:
+   * children/controllers of the row, which owns this decoration and so outlives it. */
+  GtkWidget          *eject_overlay;   /* Replaces our info box in the row box: fade bin + revealer */
+  GtkWidget          *eject_revealer;  /* Holds the eject button, slides in at the end of the row */
+  GtkWidget          *eject_button;    /* Nautilus' (or our network row's) eject button */
+  GtkWidget          *eject_prev;      /* Its previous sibling in the row box, to put it back; may be NULL */
+  GtkEventController *eject_motion;    /* contains-pointer → reveal */
+  GtkEventController *eject_focus;     /* contains-focus → reveal */
 } RowDeco;
 
 static void disable (const char *reason);
@@ -177,11 +192,17 @@ ensure_css (GtkWidget *widget)
     {
       sh->css = gtk_css_provider_new ();
       gtk_css_provider_load_from_string (sh->css, sd_css);
+      sh->colour_css = gtk_css_provider_new ();
+      g_autofree char *colours = sd_bar_colour_css (nu_settings_get ());
+      gtk_css_provider_load_from_string (sh->colour_css, colours);
     }
   if (!g_ptr_array_find (sh->css_displays, display, NULL))
     {
       gtk_style_context_add_provider_for_display (display, GTK_STYLE_PROVIDER (sh->css),
                                                   GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+      /* One step higher so a chosen colour beats the built-in accent/warning rules. */
+      gtk_style_context_add_provider_for_display (display, GTK_STYLE_PROVIDER (sh->colour_css),
+                                                  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
       g_ptr_array_add (sh->css_displays, display);
     }
 }
@@ -268,6 +289,176 @@ decorate (GtkWidget  *row,
   return deco;
 }
 
+/* Hover or keyboard focus anywhere in the row slides the eject button in (N1). */
+static void
+update_eject_reveal (GtkWidget *row)
+{
+  RowDeco *deco = g_object_get_data (G_OBJECT (row), DECO_KEY);
+  if (deco == NULL || deco->eject_revealer == NULL)
+    return;
+  gboolean pointer = gtk_event_controller_motion_contains_pointer (GTK_EVENT_CONTROLLER_MOTION (deco->eject_motion));
+  gboolean focus = gtk_event_controller_focus_contains_focus (GTK_EVENT_CONTROLLER_FOCUS (deco->eject_focus));
+  gtk_revealer_set_reveal_child (GTK_REVEALER (deco->eject_revealer), pointer || focus);
+}
+
+static void
+on_eject_trigger (GObject    *controller,
+                  GParamSpec *pspec,
+                  gpointer    data)
+{
+  (void) pspec;
+  (void) data;
+  update_eject_reveal (gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (controller)));
+}
+
+/* Eject-slide mode on (PLAN.md §9.1.4): the row box's [info, …, eject] becomes [overlay(fade bin(info),
+ * revealer(eject)), …], so name, bar and caption take the full width (like the OS row) and the button slides
+ * in over their end, which fades out underneath. Rows without an eject button (the OS row) are left as is. */
+static void
+eject_slide_attach (GtkWidget *row,
+                    RowDeco   *deco)
+{
+  if (deco->eject_revealer != NULL || is_ours (row))
+    return; /* our OS row has no eject button (its template button stays hidden) */
+  GtkWidget *info = gtk_widget_get_parent (deco->bar);
+  GtkWidget *box = info != NULL ? gtk_widget_get_parent (info) : NULL;
+  if (!GTK_IS_BOX (box))
+    return;
+  GtkWidget *eject = NULL;
+  for (GtkWidget *c = gtk_widget_get_first_child (box); c != NULL; c = gtk_widget_get_next_sibling (c))
+    if (GTK_IS_BUTTON (c) && gtk_widget_has_css_class (c, "sidebar-button"))
+      {
+        eject = c;
+        break;
+      }
+  if (eject == NULL)
+    return;
+
+  deco->eject_prev = gtk_widget_get_prev_sibling (eject); /* may be @info itself (network rows) */
+  GtkWidget *info_prev = gtk_widget_get_prev_sibling (info);
+  g_object_ref (info);
+  g_object_ref (eject);
+  gtk_box_remove (GTK_BOX (box), eject);
+  gtk_box_remove (GTK_BOX (box), info);
+
+  GtkWidget *fade = sd_fade_bin_new ();
+  gtk_widget_set_hexpand (fade, TRUE);
+  sd_fade_bin_set_child (SD_FADE_BIN (fade), info);
+  GtkWidget *revealer = gtk_revealer_new ();
+  gboolean rtl = gtk_widget_get_direction (row) == GTK_TEXT_DIR_RTL;
+  gtk_revealer_set_transition_type (GTK_REVEALER (revealer), rtl ? GTK_REVEALER_TRANSITION_TYPE_SLIDE_RIGHT
+                                                                 : GTK_REVEALER_TRANSITION_TYPE_SLIDE_LEFT);
+  gtk_revealer_set_transition_duration (GTK_REVEALER (revealer), SD_EJECT_SLIDE_MS);
+  gtk_widget_set_halign (revealer, GTK_ALIGN_END);
+  gtk_revealer_set_child (GTK_REVEALER (revealer), eject);
+  GtkWidget *overlay = gtk_overlay_new ();
+  gtk_widget_add_css_class (overlay, "sd-eject-overlay");
+  gtk_widget_set_hexpand (overlay, TRUE);
+  gtk_overlay_set_child (GTK_OVERLAY (overlay), fade);
+  gtk_overlay_add_overlay (GTK_OVERLAY (overlay), revealer);
+  gtk_box_insert_child_after (GTK_BOX (box), overlay, info_prev);
+  g_object_unref (info);
+  g_object_unref (eject);
+  sd_fade_bin_set_fade_extra (SD_FADE_BIN (fade), SD_EJECT_FADE_EXTRA_PX);
+  sd_fade_bin_follow (SD_FADE_BIN (fade), GTK_REVEALER (revealer));
+
+  deco->eject_overlay = overlay;
+  deco->eject_revealer = revealer;
+  deco->eject_button = eject;
+  deco->eject_motion = gtk_event_controller_motion_new ();
+  g_signal_connect (deco->eject_motion, "notify::contains-pointer", G_CALLBACK (on_eject_trigger), NULL);
+  gtk_widget_add_controller (row, deco->eject_motion); /* row owns it */
+  deco->eject_focus = gtk_event_controller_focus_new ();
+  g_signal_connect (deco->eject_focus, "notify::contains-focus", G_CALLBACK (on_eject_trigger), NULL);
+  gtk_widget_add_controller (row, deco->eject_focus);
+  update_eject_reveal (row);
+}
+
+/* Eject-slide mode off: the button and the info box go back exactly where they were. */
+static void
+eject_slide_detach (GtkWidget *row,
+                    RowDeco   *deco)
+{
+  if (deco->eject_revealer == NULL)
+    return;
+  gtk_widget_remove_controller (row, deco->eject_motion);
+  gtk_widget_remove_controller (row, deco->eject_focus);
+  GtkWidget *overlay = deco->eject_overlay;
+  GtkWidget *box = gtk_widget_get_parent (overlay);
+  GtkWidget *fade = gtk_overlay_get_child (GTK_OVERLAY (overlay));
+  GtkWidget *info = SD_IS_FADE_BIN (fade) ? sd_fade_bin_get_child (SD_FADE_BIN (fade)) : NULL;
+  GtkWidget *eject = deco->eject_button;
+  if (GTK_IS_BOX (box) && info != NULL)
+    {
+      g_object_ref (info);
+      g_object_ref (eject);
+      sd_fade_bin_follow (SD_FADE_BIN (fade), NULL);
+      sd_fade_bin_set_child (SD_FADE_BIN (fade), NULL);
+      gtk_revealer_set_child (GTK_REVEALER (deco->eject_revealer), NULL);
+      gtk_box_insert_child_after (GTK_BOX (box), info, overlay);
+      gtk_box_remove (GTK_BOX (box), overlay); /* destroys the fade bin and the revealer */
+      GtkWidget *prev = deco->eject_prev != NULL && gtk_widget_get_parent (deco->eject_prev) == box ? deco->eject_prev : info;
+      gtk_box_insert_child_after (GTK_BOX (box), eject, prev);
+      g_object_unref (info);
+      g_object_unref (eject);
+    }
+  deco->eject_overlay = deco->eject_revealer = deco->eject_button = deco->eject_prev = NULL;
+  deco->eject_motion = deco->eject_focus = NULL;
+}
+
+/* Puts @row's eject button into the mode the settings ask for. */
+static void
+sync_eject_mode (GtkWidget *row,
+                 RowDeco   *deco)
+{
+  if (nu_settings_get ()->eject_slide)
+    eject_slide_attach (row, deco);
+  else
+    eject_slide_detach (row, deco);
+}
+
+/* Undoes decorate() on one of Nautilus' rows: its label goes back into the row box where it was, our box
+ * (bar + caption) is removed and the decoration freed (cancelling its size query). */
+static void
+undecorate (GtkWidget *row)
+{
+  RowDeco *deco = g_object_get_data (G_OBJECT (row), DECO_KEY);
+  if (deco == NULL)
+    return;
+  eject_slide_detach (row, deco);
+  GtkWidget *info = gtk_widget_get_parent (deco->bar);
+  GtkWidget *box = info != NULL ? gtk_widget_get_parent (info) : NULL;
+  if (GTK_IS_BOX (info) && GTK_IS_BOX (box))
+    {
+      GtkWidget *label = NULL;
+      for (GtkWidget *c = gtk_widget_get_first_child (info); c != NULL; c = gtk_widget_get_next_sibling (c))
+        if (GTK_IS_LABEL (c) && c != deco->caption)
+          {
+            label = c;
+            break;
+          }
+      if (label != NULL)
+        {
+          g_object_ref (label);
+          gtk_box_remove (GTK_BOX (info), label);
+          gtk_box_insert_child_after (GTK_BOX (box), label, info);
+          g_object_unref (label);
+        }
+      gtk_box_remove (GTK_BOX (box), info); /* destroys the bar and caption */
+    }
+  gtk_accessible_reset_property (GTK_ACCESSIBLE (row), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION);
+  g_object_set_data (G_OBJECT (row), DECO_KEY, NULL); /* runs row_deco_free */
+}
+
+/* Bar and caption are shown when a size is known and the settings ask for them (PLAN.md §9.1.2). */
+static void
+sync_visibility (RowDeco *deco)
+{
+  const NuConfig *config = nu_settings_get ();
+  gtk_widget_set_visible (deco->bar, deco->known && config->show_usage_bars);
+  gtk_widget_set_visible (deco->caption, deco->known && config->show_size_labels);
+}
+
 static void
 show_usage (GtkWidget     *row,
             RowDeco       *deco,
@@ -276,8 +467,8 @@ show_usage (GtkWidget     *row,
   if (usage == NULL || !usage->known)
     {
       /* Network server without size info (S2), or the query failed: name only. */
-      gtk_widget_set_visible (deco->bar, FALSE);
-      gtk_widget_set_visible (deco->caption, FALSE);
+      deco->known = FALSE;
+      sync_visibility (deco);
       gtk_accessible_reset_property (GTK_ACCESSIBLE (row), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION);
       return;
     }
@@ -295,8 +486,8 @@ show_usage (GtkWidget     *row,
   else
     gtk_widget_remove_css_class (deco->bar, "sd-full");
   gtk_label_set_text (GTK_LABEL (deco->caption), text);
-  gtk_widget_set_visible (deco->bar, TRUE);
-  gtk_widget_set_visible (deco->caption, TRUE);
+  deco->known = TRUE;
+  sync_visibility (deco);
   gtk_accessible_update_property (GTK_ACCESSIBLE (row), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, text, -1);
 }
 
@@ -417,8 +608,59 @@ activate_os_row (GtkWidget *os_row)
     }
 }
 
+/* The sidebar's touch long-press gesture: its handler opens Nautilus' own row menu for the row at a given
+ * y of the places list (PLAN.md §9.6, N6). Borrowed (owned by the sidebar); NULL if not found. */
+static GtkGesture *
+find_long_press (GtkWidget *sidebar)
+{
+  g_autoptr (GListModel) controllers = gtk_widget_observe_controllers (sidebar);
+  for (guint i = 0; i < g_list_model_get_n_items (controllers); i++)
+    {
+      g_autoptr (GObject) c = g_list_model_get_item (controllers, i);
+      if (GTK_IS_GESTURE_LONG_PRESS (c))
+        return GTK_GESTURE (c); /* stays alive: the sidebar holds it */
+    }
+  return NULL;
+}
+
+/* Nautilus' row menu popover if it is shown in @sidebar, else NULL. Borrowed. */
+static GtkWidget *
+open_row_menu (GtkWidget *sidebar)
+{
+  for (GtkWidget *c = gtk_widget_get_first_child (sidebar); c != NULL; c = gtk_widget_get_next_sibling (c))
+    if (GTK_IS_POPOVER_MENU (c) && gtk_widget_get_visible (c))
+      return c;
+  return NULL;
+}
+
+/* Opens Nautilus' own drive menu for our OS row: Open / Open in New Tab / Open in New Window / Properties
+ * (Nautilus builds it from the row's properties; our row has no mount, so no Unmount/Format). Done by
+ * emitting the sidebar long-press gesture's "pressed" at our row; Nautilus' handler looks the row up with
+ * gtk_list_box_get_row_at_y on the places list. Returns FALSE (row keeps working, no menu) if that isn't
+ * possible. */
+static gboolean
+show_os_menu (GtkWidget *os_row)
+{
+  GtkWidget *sidebar = sidebar_of (os_row);
+  GtkWidget *list = gtk_widget_get_parent (os_row);
+  GtkGesture *long_press = sidebar != NULL ? find_long_press (sidebar) : NULL;
+  graphene_point_t p;
+  if (long_press == NULL || !GTK_IS_LIST_BOX (list) ||
+      !gtk_widget_compute_point (os_row, list, &GRAPHENE_POINT_INIT (0.0f, gtk_widget_get_height (os_row) / 2.0f), &p) ||
+      gtk_list_box_get_row_at_y (GTK_LIST_BOX (list), (int) p.y) != GTK_LIST_BOX_ROW (os_row))
+    {
+      static gboolean logged;
+      if (!logged)
+        g_debug ("OS row menu unavailable (no sidebar long-press gesture or row not in the places list)");
+      logged = TRUE;
+      return FALSE;
+    }
+  g_signal_emit_by_name (long_press, "pressed", (double) p.x, (double) p.y);
+  return TRUE;
+}
+
 /* Claim every press on our row so Nautilus' list/sidebar gestures (activation, context menu, long press)
- * never get it; only a primary click opens "/". */
+ * never get it; a primary click opens "/", a secondary click opens the drive menu. */
 static void
 on_os_pressed (GtkGestureClick *gesture,
                int              n_press,
@@ -438,9 +680,12 @@ on_os_released (GtkGestureClick *gesture,
                 gpointer         data)
 {
   (void) n_press; (void) x; (void) y; (void) data;
-  if (gtk_gesture_single_get_current_button (GTK_GESTURE_SINGLE (gesture)) != GDK_BUTTON_PRIMARY)
-    return;
-  activate_os_row (gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (gesture)));
+  guint button = gtk_gesture_single_get_current_button (GTK_GESTURE_SINGLE (gesture));
+  GtkWidget *row = gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (gesture));
+  if (button == GDK_BUTTON_PRIMARY)
+    activate_os_row (row);
+  else if (button == GDK_BUTTON_SECONDARY)
+    show_os_menu (row);
 }
 
 static gboolean
@@ -451,12 +696,17 @@ on_os_key (GtkEventControllerKey *controller,
            gpointer               data)
 {
   (void) keycode; (void) data;
+  GtkWidget *row = gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (controller));
+  /* Menu key / Shift+F10: the drive menu, as on Nautilus' own rows. */
+  if ((keyval == GDK_KEY_Menu && (state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK)) == 0) ||
+      (keyval == GDK_KEY_F10 && (state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK)) == GDK_SHIFT_MASK))
+    return show_os_menu (row);
   if ((state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK)) != 0)
     return FALSE;
   if (keyval != GDK_KEY_Return && keyval != GDK_KEY_KP_Enter && keyval != GDK_KEY_ISO_Enter &&
       keyval != GDK_KEY_space && keyval != GDK_KEY_KP_Space)
     return FALSE;
-  activate_os_row (gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (controller)));
+  activate_os_row (row);
   return TRUE;
 }
 
@@ -992,6 +1242,8 @@ create_net_row (SidebarHook *hook,
   gtk_box_append (GTK_BOX (box), eject);
 
   RowDeco *deco = decorate (row, NULL); /* moves our label into name + bar + caption */
+  if (deco != NULL)
+    sync_eject_mode (row, deco);
   gtk_list_box_insert (GTK_LIST_BOX (hook->net_list), row, -1);
   g_hash_table_insert (hook->net_rows, g_strdup (uri), row);
   if (deco != NULL)
@@ -1126,6 +1378,7 @@ apply (SidebarHook *hook)
           g_debug ("drive row without the expected label box; left untouched");
           continue;
         }
+      sync_eject_mode (row, deco);
       g_autoptr (GFile) root = g_mount_get_root (mount);
       if (g_log_writer_default_would_drop (G_LOG_LEVEL_DEBUG, G_LOG_DOMAIN) == FALSE)
         {
@@ -1147,7 +1400,7 @@ apply_idle (gpointer data)
 {
   SidebarHook *hook = data; /* Borrowed: sidebar_hook_free removes this idle. */
   hook->apply_id = 0;
-  if (sh != NULL && !sh->disabled)
+  if (sh != NULL && !sh->disabled && !sh->off)
     apply (hook);
   return G_SOURCE_REMOVE;
 }
@@ -1168,6 +1421,10 @@ sidebar_hook_free (gpointer data)
   g_clear_handle_id (&hook->refresh_id, g_source_remove);
   if (hook->os_row != NULL)
     {
+      /* Nautilus' row menu keeps a raw pointer to the row it was opened for; never let it outlive our row. */
+      GtkWidget *menu = open_row_menu (hook->sidebar);
+      if (menu != NULL)
+        gtk_popover_popdown (GTK_POPOVER (menu));
       GtkWidget *list = gtk_widget_get_parent (hook->os_row);
       if (GTK_IS_LIST_BOX (list))
         gtk_list_box_remove (GTK_LIST_BOX (list), hook->os_row);
@@ -1232,6 +1489,8 @@ detach (SidebarHook *hook)
           g_object_set_data (G_OBJECT (row), HIDDEN_KEY, NULL);
           gtk_widget_set_visible (row, TRUE);
         }
+      if (!is_ours (row))
+        undecorate (row);
     }
   g_object_set_data (G_OBJECT (sidebar), SIDEBAR_KEY, NULL); /* frees @hook, removes our OS row */
 }
@@ -1332,6 +1591,8 @@ on_widget_map (GSignalInvocationHint *ihint,
         sh->map_hook_id = 0; /* returning FALSE removes the hook */
       return FALSE;
     }
+  if (sh->off)
+    return TRUE; /* keep the hook: switching back on must not need a restart */
   GObject *obj = g_value_get_object (&params[0]); /* borrowed */
 
   if (sh->detect_timer == 0 && sh->n_hooked_total == 0 && GTK_IS_WINDOW (obj) &&
@@ -1390,9 +1651,35 @@ find_real_computer_row (GtkWidget *sidebar)
 }
 
 
+/* Our traces anywhere below @w: rows of ours, our info boxes, our network list/separator, hidden rows. */
+static guint
+count_leftovers (GtkWidget *w)
+{
+  guint n = (GTK_IS_LIST_BOX_ROW (w) && is_ours (w)) || gtk_widget_has_css_class (w, "sd-drive-info") ||
+            gtk_widget_has_css_class (w, "sd-net-list") || gtk_widget_has_css_class (w, "sd-net-separator") ||
+            gtk_widget_has_css_class (w, "sd-eject-overlay") || SD_IS_FADE_BIN (w) ||
+            g_object_get_data (G_OBJECT (w), HIDDEN_KEY) != NULL || g_object_get_data (G_OBJECT (w), DECO_KEY) != NULL;
+  for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL; c = gtk_widget_get_next_sibling (c))
+    n += count_leftovers (c);
+  return n;
+}
+
 static void
 debug_dump (void)
 {
+  if (sh->off)
+    {
+      guint leftovers = 0;
+      GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+      for (guint i = 0; i < g_list_model_get_n_items (toplevels); i++)
+        {
+          g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
+          leftovers += count_leftovers (window);
+        }
+      g_message ("sd dump: OFF sidebars=%u leftovers=%u", g_hash_table_size (sh->sidebars), leftovers);
+      return;
+    }
+
   GHashTableIter it;
   gpointer key;
   g_hash_table_iter_init (&it, sh->sidebars);
@@ -1423,14 +1710,21 @@ debug_dump (void)
           GtkWidget *list = gtk_widget_get_parent (row);
           gboolean selected = GTK_IS_LIST_BOX (list) &&
                               gtk_list_box_get_selected_row (GTK_LIST_BOX (list)) == GTK_LIST_BOX_ROW (row);
-          g_message ("sd dump:   %s index=%d header=%d label='%s' bar=%d value=%.3f warn=%d full=%d caption='%s' selected=%d",
+          if (deco != NULL && deco->eject_revealer != NULL)
+            g_message ("sd dump:     eject: slide revealed=%d button-in-revealer=%d clicked-handler=%d fade-width=%d",
+                       gtk_revealer_get_child_revealed (GTK_REVEALER (deco->eject_revealer)),
+                       gtk_widget_get_parent (deco->eject_button) == deco->eject_revealer,
+                       g_signal_has_handler_pending (deco->eject_button, g_signal_lookup ("clicked", GTK_TYPE_BUTTON), 0, FALSE),
+                       gtk_widget_get_width (deco->eject_revealer));
+          g_message ("sd dump:   %s index=%d header=%d label='%s' bar=%d value=%.3f warn=%d full=%d caption='%s' cap-visible=%d selected=%d",
                      is_ours (row) ? "OS-ROW" : "drive ", gtk_list_box_row_get_index (GTK_LIST_BOX_ROW (row)),
                      gtk_list_box_row_get_header (GTK_LIST_BOX_ROW (row)) != NULL, label,
                      deco != NULL && gtk_widget_get_visible (deco->bar),
                      deco != NULL ? gtk_level_bar_get_value (GTK_LEVEL_BAR (deco->bar)) : -1.0,
                      deco != NULL && gtk_widget_has_css_class (deco->bar, "sd-warning"),
                      deco != NULL && gtk_widget_has_css_class (deco->bar, "sd-full"),
-                     deco != NULL ? gtk_label_get_text (GTK_LABEL (deco->caption)) : "", selected);
+                     deco != NULL ? gtk_label_get_text (GTK_LABEL (deco->caption)) : "",
+                     deco != NULL && gtk_widget_get_visible (deco->caption), selected);
         }
       guint hidden = 0;
       for (guint i = 0; i < rows->len; i++)
@@ -1455,6 +1749,30 @@ debug_dump (void)
     }
 }
 
+/* Renders the first Nautilus window to a PNG (owner review of the sidebar look; debug builds only). */
+static void
+debug_png (const char *path)
+{
+  GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+  for (guint i = 0; i < g_list_model_get_n_items (toplevels); i++)
+    {
+      g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
+      if (!g_str_equal (G_OBJECT_TYPE_NAME (window), "NautilusWindow") || !gtk_widget_get_mapped (window))
+        continue;
+      int w = gtk_widget_get_width (window), h = gtk_widget_get_height (window);
+      g_autoptr (GdkPaintable) paintable = gtk_widget_paintable_new (window);
+      g_autoptr (GtkSnapshot) snapshot = gtk_snapshot_new ();
+      gdk_paintable_snapshot (paintable, snapshot, w, h);
+      g_autoptr (GskRenderNode) node = gtk_snapshot_free_to_node (g_steal_pointer (&snapshot));
+      if (node == NULL)
+        return;
+      GskRenderer *renderer = gtk_native_get_renderer (GTK_NATIVE (window)); /* borrowed */
+      g_autoptr (GdkTexture) texture = gsk_renderer_render_texture (renderer, node, &GRAPHENE_RECT_INIT (0, 0, w, h));
+      g_message ("sd png: %s %s", path, gdk_texture_save_to_png (texture, path) ? "saved" : "FAILED");
+      return;
+    }
+}
+
 static gboolean
 on_debug_signal (gpointer data)
 {
@@ -1466,7 +1784,51 @@ on_debug_signal (gpointer data)
     return G_SOURCE_CONTINUE;
   g_strstrip (cmd);
   if (g_str_equal (cmd, "sd-dump"))
-    debug_dump ();
+    {
+      g_autofree char *colours = sd_bar_colour_css (nu_settings_get ());
+      g_message ("sd dump: style bars=%d labels=%d colour-css='%s'", nu_settings_get ()->show_usage_bars,
+                 nu_settings_get ()->show_size_labels, g_strchomp (colours));
+      debug_dump ();
+    }
+  else if (g_str_has_prefix (cmd, "sd-png "))
+    debug_png (cmd + 7);
+  /* Simulates hover on every sliding eject button (1 = slide in, 0 = out), for renders. */
+  else if (g_str_has_prefix (cmd, "sd-eject-reveal "))
+    {
+      gboolean reveal = cmd[16] == '1';
+      GHashTableIter it;
+      gpointer key;
+      g_hash_table_iter_init (&it, sh->sidebars);
+      while (g_hash_table_iter_next (&it, &key, NULL))
+        {
+          SidebarHook *hook = key;
+          g_autoptr (GPtrArray) rows = g_ptr_array_new ();
+          collect_rows (hook->sidebar, rows);
+          if (hook->net_list != NULL)
+            for (GtkWidget *c = gtk_widget_get_first_child (hook->net_list); c != NULL; c = gtk_widget_get_next_sibling (c))
+              g_ptr_array_add (rows, c);
+          for (guint i = 0; i < rows->len; i++)
+            {
+              RowDeco *deco = g_object_get_data (G_OBJECT (g_ptr_array_index (rows, i)), DECO_KEY);
+              if (deco != NULL && deco->eject_revealer != NULL)
+                gtk_revealer_set_reveal_child (GTK_REVEALER (deco->eject_revealer), reveal);
+            }
+        }
+    }
+  else if (g_str_has_prefix (cmd, "sd-resize "))
+    {
+      int w = 0, h = 0;
+      if (sscanf (cmd + 10, "%d %d", &w, &h) == 2)
+        {
+          GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+          for (guint i = 0; i < g_list_model_get_n_items (toplevels); i++)
+            {
+              g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
+              if (g_str_equal (G_OBJECT_TYPE_NAME (window), "NautilusWindow"))
+                gtk_window_set_default_size (GTK_WINDOW (window), w, h);
+            }
+        }
+    }
   else if (g_str_equal (cmd, "sd-open-home"))
     {
       g_autofree char *home = g_filename_to_uri (g_get_home_dir (), NULL, NULL);
@@ -1550,6 +1912,53 @@ on_debug_signal (gpointer data)
             }
         }
     }
+  /* OS row drive menu (PLAN.md §9.1.3): open it, list its items, run one, close it. */
+  else if (g_str_has_prefix (cmd, "sd-os-menu"))
+    {
+      g_autoptr (GPtrArray) all = g_hash_table_get_keys_as_ptr_array (sh->sidebars);
+      for (guint i = 0; i < all->len; i++)
+        {
+          SidebarHook *hook = g_ptr_array_index (all, i);
+          if (hook->os_row == NULL || !gtk_widget_get_mapped (hook->os_row))
+            continue;
+          GtkWidget *menu = open_row_menu (hook->sidebar);
+          if (g_str_equal (cmd, "sd-os-menu"))
+            g_message ("sd: OS menu %s", show_os_menu (hook->os_row) ? "requested" : "UNAVAILABLE");
+          else if (g_str_equal (cmd, "sd-os-menu-dump"))
+            {
+              GMenuModel *model = menu != NULL ? gtk_popover_menu_get_menu_model (GTK_POPOVER_MENU (menu)) : NULL;
+              GString *items = g_string_new (NULL);
+              for (int sec = 0; model != NULL && sec < g_menu_model_get_n_items (model); sec++)
+                {
+                  g_autoptr (GMenuModel) section = g_menu_model_get_item_link (model, sec, G_MENU_LINK_SECTION);
+                  for (int j = 0; section != NULL && j < g_menu_model_get_n_items (section); j++)
+                    {
+                      g_autofree char *label = NULL, *hidden = NULL;
+                      g_menu_model_get_item_attribute (section, j, G_MENU_ATTRIBUTE_LABEL, "s", &label);
+                      g_menu_model_get_item_attribute (section, j, "hidden-when", "s", &hidden);
+                      if (hidden == NULL) /* "hidden-when action-disabled" items are bookmark-only */
+                        g_string_append_printf (items, "%s|", label);
+                    }
+                  g_string_append (items, "--|");
+                }
+              g_message ("sd os-menu: shown=%d has-open-popup=%d items=%s", menu != NULL,
+                         gtk_widget_has_css_class (hook->os_row, "has-open-popup"), items->str);
+              g_string_free (items, TRUE);
+            }
+          else if (g_str_has_prefix (cmd, "sd-os-menu-activate ") && menu != NULL)
+            {
+              g_auto (GStrv) parts = g_strsplit (cmd, " ", 3);
+              gboolean ok = parts[2] != NULL
+                              ? gtk_widget_activate_action (menu, parts[1], "i", (gint32) g_ascii_strtoll (parts[2], NULL, 10))
+                              : gtk_widget_activate_action (menu, parts[1], NULL);
+              g_message ("sd os-menu: activate %s -> %d", cmd + 20, ok);
+              gtk_popover_popdown (GTK_POPOVER (menu));
+            }
+          else if (g_str_equal (cmd, "sd-os-menu-close") && menu != NULL)
+            gtk_popover_popdown (GTK_POPOVER (menu));
+          break;
+        }
+    }
   return G_SOURCE_CONTINUE;
 }
 #endif
@@ -1578,6 +1987,93 @@ sd_sidebar_hook_init (void)
 #endif
 }
 
+/* Hooks every mapped NautilusSidebar below @w (feature switched on while windows are open). */
+static void
+hook_mapped_sidebars (GtkWidget *w)
+{
+  if (!gtk_widget_get_mapped (w))
+    return;
+  if (G_TYPE_CHECK_INSTANCE_TYPE (w, sh->sidebar_type))
+    {
+      schedule_apply (get_or_create_hook (w));
+      return;
+    }
+  for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL; c = gtk_widget_get_next_sibling (c))
+    hook_mapped_sidebars (c);
+}
+
+void
+sd_sidebar_hook_set_enabled (gboolean enabled)
+{
+  if (sh == NULL || sh->disabled || sh->off == !enabled)
+    return;
+  sh->off = !enabled;
+  if (sh->off)
+    {
+      g_clear_handle_id (&sh->detect_timer, g_source_remove);
+      detach_all (); /* our rows removed, Nautilus' rows restored */
+      g_debug ("sidebar drives switched off");
+      return;
+    }
+  g_debug ("sidebar drives switched on");
+  if (sh->sidebar_type == 0 || sh->row_type == 0)
+    {
+      sh->sidebar_type = g_type_from_name (internal_name ("NautilusSidebar", "types"));
+      sh->row_type = g_type_from_name ("NautilusSidebarRow");
+      if (sh->sidebar_type == 0 || sh->row_type == 0)
+        return; /* no sidebar exists yet: the map hook will find it */
+    }
+  if (!sh->validated)
+    {
+      if (!validate ())
+        return;
+      sh->validated = TRUE;
+    }
+  GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+  for (guint i = 0; i < g_list_model_get_n_items (toplevels); i++)
+    {
+      g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
+      hook_mapped_sidebars (window);
+    }
+}
+
+/* Every decorated row of @hook: Nautilus' drive rows, our OS row and our network rows. */
+static void
+sync_hook_visibility (SidebarHook *hook)
+{
+  g_autoptr (GPtrArray) rows = g_ptr_array_new ();
+  collect_rows (hook->sidebar, rows);
+  if (hook->net_list != NULL)
+    for (GtkWidget *c = gtk_widget_get_first_child (hook->net_list); c != NULL; c = gtk_widget_get_next_sibling (c))
+      g_ptr_array_add (rows, c);
+  for (guint i = 0; i < rows->len; i++)
+    {
+      GtkWidget *row = g_ptr_array_index (rows, i);
+      RowDeco *deco = g_object_get_data (G_OBJECT (row), DECO_KEY);
+      if (deco == NULL)
+        continue;
+      sync_visibility (deco);
+      sync_eject_mode (row, deco);
+    }
+}
+
+void
+sd_sidebar_hook_style_changed (void)
+{
+  if (sh == NULL)
+    return;
+  if (sh->colour_css != NULL)
+    {
+      g_autofree char *colours = sd_bar_colour_css (nu_settings_get ());
+      gtk_css_provider_load_from_string (sh->colour_css, colours);
+    }
+  GHashTableIter it;
+  gpointer key;
+  g_hash_table_iter_init (&it, sh->sidebars);
+  while (g_hash_table_iter_next (&it, &key, NULL))
+    sync_hook_visibility (key);
+}
+
 void
 sd_sidebar_hook_shutdown (void)
 {
@@ -1594,9 +2090,14 @@ sd_sidebar_hook_shutdown (void)
   detach_all ();
   if (sh->css != NULL)
     for (guint i = 0; i < sh->css_displays->len; i++)
-      gtk_style_context_remove_provider_for_display (g_ptr_array_index (sh->css_displays, i),
-                                                     GTK_STYLE_PROVIDER (sh->css));
+      {
+        gtk_style_context_remove_provider_for_display (g_ptr_array_index (sh->css_displays, i),
+                                                       GTK_STYLE_PROVIDER (sh->css));
+        gtk_style_context_remove_provider_for_display (g_ptr_array_index (sh->css_displays, i),
+                                                       GTK_STYLE_PROVIDER (sh->colour_css));
+      }
   g_clear_object (&sh->css);
+  g_clear_object (&sh->colour_css);
   g_clear_pointer (&sh->css_displays, g_ptr_array_unref);
   g_clear_pointer (&sh->sidebars, g_hash_table_unref);
   g_clear_pointer (&sh->os_name, g_free);

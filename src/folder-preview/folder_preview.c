@@ -5,6 +5,7 @@
 #include "cache.h"
 #include "config.h"
 #include "info_provider.h"
+#include "nu_settings.h"
 #include "thumbs.h"
 #include "view_hook.h"
 #include "workers.h"
@@ -16,6 +17,17 @@ static GType fp_types[1];
 static FpWorkers *workers; /* Owned. */
 static FpThumbs  *thumbs;  /* Owned; borrowed by jobs and the cache, so freed after both. */
 static FpCache   *cache;   /* Owned ref (the view hook and in-flight requests hold their own). */
+static guint      settings_listener; /* nu_settings listener id, 0 when not registered. */
+
+/* Settings changed (once per Apply): follow the on/off switch (PLAN.md §9.1.2). */
+static void
+on_settings_changed (NuChanged changed,
+                     gpointer  data)
+{
+  (void) data;
+  if (changed & NU_CHANGED_FOLDER_PREVIEW)
+    fp_view_hook_set_enabled (nu_settings_get ()->folder_preview_enabled);
+}
 
 void
 fp_feature_initialize (GTypeModule *module)
@@ -27,6 +39,8 @@ fp_feature_initialize (GTypeModule *module)
   thumbs = fp_thumbs_new (WORKER_THREADS);
   cache = fp_cache_new (workers, thumbs, NULL, LRU_FOLDERS, CACHE_MAX_BYTES);
   fp_view_hook_init (cache);
+  fp_view_hook_set_enabled (nu_settings_get ()->folder_preview_enabled);
+  settings_listener = nu_settings_add_listener (on_settings_changed, NULL);
   fp_info_provider_set_folder_func (fp_view_hook_folder_changed);
   g_debug ("folder-preview loaded");
 }
@@ -35,6 +49,8 @@ void
 fp_feature_shutdown (void)
 {
   /* Order matters (cache.h): stop new work, drain the pool, then drop the cache, then the factories. */
+  nu_settings_remove_listener (settings_listener);
+  settings_listener = 0;
   fp_info_provider_set_folder_func (NULL);
   fp_view_hook_shutdown ();
   g_clear_pointer (&workers, fp_workers_free);
