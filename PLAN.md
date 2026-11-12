@@ -145,7 +145,7 @@ findings and the smoke test is clean.
 | 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover | `src/folder-preview/` | **v1 done** (grid view) |
 | 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
-| 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **planned** (2026-11-12), branch `dev-path-view-size` |
+| 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **Phase 0 done** (2026-11-12), branch `dev-path-view-size` |
 
 Open items:
 
@@ -974,8 +974,8 @@ Prefix `fv_`, log domain `folder-views`, dir `src/folder-views/`, branch `dev-pa
 
 - **Opening a folder** (any window, tab, back/forward, typed path, sidebar, bookmark): if the folder has a
   saved view, show it with that view type and that view type's icon size; otherwise use **our default**
-  (§10.1.1). This happens before the folder's files are shown (no visible flash of the previous folder's
-  view; verified in Phase 0).
+  (§10.1.1). This happens before the folder's files are shown: they are never drawn in the wrong view
+  (verified in Phase 0, §10.7).
 - **Changing the view in a folder** (the grid/list toggle, Ctrl+1 / Ctrl+2, zoom in/out/reset in the view
   menu, Ctrl +/−/0, Ctrl+scroll): saved for **that folder only**. A folder stores its view type plus one icon
   size per view type (switching a folder from grid to list and back keeps its grid size).
@@ -1065,3 +1065,65 @@ folder that was ever saved). Open windows switch to our default immediately. Ask
 | 2 Apply & save | `view_mode_hook.c`: apply on navigation in every slot, save on user change, async metadata, global keys kept at our default. | Folders keep their own view type and size across navigation, tabs, windows and restarts; no flash; no save loops; 16 ms probe clean. |
 | 3 Settings tab | "Folder Views" tab, live on/off with full undo, Reset All with confirmation. | Off = stock Files behaviour with our default restored; Reset All resets every folder; toggling 50× in the smoke test without leaks/warnings. |
 | 4 Hardening & docs | Smoke-test rounds (navigate, change views, reopen, reset, toggle), `check-safety.sh`, README + RPM. | All PASS. |
+
+### 10.7 Phase 0 findings (2026-11-12, Nautilus 51.1 / GTK 4.24.1)
+
+Method: Nautilus 51.1 source read for reference (not vendored); throwaway probe `LD_PRELOAD`ed into an
+isolated Nautilus (own D-Bus session, in-memory GSettings, own `XDG_DATA_HOME` so the owner's real gvfs
+metadata was never touched), logging every painted frame (view type, icon size, which folder's files are
+drawn). Test folders on tmpfs, btrfs (`/home`) and NTFS (`ntfs3`, Personal Drive), 150 files each plus one
+with 10 000 files; all removed afterwards. Not in the repo.
+
+**How Files picks the view.** Each slot (tab) reads `default-folder-viewer` once when it is created and keeps
+its own copy; on every navigation it switches to that copy (`nautilus_window_slot_get_view_id_for_location`).
+`slot.files-view-mode` (u: 1 = list, 2 = grid) switches the view and updates the slot's copy **and** the
+global key. Zoom lives in the inner view (`NautilusGridView` / `NautilusListView`, both `NautilusListBase`),
+read from the global key only when an inner view is created; `view.zoom-in/out/standard` change it and write
+the global key. **Nothing in Files listens to those global keys**, so writing or restoring them never
+changes an open tab (§10.1.1 is safe).
+
+**Hook point: slot `notify::location`.** Order inside Files' navigation callback: view switch to the slot's
+default → view gets the new location (starts loading) → slot `notify::location`, all synchronously. At that
+moment the **old folder's files are still on screen**; the new folder's files arrive 200 ms – 1 s later (also
+for Back to a folder visited before). Measured in every case (tmpfs, btrfs, NTFS, 10 k files, Back):
+
+- Switch synchronously at `notify::location` (value already in memory): no frame in between.
+- Switch after an async metadata read: read took 0.3–18 ms; at most one frame painted before the switch,
+  and that frame still shows the **old** folder.
+- So the new folder's files are **never** drawn in the wrong view. What is visible: after the click, the
+  old folder's files are re-laid out in the new folder's view type until the new files arrive (a list view
+  usually shows empty instead). Files already keeps the old files on screen while loading; we only change
+  their layout.
+
+**Cost.** Switching view type is Files' own switch, the same as pressing Ctrl+1/Ctrl+2: 100–190 ms on the
+main thread with 150 files, **295 ms when leaving a 10 000-file folder** (the old files are re-laid out
+once). Only paid when two folders in a row differ in view type; same type = no switch. A zoom step costs
+~10 ms.
+
+**Detecting user changes.** View type: slot `notify::icon-name` fires on every view switch (Files' own,
+ours, the user's). A switch followed by `notify::location` in the same main-loop iteration is navigation;
+one that isn't (checked in an idle) is the user → save. Ours are marked by a guard flag around our action
+call. Icon size: `NautilusListBase` `notify::icon-size` outside our guard → save (reconnected when the inner
+view is replaced).
+
+**Background tabs.** `slot.files-view-mode` is on the slot widget and `view.zoom-*` on the
+`NautilusFilesView` widget itself (the window only gets a copy for the active tab), so
+`gtk_widget_activate_action` on those widgets works for tabs that aren't selected (verified: background tab
+zoomed and switched, the selected tab unchanged).
+
+**Metadata support** (`metadata::nautilus-utils-folder-view`, write + read back):
+
+| Location | Result |
+|---|---|
+| tmpfs, btrfs, NTFS `ntfs3`, read-only folders (`/`, `/usr`) | stored (write 1–7 ms, read 0.2–4 ms) |
+| `trash:///`, `recent:///`, `network:///` | stored |
+| `starred:///`, `other-locations:///` | write "succeeds" but nothing is stored → our default |
+| SMB / SFTP shares | **not tested** (no real share here); async, so a slow share can't block |
+
+**Design consequences (for Phase 2).**
+1. Apply at slot `notify::location`; keep an in-memory cache (URI → value) of folders read or saved this
+   session so revisits apply synchronously; first visits read async and apply on arrival.
+2. Never switch for `network:///` (Files' Network view) or global search.
+3. The switch cost above is Files' own and only happens when the view type changes between folders; no
+   way around it through public behaviour. Recorded as expected cost, measured again in Phase 2 with the
+   16 ms latency probe.
