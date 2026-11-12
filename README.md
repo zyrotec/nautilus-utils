@@ -95,10 +95,12 @@ Known limitations:
 - **Nautilus updates may switch the feature off.** It relies on Nautilus' private tab and view widgets
   (verified on Nautilus 51.1). If they change, it logs one warning ("folder views disabled: …") and Files
   keeps its normal global view.
-- When two folders in a row have different view types (or icon sizes), the old folder stays on screen as a
-  still picture while the new one loads, then fades into the new layout (180 ms; instant with animations
-  off). The switch underneath costs what Ctrl+1 / Ctrl+2 costs in Files (0.1–0.3 s, more when leaving a
-  very large folder), and the window doesn't redraw during it.
+- The saved views of a folder's subfolders, siblings and parent are read in the background after it loads,
+  so the next folder's view is known when you click. When two folders in a row have different view types,
+  the old folder stays on screen as a still picture while the new one loads and appears at once when its
+  files are in. The switch underneath is Files' own view rebuild (what Ctrl+1 / Ctrl+2 costs, 0.1–0.3 s),
+  so such a folder appears about 0.1 s later than in stock Files; folders with the same view type open as
+  fast as stock.
 - Network shares (SMB, SFTP) haven't been tested yet; reading a saved view never blocks Files.
 
 ### Settings

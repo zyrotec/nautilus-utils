@@ -40,8 +40,17 @@ typedef struct
   GCancellable *read_cancel;   /* Owned; the pending metadata read, or NULL */
   GWeakRef      cover;         /* Our frozen picture over the view during a switch (§10.9), or empty */
   AdwAnimation *fade;          /* Owned; the cover's fade-out, or NULL */
-  guint         cover_cap;     /* Timeout fading the cover if loading takes too long, or 0 */
+  guint         cover_cap;     /* Timeout revealing the folder if loading takes too long, or 0 */
   gint64        cover_since;   /* Monotonic time the cover went up (debug log) */
+  gboolean      cap_passed;    /* @cover_cap fired while the switch was still pending */
+  gboolean      switch_pending;/* A switch to @target waits for the click's frame to be drawn (§10.10) */
+  NuFolderView  target;        /* What the pending switch shows */
+  GWeakRef      paint_clock;   /* Frame clock @paint_id is connected to */
+  gulong        paint_id;      /* after-paint handler waiting for that frame, or 0 */
+  guint         switch_idle;   /* Idle running the pending switch, or 0 */
+  guint         switch_fallback; /* Timeout running it if no frame comes, or 0 */
+  GCancellable *prefetch_cancel; /* Owned; the read-ahead of this folder's subfolders, or NULL */
+  gboolean      prefetched;    /* Read-ahead started for the current location */
 } SlotHook;
 
 typedef struct
@@ -302,12 +311,33 @@ cover_fade (SlotHook *hook)
   adw_animation_play (hook->fade); /* instant when GTK animations are off */
 }
 
+/* Shows the new folder: removes the cover at once (FV_FADE_MS 0) or fades it out. */
+static void
+cover_reveal (SlotHook *hook)
+{
+  g_clear_handle_id (&hook->cover_cap, g_source_remove);
+  if (FV_FADE_MS > 0)
+    {
+      cover_fade (hook);
+      return;
+    }
+  g_autoptr (GtkWidget) cover = g_weak_ref_get (&hook->cover);
+  if (cover == NULL)
+    return;
+  g_debug ("transition: done after %.0f ms in %s", (g_get_monotonic_time () - hook->cover_since) / 1000.0,
+           hook->uri);
+  cover_remove (hook);
+}
+
 static gboolean
 cover_cap_timeout (gpointer data)
 {
   SlotHook *hook = data; /* alive: hook_free removes this timeout */
   hook->cover_cap = 0;
-  cover_fade (hook);
+  if (hook->switch_pending)
+    hook->cap_passed = TRUE; /* reveal right after the switch */
+  else
+    cover_reveal (hook);
   return G_SOURCE_REMOVE;
 }
 
@@ -349,29 +379,37 @@ cover_begin (SlotHook  *hook,
       g_weak_ref_set (&hook->cover, cover);
     }
   hook->cover_since = g_get_monotonic_time ();
+  hook->cap_passed = FALSE;
   g_clear_handle_id (&hook->cover_cap, g_source_remove);
   hook->cover_cap = g_timeout_add (FV_COVER_MAX_MS, cover_cap_timeout, hook);
 }
 
-/* Shows @v in @slot with Nautilus' own actions; our notifications are ignored while @applying is set. */
-static void
-apply (SlotHook           *hook,
-       GtkWidget          *slot,
-       const NuFolderView *v)
+static gboolean
+slot_is_loading (GtkWidget *slot)
 {
-  if (fv->disabled)
-    return;
+  gboolean loading = FALSE;
+  if (g_object_class_find_property (G_OBJECT_GET_CLASS (slot), "loading") != NULL)
+    g_object_get (slot, "loading", &loading, NULL);
+  return loading;
+}
+
+/* Switches @slot to @hook->target with Nautilus' own actions (our notifications are ignored while @applying
+ * is set), then reveals the folder if its files are already in. */
+static void
+do_switch (SlotHook  *hook,
+           GtkWidget *slot)
+{
+  const NuFolderView *v = &hook->target;
   NuViewType view;
   int zoom;
-  if (!shown_view (slot, &view, &zoom))
-    return; /* Network view or not built yet: nothing to switch */
-
+  if (fv->disabled || !shown_view (slot, &view, &zoom))
+    {
+      cover_reveal (hook);
+      return;
+    }
   gint64 start = g_get_monotonic_time ();
   NuViewType was = view;
   int was_zoom = zoom;
-  if (view == v->view && zoom == fv_folder_view_zoom (v))
-    return; /* already right: nothing changes on screen */
-  cover_begin (hook, slot);
   hook->applying = TRUE;
   if (view != v->view)
     {
@@ -390,13 +428,91 @@ apply (SlotHook           *hook,
   hook->applying = FALSE;
   rebind_list_base (hook, slot);
   schedule_restore ();
-  gboolean loading = TRUE;
-  if (g_object_class_find_property (G_OBJECT_GET_CLASS (slot), "loading") != NULL)
-    g_object_get (slot, "loading", &loading, NULL);
-  if (!loading)
-    cover_fade (hook); /* the folder was already loaded: reveal now */
-  g_debug ("applied view %d zoom %d to %s (was view %d zoom %d) in %.1f ms", v->view, target, hook->uri, was, was_zoom,
-           (g_get_monotonic_time () - start) / 1000.0);
+  g_debug ("applied view %d zoom %d to %s (was view %d zoom %d) in %.1f ms, %.0f ms after the click", v->view,
+           target, hook->uri, was, was_zoom, (g_get_monotonic_time () - start) / 1000.0,
+           (start - hook->cover_since) / 1000.0);
+  if (!slot_is_loading (slot) || hook->cap_passed)
+    cover_reveal (hook); /* files already in (or loading too long): show the folder now */
+}
+
+static void
+cancel_pending_switch (SlotHook *hook)
+{
+  hook->switch_pending = FALSE;
+  g_autoptr (GdkFrameClock) clock = g_weak_ref_get (&hook->paint_clock);
+  if (clock != NULL && hook->paint_id != 0)
+    g_signal_handler_disconnect (clock, hook->paint_id);
+  hook->paint_id = 0;
+  g_weak_ref_set (&hook->paint_clock, NULL);
+  g_clear_handle_id (&hook->switch_idle, g_source_remove);
+  g_clear_handle_id (&hook->switch_fallback, g_source_remove);
+}
+
+static gboolean
+switch_idle (gpointer data)
+{
+  SlotHook *hook = data; /* alive: hook_free cancels this idle */
+  hook->switch_idle = 0;
+  gboolean pending = hook->switch_pending;
+  cancel_pending_switch (hook);
+  g_autoptr (GtkWidget) slot = g_weak_ref_get (&hook->slot);
+  if (pending && slot != NULL)
+    do_switch (hook, slot);
+  return G_SOURCE_REMOVE;
+}
+
+/* The frame showing the click (new path, loading state, our still picture) has been drawn: switch next. */
+static void
+on_after_paint (GdkFrameClock *clock,
+                gpointer       data)
+{
+  SlotHook *hook = data; /* alive: hook_free disconnects this handler */
+  g_signal_handler_disconnect (clock, hook->paint_id);
+  hook->paint_id = 0;
+  g_weak_ref_set (&hook->paint_clock, NULL);
+  g_clear_handle_id (&hook->switch_fallback, g_source_remove);
+  if (hook->switch_idle == 0)
+    hook->switch_idle = g_idle_add_full (G_PRIORITY_DEFAULT, switch_idle, hook, NULL);
+}
+
+static gboolean
+switch_fallback (gpointer data)
+{
+  SlotHook *hook = data; /* alive: hook_free removes this timeout */
+  hook->switch_fallback = 0;
+  return switch_idle (hook);
+}
+
+/* Shows @v in @slot. Visible tabs: the old view is frozen under a still picture now, and the switch runs right
+ * after that frame is drawn, so the click gets its feedback at once and the switch's cost (Files' own view
+ * rebuild) happens behind an unchanged picture (§10.10). Background tabs switch right away. */
+static void
+apply (SlotHook           *hook,
+       GtkWidget          *slot,
+       const NuFolderView *v)
+{
+  cancel_pending_switch (hook);
+  if (fv->disabled)
+    return;
+  NuViewType view;
+  int zoom;
+  if (!shown_view (slot, &view, &zoom))
+    return; /* Network view or not built yet: nothing to switch */
+  if (view == v->view && zoom == fv_folder_view_zoom (v))
+    return; /* already right: nothing changes on screen */
+  hook->target = *v;
+  GdkFrameClock *clock = gtk_widget_get_mapped (slot) ? gtk_widget_get_frame_clock (slot) : NULL; /* borrowed */
+  if (clock == NULL)
+    {
+      do_switch (hook, slot);
+      return;
+    }
+  cover_begin (hook, slot);
+  hook->switch_pending = TRUE;
+  g_weak_ref_set (&hook->paint_clock, clock);
+  hook->paint_id = g_signal_connect (clock, "after-paint", G_CALLBACK (on_after_paint), hook);
+  hook->switch_fallback = g_timeout_add (FV_SWITCH_FALLBACK_MS, switch_fallback, hook);
+  gtk_widget_queue_draw (slot);
 }
 
 /* ------------------------------------------------------------------------------------------------ */
@@ -506,6 +622,169 @@ save (SlotHook *hook)
 }
 
 /* ------------------------------------------------------------------------------------------------ */
+/* Read-ahead (PLAN.md §10.10)                                                                       */
+/*                                                                                                  */
+/* Once a local folder has loaded, the saved views of its subfolders, siblings and parent are read in the */
+/* background (GIO's worker threads, low priority) into the cache, so that opening one of them knows its  */
+/* view at the click. Only entries the cache doesn't know yet are stored, so a value the user just saved  */
+/* is never replaced by an older one from disk.                                                     */
+
+typedef struct
+{
+  GFileEnumerator *enumerator; /* Owned ref, or NULL before it is open */
+  GCancellable    *cancel;     /* Owned ref; cancelled when the tab moves on */
+  guint            seen;       /* Entries enumerated so far (capped at FV_PREFETCH_MAX) */
+} PrefetchCtx;
+
+static void
+prefetch_ctx_free (PrefetchCtx *ctx)
+{
+  g_clear_object (&ctx->enumerator);
+  g_clear_object (&ctx->cancel);
+  g_free (ctx);
+}
+
+/* Stores what @info says about @file's saved view, unless the cache already knows that folder. */
+static void
+prefetch_store (GFile     *file,
+                GFileInfo *info)
+{
+  g_autofree char *uri = g_file_get_uri (file);
+  NuFolderView saved;
+  if (fv_cache_lookup (fv->cache, uri, &saved) != FV_CACHE_MISS)
+    return;
+  const char *text = g_file_info_get_attribute_string (info, FV_METADATA_ATTR);
+  gboolean has = fv_decode (text, nu_settings_get ()->folder_views_generation, &saved);
+  fv_cache_store (fv->cache, uri, has ? &saved : NULL);
+}
+
+static void on_prefetch_batch (GObject *source, GAsyncResult *res, gpointer data);
+
+static void
+on_prefetch_closed (GObject *source, GAsyncResult *res, gpointer data)
+{
+  g_file_enumerator_close_finish (G_FILE_ENUMERATOR (source), res, NULL);
+  prefetch_ctx_free (data);
+}
+
+static void
+prefetch_finish (PrefetchCtx *ctx)
+{
+  /* Closing doesn't need the cancellable: an enumerator must be closed even after a cancel. */
+  g_file_enumerator_close_async (ctx->enumerator, G_PRIORITY_LOW, NULL, on_prefetch_closed, ctx);
+}
+
+static void
+on_prefetch_batch (GObject      *source,
+                   GAsyncResult *res,
+                   gpointer      data)
+{
+  PrefetchCtx *ctx = data; /* owned by this chain of callbacks */
+  g_autoptr (GError) error = NULL;
+  GList *infos = g_file_enumerator_next_files_finish (G_FILE_ENUMERATOR (source), res, &error); /* owned */
+  if (infos == NULL || fv == NULL || g_cancellable_is_cancelled (ctx->cancel))
+    {
+      g_list_free_full (infos, g_object_unref);
+      prefetch_finish (ctx);
+      return;
+    }
+  for (GList *l = infos; l != NULL; l = l->next)
+    {
+      GFileInfo *info = l->data;
+      ctx->seen++;
+      if (g_file_info_get_file_type (info) != G_FILE_TYPE_DIRECTORY)
+        continue;
+      g_autoptr (GFile) child = g_file_enumerator_get_child (ctx->enumerator, info);
+      prefetch_store (child, info);
+    }
+  g_list_free_full (infos, g_object_unref);
+  if (ctx->seen >= FV_PREFETCH_MAX)
+    {
+      prefetch_finish (ctx);
+      return;
+    }
+  g_file_enumerator_next_files_async (ctx->enumerator, FV_PREFETCH_BATCH, G_PRIORITY_LOW, ctx->cancel,
+                                      on_prefetch_batch, ctx);
+}
+
+static void
+on_prefetch_open (GObject      *source,
+                  GAsyncResult *res,
+                  gpointer      data)
+{
+  PrefetchCtx *ctx = data; /* owned by this chain of callbacks */
+  ctx->enumerator = g_file_enumerate_children_finish (G_FILE (source), res, NULL);
+  if (ctx->enumerator == NULL || fv == NULL || g_cancellable_is_cancelled (ctx->cancel))
+    {
+      if (ctx->enumerator != NULL)
+        prefetch_finish (ctx);
+      else
+        prefetch_ctx_free (ctx);
+      return;
+    }
+  g_file_enumerator_next_files_async (ctx->enumerator, FV_PREFETCH_BATCH, G_PRIORITY_LOW, ctx->cancel,
+                                      on_prefetch_batch, ctx);
+}
+
+static void
+on_prefetch_parent (GObject      *source,
+                    GAsyncResult *res,
+                    gpointer      data)
+{
+  (void) data;
+  g_autoptr (GFileInfo) info = g_file_query_info_finish (G_FILE (source), res, NULL);
+  if (info != NULL && fv != NULL)
+    prefetch_store (G_FILE (source), info);
+}
+
+static void
+cancel_prefetch (SlotHook *hook)
+{
+  if (hook->prefetch_cancel != NULL)
+    g_cancellable_cancel (hook->prefetch_cancel);
+  g_clear_object (&hook->prefetch_cancel);
+}
+
+/* Reads the saved views of @dir's subfolders into the cache, in the background. */
+static void
+prefetch_children (GFile        *dir,
+                   GCancellable *cancel)
+{
+  PrefetchCtx *ctx = g_new0 (PrefetchCtx, 1); /* freed at the end of its callback chain */
+  ctx->cancel = g_object_ref (cancel);
+  g_file_enumerate_children_async (dir, G_FILE_ATTRIBUTE_STANDARD_NAME "," G_FILE_ATTRIBUTE_STANDARD_TYPE "," FV_METADATA_ATTR,
+                                   G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, G_PRIORITY_LOW, ctx->cancel,
+                                   on_prefetch_open, ctx);
+}
+
+/* Starts the read-ahead for the tab's current folder: its subfolders, its siblings and its parent (once per
+ * location; local folders only, so a network share is never enumerated a second time). */
+static void
+start_prefetch (SlotHook *hook)
+{
+  if (hook->prefetched || hook->kind != FV_LOCATION_SAVE || hook->uri == NULL)
+    return;
+  hook->prefetched = TRUE;
+  g_autoptr (GFile) dir = g_file_new_for_uri (hook->uri);
+  if (!g_file_is_native (dir))
+    return;
+  cancel_prefetch (hook);
+  hook->prefetch_cancel = g_cancellable_new ();
+  prefetch_children (dir, hook->prefetch_cancel);
+
+  g_autoptr (GFile) parent = g_file_get_parent (dir);
+  if (parent != NULL)
+    {
+      prefetch_children (parent, hook->prefetch_cancel); /* siblings */
+      g_autofree char *parent_uri = g_file_get_uri (parent);
+      NuFolderView unused;
+      if (fv_cache_lookup (fv->cache, parent_uri, &unused) == FV_CACHE_MISS)
+        g_file_query_info_async (parent, FV_METADATA_ATTR, G_FILE_QUERY_INFO_NONE, G_PRIORITY_LOW,
+                                 hook->prefetch_cancel, on_prefetch_parent, NULL);
+    }
+}
+
+/* ------------------------------------------------------------------------------------------------ */
 /* User changes                                                                                     */
 
 /* The user changed the view type or icon size: take what the slot shows now as the folder's view. */
@@ -589,6 +868,8 @@ slot_location_changed (SlotHook  *hook,
 {
   g_clear_handle_id (&hook->user_idle, g_source_remove); /* that switch was navigation */
   cancel_read (hook);
+  cancel_prefetch (hook);
+  hook->prefetched = FALSE;
   g_clear_pointer (&hook->uri, g_free);
   hook->known = FALSE;
 
@@ -636,6 +917,7 @@ slot_location_changed (SlotHook  *hook,
       apply (hook, slot, &hook->value);
       break;
     case FV_CACHE_MISS:
+      g_debug ("view of %s not known yet: reading it", hook->uri);
       start_read (hook, slot); /* applies when it arrives (0.3–18 ms, §10.7) */
       break;
     }
@@ -652,10 +934,12 @@ on_loading (GObject    *slot,
   SlotHook *hook = data;
   if (!fv->disabled && hook->uri == NULL)
     slot_location_changed (hook, GTK_WIDGET (slot));
-  gboolean loading = TRUE;
-  g_object_get (slot, "loading", &loading, NULL);
-  if (!loading)
-    cover_fade (hook); /* the new folder's files are in: fade the old picture out */
+  if (!slot_is_loading (GTK_WIDGET (slot)))
+    {
+      if (!hook->switch_pending)
+        cover_reveal (hook); /* the new folder's files are in: show it */
+      start_prefetch (hook);
+    }
 }
 
 static void
@@ -680,6 +964,9 @@ hook_free (gpointer data)
     g_hash_table_remove (fv->hooks, hook);
   g_clear_handle_id (&hook->user_idle, g_source_remove);
   cancel_read (hook);
+  cancel_prefetch (hook);
+  cancel_pending_switch (hook);
+  g_weak_ref_clear (&hook->paint_clock);
   cover_remove (hook);
   g_weak_ref_clear (&hook->cover);
   g_autoptr (GObject) lb = g_weak_ref_get (&hook->list_base);
@@ -746,6 +1033,7 @@ attach_slot (GtkWidget *slot)
   g_weak_ref_init (&hook->slot, slot);
   g_weak_ref_init (&hook->list_base, NULL);
   g_weak_ref_init (&hook->cover, NULL);
+  g_weak_ref_init (&hook->paint_clock, NULL);
   hook->kind = FV_LOCATION_IGNORE;
   g_object_set_data_full (G_OBJECT (slot), SLOT_KEY, hook, hook_free);
   g_hash_table_add (fv->hooks, hook);
@@ -898,15 +1186,16 @@ debug_dump (void)
       NuViewType view = 0;
       int zoom = -1;
       gboolean shown = shown_view (slot, &view, &zoom);
-      gboolean checked = hook != NULL && hook->known && hook->kind != FV_LOCATION_IGNORE && shown;
+      gboolean checked = hook != NULL && hook->known && hook->kind != FV_LOCATION_IGNORE && shown &&
+                         !hook->switch_pending;
       gboolean ok = !checked || (view == hook->value.view && zoom == fv_folder_view_zoom (&hook->value));
       g_autoptr (GtkWidget) cover = hook != NULL ? g_weak_ref_get (&hook->cover) : NULL;
       g_message ("fv dump: tab=%d selected=%d hooked=%d uri=%s kind=%d known=%d shown=%d/%d expect=%d/%d "
-                 "cover=%d checked=%d ok=%d",
+                 "cover=%d pending=%d checked=%d ok=%d",
                  i, page == adw_tab_view_get_selected_page (tv), hook != NULL, hook != NULL ? hook->uri : "-",
                  hook != NULL ? (int) hook->kind : -1, hook != NULL && hook->known, view, zoom,
                  hook != NULL ? (int) hook->value.view : 0, hook != NULL ? fv_folder_view_zoom (&hook->value) : -1,
-                 cover != NULL, checked, ok);
+                 cover != NULL, hook != NULL && hook->switch_pending, checked, ok);
     }
   g_message ("fv dump: tabs=%d hooks=%u cache=%u disabled=%d", n, g_hash_table_size (fv->hooks),
              fv_cache_size (fv->cache), fv->disabled);

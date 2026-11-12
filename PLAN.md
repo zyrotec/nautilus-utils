@@ -1267,3 +1267,42 @@ fade → removed). The run before it (`smoke-20261112-234043`) failed only the s
 not touched by this change, and it passed in the re-run and in the Phase 4 run: an intermittent timing issue
 in that check, recorded here for Feature 3's follow-up.
 Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+
+### 10.10 Instant feel: read-ahead, switch after the click's frame, no fade (owner, 2026-11-13: "I want the transition to feel instant, can't we read the next dir pref and load it beforehand?")
+
+Measured before this change (§10.9 build): the click itself wasn't drawn for 100–300 ms (the switch ran
+inside Nautilus' location notification, before the next frame), then the cover waited for loading and
+faded for 180 ms. Reading a folder's view takes 0.3–18 ms, so it was never the main delay, but it is
+removed too.
+
+1. **Read-ahead** (the owner's idea): when a local folder has finished loading, the saved views of its
+   **subfolders**, its **siblings** (the parent's subfolders) and its **parent** are read in the background
+   (`g_file_enumerate_children_async` + `next_files_async`, `G_PRIORITY_LOW`, GIO worker threads, up to
+   `FV_PREFETCH_MAX` 2000 entries per folder, batches of 64) into the cache (`FV_CACHE_MAX` raised to 8192).
+   Only folders the cache doesn't know are stored, so a value the user just saved is never replaced by an
+   older one. It is cancelled when the tab moves on, and skipped on network shares (no second enumeration
+   over the network).
+2. **Switch after the click's frame:** at the location change only the still picture goes up (cheap); the
+   switch runs in an idle right after the next frame has been drawn (`after-paint` on the slot's frame
+   clock, with a `FV_SWITCH_FALLBACK_MS` 100 ms fallback). The path bar and loading state show at once, and
+   Files' 0.1–0.3 s view rebuild happens behind an unchanged picture. Background tabs switch right away.
+3. **No fade:** `FV_FADE_MS` 0. The picture is removed the moment the new folder's files are in, a cut
+   like stock Files (the fade code stays for a non-zero value).
+
+Measured (isolated Nautilus, normal build, 180-file folders A/B/C and a 10 000-file folder, same
+navigation, frame logger probe), from the location change to the first drawn frame / to the first frame
+showing the new folder's files uncovered:
+
+| | first frame | new folder shown |
+|---|---|---|
+| stock Files (feature off) | 10–16 ms | 335–458 ms (10 000 files: 840 ms) |
+| folder views, §10.9 build | 100–300 ms | ~390–980 ms (load + switch + 180 ms fade) |
+| folder views, this build | 13–31 ms | 279–697 ms (10 000 files: 887 ms) |
+
+Every folder's view was known at the click (read-ahead/cache) except the very first one. The one first-frame
+outlier (417 ms, first visit to B) matches stock's first-visit stall (335 ms on its first folder).
+**Remaining gap:** on list ↔ grid changes the new folder appears on average ~0.13 s later than stock. That
+is Files' own view rebuild (the same as Ctrl+1/Ctrl+2), which the main thread has to run, and it can't be
+skipped through Files' public behaviour. Folder changes with the same view type, or that only zoom, are as
+fast as stock (zoom ~10 ms).
+Smoke (ASan, 150 s + every round): `smoke-20261113-001117` **PASS** (57 tab checks, 9 named checks, 0 wrong; 26 off-dumps clean; 6 transitions). Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
