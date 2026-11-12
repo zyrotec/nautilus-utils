@@ -724,7 +724,7 @@ All act on `/`. Network share rows keep no menu (S6 unchanged). Implementation: 
 | `show-size-labels` | b | true |
 | `eject-slide` | b | false |
 
-Constants: `SD_EJECT_SLIDE_MS` 200, `SD_EJECT_FADE_EXTRA_PX` 16 (fade = button + padding + 16 px, owner
+Constants: `SD_EJECT_SLIDE_MS` 200, `SD_EJECT_FADE_EXTRA_PX` 32 (fade = button + padding + 32 px, owner
 2026-11-12).
 
 ### 9.4 Decisions (owner, 2026-11-12)
@@ -935,3 +935,5 @@ in with the slide (`sd_fade_follow_width`: revealer width + 16 × slide progress
 the button's natural width incl. margins), so a hidden button still means no fade and nothing jumps on the
 first frame; the stops are unchanged (transparent from the middle of the now 50 px mask). Test added; render
 checked; strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind PASS.
+Owner change (2026-11-12, second): another 16 px → `SD_EJECT_FADE_EXTRA_PX` 32 (mask 66 px with a 34 px
+button, transparent from 33 px in).
