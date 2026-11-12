@@ -872,3 +872,18 @@ Smoke (`smoke-20261112-184138`, ASan, ~/Pictures, 60 s + 25 toggle rounds): PASS
 previews and icons re-hooked after every switch-on; 38 verifies, 0 wrong previews; no warnings; no sanitizer
 report mentioning our code. Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS
 (home schema hidden).
+
+**Phase 4 — OS row menu (done 2026-11-12).** Right-click (secondary button) and Menu / Shift+F10 on our OS
+row open **Nautilus' own drive menu** for it (N6): `show_os_menu` emits `pressed` on the sidebar's
+`GtkGestureLongPress` at the row's centre in places-list coordinates, after checking that
+`gtk_list_box_get_row_at_y` returns our row there. Items (from Nautilus, for a row without mount):
+Open / Open in New Tab / Open in New Window / — / Properties; the hidden bookmark/unmount sections don't
+show. No gesture found → no menu, one debug message, the row keeps working. Primary click still opens `/`.
+Safety: Nautilus keeps a raw pointer to the menu's row (`context_row`), so before our OS row is removed
+(switch-off, graceful failure, shutdown) an open row menu is closed first.
+Verified in an isolated Nautilus (debug commands `sd-os-menu`, `sd-os-menu-dump`,
+`sd-os-menu-activate <action> [int]`, `sd-os-menu-close`): items as above, *Open in New Tab* and
+*Properties* run, switching the feature off with the menu open leaves 0 leftovers and no crash, menu works
+again after switching back on. Smoke (`smoke-20261112-185718`, ASan, 5 toggle rounds + 60 s): PASS, menu checked for
+Properties and for the absence of Unmount/Format/Eject. Safety: strict, `-fanalyzer`, scan-build,
+ASan+UBSan, valgrind all PASS. Still manual (owner): a real right-click, Menu key, and the popover's position.

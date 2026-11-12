@@ -450,8 +450,59 @@ activate_os_row (GtkWidget *os_row)
     }
 }
 
+/* The sidebar's touch long-press gesture: its handler opens Nautilus' own row menu for the row at a given
+ * y of the places list (PLAN.md §9.6, N6). Borrowed (owned by the sidebar); NULL if not found. */
+static GtkGesture *
+find_long_press (GtkWidget *sidebar)
+{
+  g_autoptr (GListModel) controllers = gtk_widget_observe_controllers (sidebar);
+  for (guint i = 0; i < g_list_model_get_n_items (controllers); i++)
+    {
+      g_autoptr (GObject) c = g_list_model_get_item (controllers, i);
+      if (GTK_IS_GESTURE_LONG_PRESS (c))
+        return GTK_GESTURE (c); /* stays alive: the sidebar holds it */
+    }
+  return NULL;
+}
+
+/* Nautilus' row menu popover if it is shown in @sidebar, else NULL. Borrowed. */
+static GtkWidget *
+open_row_menu (GtkWidget *sidebar)
+{
+  for (GtkWidget *c = gtk_widget_get_first_child (sidebar); c != NULL; c = gtk_widget_get_next_sibling (c))
+    if (GTK_IS_POPOVER_MENU (c) && gtk_widget_get_visible (c))
+      return c;
+  return NULL;
+}
+
+/* Opens Nautilus' own drive menu for our OS row: Open / Open in New Tab / Open in New Window / Properties
+ * (Nautilus builds it from the row's properties; our row has no mount, so no Unmount/Format). Done by
+ * emitting the sidebar long-press gesture's "pressed" at our row; Nautilus' handler looks the row up with
+ * gtk_list_box_get_row_at_y on the places list. Returns FALSE (row keeps working, no menu) if that isn't
+ * possible. */
+static gboolean
+show_os_menu (GtkWidget *os_row)
+{
+  GtkWidget *sidebar = sidebar_of (os_row);
+  GtkWidget *list = gtk_widget_get_parent (os_row);
+  GtkGesture *long_press = sidebar != NULL ? find_long_press (sidebar) : NULL;
+  graphene_point_t p;
+  if (long_press == NULL || !GTK_IS_LIST_BOX (list) ||
+      !gtk_widget_compute_point (os_row, list, &GRAPHENE_POINT_INIT (0.0f, gtk_widget_get_height (os_row) / 2.0f), &p) ||
+      gtk_list_box_get_row_at_y (GTK_LIST_BOX (list), (int) p.y) != GTK_LIST_BOX_ROW (os_row))
+    {
+      static gboolean logged;
+      if (!logged)
+        g_debug ("OS row menu unavailable (no sidebar long-press gesture or row not in the places list)");
+      logged = TRUE;
+      return FALSE;
+    }
+  g_signal_emit_by_name (long_press, "pressed", (double) p.x, (double) p.y);
+  return TRUE;
+}
+
 /* Claim every press on our row so Nautilus' list/sidebar gestures (activation, context menu, long press)
- * never get it; only a primary click opens "/". */
+ * never get it; a primary click opens "/", a secondary click opens the drive menu. */
 static void
 on_os_pressed (GtkGestureClick *gesture,
                int              n_press,
@@ -471,9 +522,12 @@ on_os_released (GtkGestureClick *gesture,
                 gpointer         data)
 {
   (void) n_press; (void) x; (void) y; (void) data;
-  if (gtk_gesture_single_get_current_button (GTK_GESTURE_SINGLE (gesture)) != GDK_BUTTON_PRIMARY)
-    return;
-  activate_os_row (gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (gesture)));
+  guint button = gtk_gesture_single_get_current_button (GTK_GESTURE_SINGLE (gesture));
+  GtkWidget *row = gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (gesture));
+  if (button == GDK_BUTTON_PRIMARY)
+    activate_os_row (row);
+  else if (button == GDK_BUTTON_SECONDARY)
+    show_os_menu (row);
 }
 
 static gboolean
@@ -484,12 +538,17 @@ on_os_key (GtkEventControllerKey *controller,
            gpointer               data)
 {
   (void) keycode; (void) data;
+  GtkWidget *row = gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (controller));
+  /* Menu key / Shift+F10: the drive menu, as on Nautilus' own rows. */
+  if ((keyval == GDK_KEY_Menu && (state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK)) == 0) ||
+      (keyval == GDK_KEY_F10 && (state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK)) == GDK_SHIFT_MASK))
+    return show_os_menu (row);
   if ((state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK)) != 0)
     return FALSE;
   if (keyval != GDK_KEY_Return && keyval != GDK_KEY_KP_Enter && keyval != GDK_KEY_ISO_Enter &&
       keyval != GDK_KEY_space && keyval != GDK_KEY_KP_Space)
     return FALSE;
-  activate_os_row (gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (controller)));
+  activate_os_row (row);
   return TRUE;
 }
 
@@ -1201,6 +1260,10 @@ sidebar_hook_free (gpointer data)
   g_clear_handle_id (&hook->refresh_id, g_source_remove);
   if (hook->os_row != NULL)
     {
+      /* Nautilus' row menu keeps a raw pointer to the row it was opened for; never let it outlive our row. */
+      GtkWidget *menu = open_row_menu (hook->sidebar);
+      if (menu != NULL)
+        gtk_popover_popdown (GTK_POPOVER (menu));
       GtkWidget *list = gtk_widget_get_parent (hook->os_row);
       if (GTK_IS_LIST_BOX (list))
         gtk_list_box_remove (GTK_LIST_BOX (list), hook->os_row);
@@ -1610,6 +1673,53 @@ on_debug_signal (gpointer data)
               g_message ("sd: activating OS row");
               activate_os_row (hook->os_row);
             }
+        }
+    }
+  /* OS row drive menu (PLAN.md §9.1.3): open it, list its items, run one, close it. */
+  else if (g_str_has_prefix (cmd, "sd-os-menu"))
+    {
+      g_autoptr (GPtrArray) all = g_hash_table_get_keys_as_ptr_array (sh->sidebars);
+      for (guint i = 0; i < all->len; i++)
+        {
+          SidebarHook *hook = g_ptr_array_index (all, i);
+          if (hook->os_row == NULL || !gtk_widget_get_mapped (hook->os_row))
+            continue;
+          GtkWidget *menu = open_row_menu (hook->sidebar);
+          if (g_str_equal (cmd, "sd-os-menu"))
+            g_message ("sd: OS menu %s", show_os_menu (hook->os_row) ? "requested" : "UNAVAILABLE");
+          else if (g_str_equal (cmd, "sd-os-menu-dump"))
+            {
+              GMenuModel *model = menu != NULL ? gtk_popover_menu_get_menu_model (GTK_POPOVER_MENU (menu)) : NULL;
+              GString *items = g_string_new (NULL);
+              for (int sec = 0; model != NULL && sec < g_menu_model_get_n_items (model); sec++)
+                {
+                  g_autoptr (GMenuModel) section = g_menu_model_get_item_link (model, sec, G_MENU_LINK_SECTION);
+                  for (int j = 0; section != NULL && j < g_menu_model_get_n_items (section); j++)
+                    {
+                      g_autofree char *label = NULL, *hidden = NULL;
+                      g_menu_model_get_item_attribute (section, j, G_MENU_ATTRIBUTE_LABEL, "s", &label);
+                      g_menu_model_get_item_attribute (section, j, "hidden-when", "s", &hidden);
+                      if (hidden == NULL) /* "hidden-when action-disabled" items are bookmark-only */
+                        g_string_append_printf (items, "%s|", label);
+                    }
+                  g_string_append (items, "--|");
+                }
+              g_message ("sd os-menu: shown=%d has-open-popup=%d items=%s", menu != NULL,
+                         gtk_widget_has_css_class (hook->os_row, "has-open-popup"), items->str);
+              g_string_free (items, TRUE);
+            }
+          else if (g_str_has_prefix (cmd, "sd-os-menu-activate ") && menu != NULL)
+            {
+              g_auto (GStrv) parts = g_strsplit (cmd, " ", 3);
+              gboolean ok = parts[2] != NULL
+                              ? gtk_widget_activate_action (menu, parts[1], "i", (gint32) g_ascii_strtoll (parts[2], NULL, 10))
+                              : gtk_widget_activate_action (menu, parts[1], NULL);
+              g_message ("sd os-menu: activate %s -> %d", cmd + 20, ok);
+              gtk_popover_popdown (GTK_POPOVER (menu));
+            }
+          else if (g_str_equal (cmd, "sd-os-menu-close") && menu != NULL)
+            gtk_popover_popdown (GTK_POPOVER (menu));
+          break;
         }
     }
   return G_SOURCE_CONTINUE;

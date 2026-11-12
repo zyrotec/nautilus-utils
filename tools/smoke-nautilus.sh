@@ -88,6 +88,7 @@ DIR_URI="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as
 # Sidebar drives (PLAN.md §8): OS row, Home, network row, refresh; then back to DIR for the preview checks.
 sidebar_round() {
   cmd sd-dump 0.3; cmd sd-click-os 1.5; cmd sd-open-home 1.5; cmd sd-click-net 1.5
+  cmd sd-os-menu 0.6; cmd sd-os-menu-dump 0.3; cmd sd-os-menu-close 0.3
   cmd sd-refresh 1; cmd sd-dump 0.3; cmd "sd-open $DIR_URI" 2
 }
 
@@ -169,6 +170,11 @@ left="$(grep -E 'sd dump: OFF .*leftovers=[1-9]' "$LOG/nautilus.log" || true)"
 stale="$(grep -E 'fp state: off=1 .*installed=[1-9]' "$LOG/nautilus.log" || true)"
 [ -z "$stale" ] || { echo "FINDING: folder previews still shown while switched off:"; echo "$stale" | sed 's/^/    | /'; fail=1; }
 n_off="$(grep -c 'sd dump: OFF' "$LOG/nautilus.log" || true)"
+# OS drive menu (PLAN.md §9.1.3): Nautilus' own menu, with Properties and without Unmount/Format.
+n_menu="$(grep -c 'sd os-menu: shown=1 .*Properties' "$LOG/nautilus.log" || true)"
+bad_menu="$(grep -E 'sd os-menu: shown=0|sd os-menu: .*(Unmount|Format|Eject)|OS menu UNAVAILABLE' "$LOG/nautilus.log" || true)"
+[ -z "$bad_menu" ] || { echo "FINDING: OS drive menu missing or wrong:"; echo "$bad_menu" | sed 's/^/    | /'; fail=1; }
+[ "$n_menu" -gt 0 ] || { echo "FINDING: the OS drive menu never opened"; fail=1; }
 n_fp_on="$(grep -cE 'fp state: off=0 hooks=[1-9]' "$LOG/nautilus.log" || true)"
 n_fp_off="$(grep -c 'fp state: off=1' "$LOG/nautilus.log" || true)"
 
@@ -180,6 +186,7 @@ echo "Smoke summary:"
 echo "  module loaded:          $([ "$loaded" -gt 0 ] && echo yes || echo NO)"
 echo "  self-checks (verify):   $n_verify, wrong previews: $([ -z "$wrong" ] && echo 0 || echo SOME)"
 echo "  sidebar self-dumps:     $sidebar_ok"
+echo "  OS drive menus:         $n_menu"
 echo "  settings toggles:       sidebar off-dumps $n_off, preview off-states $n_fp_off, preview re-hooked $n_fp_on"
 echo "  sanitizer report files: ${#reports[@]} (only blocks mentioning our code count)"
 echo "  result:                 $([ $fail -eq 0 ] && [ "$loaded" -gt 0 ] && echo PASS || echo FAIL)"
