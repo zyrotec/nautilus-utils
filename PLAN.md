@@ -143,7 +143,7 @@ findings and the smoke test is clean.
 | # | Feature | Dir | Status |
 |---|---|---|---|
 | 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover | `src/folder-preview/` | **v1 done** (grid view) |
-| 2 | *(next feature — to be planned here)* | | |
+| 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
 
 Open items:
 
@@ -315,3 +315,289 @@ without this extension (GIL).
   suppressing it in our own code.
 - New feature: add its section to this file (§6 is the template) and its row to §5, get it approved, then
   build it phase by phase (§4.5).
+
+---
+
+## 8. Feature 2 — Sidebar drives
+
+Turns the drive rows of the Nautilus sidebar into Dolphin/GNOME-Disks-style rows with a usage bar and free
+space, names the OS drive after the installed OS, and lists connected network shares below a separator.
+Prefix `sd_`, log domain `sidebar-drives`, branch `dev-side-bar-drives`.
+
+### 8.1 Behaviour
+
+#### 8.1.1 Layout
+
+```
+  …bookmarks (Documents, Music, …, Development)
+  ───────────────────────────────────────────────  existing separator (unchanged)
+  [icon] Fedora Linux 45 (Workstation Edition)        OS drive (no eject)
+         ███░░░░░░░░░░░░░░░░░░
+         445.7 GB free of 497.3 GB
+  [icon] Personal Drive                          ⏏
+         █████████████░░░░░░░
+         803.2 GB free of 1.0 TB
+  [icon] User Drive                              ⏏
+         ░░░░░░░░░░░░░░░░░░░░
+         500.0 GB free of 500.1 GB
+  ───────────────────────────────────────────────  new separator, same look as the existing one
+  [icon] share on nas.local                      ⏏    network shares (only if any are mounted)
+         ██████░░░░░░░░░░░░░░
+         1.2 TB free of 3.6 TB
+```
+
+- **Local drive rows** (every mount the sidebar already lists in its devices section): name on the first
+  line, a thin usage bar below it, and `"<free> free of <size>"` as a caption below the bar. Eject button,
+  icon, click, right-click menu and drag-and-drop behave exactly as before.
+- **OS drive**: the mount holding `/`. Its label is the OS's pretty name
+  (`g_get_os_info (G_OS_INFO_KEY_PRETTY_NAME)`, e.g. "Fedora Linux 45 (Workstation Edition)"), falling back
+  to "Computer" if unavailable; ellipsised at the end if too long (tooltip shows the full name). It is the
+  **first** drive row; clicking opens `/` (S5). No eject button. Nautilus has no row for `/`, so it is our
+  own row (§8.6). Nautilus' own "Computer" row (Computer view) stays where it is, untouched.
+- Order: OS drive, then the other local drives in Nautilus' order (Personal Drive, User Drive).
+- **Network shares**: mounted network locations only (SMB, SFTP, NFS, WebDAV, …; i.e. mounts that are not
+  native/local). They appear under a separator styled like the existing one; separator and section are
+  hidden when nothing is mounted. Same row layout; usage bar and caption only when the server reports a
+  size, otherwise just the name. Unmount button as Nautilus provides it.
+- Sizes: `g_format_size()` (one decimal, SI units: "445.7 GB free of 497.3 GB").
+- Bar colour: accent colour normally; warning colour at ≥ 90 % full, error colour at ≥ 95 %
+  (`GtkLevelBar` offsets, theme colours only).
+
+#### 8.1.2 Updating
+
+- Rows update when Nautilus rebuilds the sidebar (mount/unmount, bookmarks changed) — the hook re-applies
+  after every rebuild.
+- Free space refreshes: when a window gains focus, after a file operation finishes in Nautilus (if a
+  signal is available, Phase 0), and every `SD_REFRESH_S` while a window is visible. Never per keystroke or
+  per file.
+- Local queries: `g_file_query_filesystem_info_async` (`filesystem::size,free`); never on the main thread.
+- Network queries: same call with a `GCancellable` and an `SD_NET_TIMEOUT_MS` timeout; a slow or dead
+  server keeps its last known values (or name only) and is retried at the next refresh, never more than one
+  query in flight per mount.
+
+#### 8.1.3 Look & accessibility (GNOME HIG, libadwaita)
+
+- Bar: `GtkLevelBar` in continuous mode, 4 px high, rounded, inset under the label (aligned with the text,
+  not the icon), as in images 1–3. Caption: `.caption` + `.dim-label`. All colours from libadwaita CSS
+  variables (`var(--accent-bg-color)`, `var(--warning-bg-color)`, `var(--error-bg-color)`) so light/dark
+  and high-contrast themes work; GTK4 CSS syntax only.
+- Rows get taller (two extra lines); the row height must stay consistent between drive rows.
+- Accessibility: the row's accessible description is the caption text; the level bar has an accessible
+  label ("Disk usage") and value. Keyboard navigation unchanged.
+
+#### 8.1.4 Graceful failure
+
+- All Nautilus-internals code lives in `src/sidebar-drives/sidebar_hook.c`. If `NautilusSidebar` /
+  `NautilusSidebarRow` or the properties we rely on aren't found, log one warning and leave the sidebar
+  untouched. Folder preview keeps working independently.
+
+### 8.2 Rules
+
+1. Main thread only: widget changes and cheap lookups (§4.4). Filesystem queries are async GIO calls.
+2. Never keep raw pointers to sidebar rows (Nautilus destroys and recreates them on every rebuild): use
+   `g_signal_connect_object` / `GWeakRef` and per-row data via `g_object_set_data_full`.
+3. Never change Nautilus' own row actions; only add children/CSS and reorder/relabel as verified in Phase 0.
+4. Size math and text formatting live in a Nautilus-free core (`drive_info.c`) with unit tests.
+
+### 8.3 Constants (`src/sidebar-drives/config.h`)
+
+| Name | Value | Meaning |
+|---|---|---|
+| `SD_REFRESH_S` | 60 | Periodic free-space refresh while a window is visible |
+| `SD_NET_TIMEOUT_MS` | 3000 | Give up on a network size query after this |
+| `SD_WARN_FRACTION` | 0.90 | Bar turns warning colour at this fill level |
+| `SD_FULL_FRACTION` | 0.95 | Bar turns error colour at this fill level |
+| `SD_BAR_HEIGHT_PX` | 4 | Usage bar height |
+
+### 8.4 Decisions (owner, 2026-11-11)
+
+| # | Decision |
+|---|---|
+| S1 | Network section lists **mounted shares only** (no saved-but-disconnected servers). |
+| S2 | Network rows show usage when the server reports it, else name only. |
+| S3 | Size text uses `g_format_size` (one decimal), as in image 3. |
+| S4 | The OS drive is named after the OS (`PRETTY_NAME`), not "Computer". |
+| S6 | Network shares = our own rows in our own list below a separator under the local drives; Nautilus' rows for them hidden. Click opens, eject goes through Nautilus' hidden row. No right-click menu / file drop on these rows (owner accepted, 2026-11-12). |
+| S5 | OS drive = our own row directly above Personal Drive; clicking opens `/`. Nautilus' "Computer" row is **never altered** (owner correction 2026-11-11: "Computer" in the request only referred to the OS drive's name in the screenshot). |
+
+### 8.5 Phases
+
+| Phase | Work | Acceptance |
+|---|---|---|
+| 0 Spike | Throwaway probe (not built by Meson): dump the `NautilusSidebar` widget tree and `NautilusSidebarRow` properties (label, mount/volume/drive, uri, section type, eject button); find how rows map to mounts; whether `/` is listed; how the existing separator is drawn; what triggers rebuilds; whether rows can get extra children and be reordered without breaking activation/DnD/context menus. Record findings + screenshots here. | Every question answered; if the sidebar can't be modified safely, stop and report. |
+| 1 Core | `drive_info.c`: OS name, mount classification (OS / local / network), async size query with timeout + cancellation, caption text, fill level → state. Unit tests incl. fake slow mounts. | Tests + `check-safety.sh` pass. |
+| 2 Local rows | `sidebar_hook.c`: usage bar + caption on local drive rows, OS row first and renamed, re-apply on rebuild, CSS. | Matches images 1–3 in light and dark; activation, eject, DnD, context menu unchanged; graceful failure. |
+| 3 Network | Separator + network section, timeout handling, unmount. | A mounted SMB/SFTP share appears below the separator; a dead server never stalls Nautilus (16 ms probe). |
+| 4 Refresh & hardening | Focus/timer refresh, smoke-test coverage (extend `tools/smoke-nautilus.sh`), safety run. | `check-safety.sh` + smoke test PASS; no main-loop stall > 16 ms attributable to us. |
+| 5 Docs | README feature section, screenshots. | — |
+
+### 8.6 Phase 0 findings (2026-11-11, Nautilus 51.1 / GTK 4.24.1)
+
+Method: throwaway probe module loaded into an isolated Nautilus (own D-Bus session, own `XDG_CONFIG_HOME`
+with a copy of the bookmarks, so rebuilds can be triggered without touching the real ones). Not in the repo.
+
+**Structure.** `NautilusWindow > … > AdwToolbarView > NautilusSidebar (css placessidebar) > GtkScrolledWindow
+> GtkViewport > GtkBox.navigation-sidebar` containing:
+1. `GtkListBox` #1 — only the **Computer** row (`uri computer:///`, opens Nautilus 51's Computer view, which
+   already shows "Fedora Linux 45 (Workstation…)" with a usage bar = the owner's images 2–3).
+2. a hidden `GtkSeparator`.
+3. `GtkListBox` #2 — Home, Recent, Starred, Network, Trash, (hidden "New bookmark"), bookmarks, mounts.
+   It has a **sort function** (by row type/section) and a **header function**: section separators are
+   `GtkSeparator` row headers (on the first bookmark and the first mount row).
+
+**Rows** (`NautilusSidebarRow < GtkListBoxRow`): properties `label` (writable, updates the UI),
+`tooltip`, `start-icon`, `end-icon`, `ejectable`, `eject-tooltip`, `uri`, `file` (**read-only**),
+`drive`/`volume`/`mount` (Personal/User Drive: `GProxyDrive`/`GProxyVolume`/`GProxyMount`),
+`section-type` (`NautilusSidebarSectionType`: INVALID, DEFAULT_LOCATIONS, BOOKMARKS, CLOUD, MOUNTS),
+`place-type` (`NautilusSidebarRowType`: INVALID, BUILT_IN, EXTERNAL_MOUNT, INTERNAL_MOUNT, NEW_BOOKMARK,
+BOOKMARK, BOOKMARK_PLACEHOLDER), `order-index`, `sidebar`. Content: `GtkRevealer > GtkBox.horizontal >
+[GtkImage start, GtkLabel, GtkImage end (hidden), GtkButton.sidebar-button eject, AdwSpinner]`.
+`/` has **no** row (only the Computer view row). No section exists for network mounts yet (unverified until
+a network share is mounted).
+
+**Signals.** `NautilusSidebar`: `mount`, `unmount`, `drag-action-requested`, `drag-action-ask`,
+`drag-perform-drop`. Rows: none of their own.
+
+**Modifying rows.**
+- Wrapping the row's `GtkLabel` in a vertical box with a `GtkLevelBar` + caption works: the row grows, icon
+  and eject button stay aligned. ✅
+- **Every rebuild** (e.g. a bookmark change) recreates **all** rows of list #2, so decorations must be
+  re-applied after each rebuild (detect: rows without our marker). ✅ (expected, §8.1.2)
+- Activation via `row-activated` on a real row works (moved Computer row opened the Computer view). ✅
+
+**Event handling** (`gtk_widget_observe_controllers`): `NautilusSidebar` — `GtkGestureLongPress`;
+list #2 — `GtkDropTarget` (formats `NautilusSidebarRow`, `GdkFileList`), `GtkEventControllerKey`,
+`GtkGestureClick` (button 1), shortcuts; each Nautilus-created row — `GtkGestureDrag` (button 1, bookmark
+reordering) and `GtkGestureClick` (all buttons: activation, middle-click, right-click menu); eject button —
+its own click gesture. Controllers are added by Nautilus when it creates a row, so a row created by us has
+**none**.
+
+**Sorting & headers.** List #2's sort function orders mount rows by **label** (`order-index` has no effect
+on them; values < 0 are rejected). The header function puts the section separator on the first row of the
+mounts section, recomputed by `gtk_list_box_invalidate_headers`.
+
+**OS drive row — chosen design (owner, S5; the first version hid the Computer row and opened the Computer
+view — that was a misreading of the request and was reverted, see §8.7):**
+- Nautilus' Computer row is left alone.
+- Insert our own `NautilusSidebarRow` into list #2: `uri file:///`, `section-type MOUNTS`,
+  `place-type INTERNAL_MOUNT`, `ejectable FALSE`, **`label ""`** so the sort puts it first among the
+  mounts; Nautilus' `GtkLabel` hidden and our own label shows the OS name (tooltip + accessible label too);
+  `activatable FALSE` so the list never hands it to Nautilus' activation code.
+- Clicks/Enter on our row (our own gesture + key controller, claiming the event) open `/` via Nautilus'
+  `slot.open-location` action (string URI; resolved by the window for its active slot). ✅ (Probe note:
+  emitting `row-activated` on a row that isn't selected makes Nautilus log
+  `g_object_get: assertion 'G_IS_OBJECT (object)' failed`.)
+- Result: separator above our row, then Personal Drive, User Drive; survives rebuilds by re-applying. ✅
+- Selection highlight: see Phase 2 results (§8.7) — driven by the window's real location.
+- Rejected: moving Nautilus' Computer row (Nautilus re-adds it on rebuild); our row with `file` (read-only);
+  forwarding clicks to the Computer row (opens the Computer view, not `/`).
+
+**Still to verify** (need real input or a real mount — Phase 2/3 acceptance, manual by the owner):
+right-click and drag-and-drop onto our row (our row's gesture claims clicks; a refusing `GtkDropTarget` on
+it), and how mounted **network shares** appear (section/place type, separator) — requires a mounted share;
+**deferred to Phase 3** by the owner (tested with a share the owner mounts).
+
+**Phase 0 status: done** (2026-11-11), network-share item deferred to Phase 3.
+
+### 8.7 Phase results
+
+**Phase 1 — Core (done 2026-11-11).** `src/sidebar-drives/drive_info.c` (Nautilus- and GTK-free):
+`sd_os_name` (`g_get_os_info` PRETTY_NAME, fallback "Computer"), `sd_classify` (network = not native **or**
+`filesystem::remote`, which also covers kernel NFS/CIFS mounts), `sd_fill_fraction`/`sd_fill_state`
+(thresholds §8.3), `sd_usage_text` (`g_format_size`: no-break space before "GB"/"TB", plain space before
+"bytes"), and `sd_query_usage_async` (`filesystem::size,free,type,remote`). The timeout returns
+`G_IO_ERROR_TIMED_OUT` on time **even if the backend ignores cancellation** (a dead server); the late result is
+dropped; the caller's cancellable gives `G_IO_ERROR_CANCELLED`.
+Tests: `tests/sidebar-drives/test-drive-info.c`, 12 tests, incl. a fake slow `GFile` (honouring or ignoring
+cancellation) and a 300-round stress test. Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind
+all PASS; coverage 95.9 % (never run: the "Computer" fallback, and a defensive timer cleanup).
+Lesson: tests that run under valgrind must not depend on tight wall-clock limits (first run timed out a real
+query under valgrind load; the real-query test now has no timeout and timing checks have wide margins).
+
+**Phase 2 — Local rows (done 2026-11-11, pending the owner's manual checks).** `sidebar_hook.c` +
+`sidebar_drives.c`, registered in `src/extension.c`. Discovery: emission hook on `GtkWidget::map` (sees the
+sidebar and every row Nautilus recreates), `apply()` coalesced in a high-priority idle and idempotent.
+Drive rows: Nautilus' label moved into a vertical box with a `GtkLevelBar` (GTK's low/high/full offsets
+removed; our `.sd-warning`/`.sd-full` classes) and a `.caption.dim-label`; size queried with
+`sd_query_usage_async`. OS row as designed in §8.6 (own click/key controllers opening `/` via `slot.open-location`,
+refusing drop target). CSS via one `GtkCssProvider` per display, libadwaita variables only.
+
+Findings while building it (Nautilus 51.1):
+- Nautilus keeps **one selected row across all its lists**: selecting our row makes it unselect the Computer
+  row, so the highlight can't be mirrored from that row's selection.
+- `NautilusSidebar:location` is only set by Nautilus when it activates a row and becomes NULL after a
+  rebuild; while it is NULL Nautilus **unselects any row we select**. The window's real location is
+  `NautilusWindow:active-slot` → `NautilusWindowSlot:location` (notifies on change).
+- Design: our row is highlighted exactly while the active slot's location is `/`; after a rebuild we
+  first give the sidebar its location back, then select; plus one re-check 150 ms after a rebuild
+  (Nautilus clears the selection in several steps).
+- The debug screenshot only works while a folder grid is shown (Nautilus 51's Home is not a grid).
+
+Verified in an isolated Nautilus with the debug driver (`sd-dump`, `sd-click-os`, `sd-open-home`):
+layout and separator; Computer row visible and untouched; click → `/` + highlight; Home → highlight cleared; highlight kept across
+rebuilds; no wrong navigation; light and dark theme with accent colour; `SD_DEBUG_BREAK=types|props` → one
+warning, stock sidebar, folder preview unaffected. Safety: all `check-safety.sh` steps PASS; unit-test
+coverage of `sidebar_hook.c` is low (5.8 %) as it only runs inside Nautilus — covered by the smoke test.
+Still manual (owner): right-click and drag-and-drop on the OS row, clicking/ejecting the drives.
+
+Owner review (2026-11-11): layout, bars and behaviour confirmed ("looks amazing"), but the Computer row must
+never be altered and the OS row must open `/` — the first version hid Computer and opened the Computer view
+(misread request). Fixed: Computer row untouched, OS row opens `/` through `slot.open-location`, highlight
+follows the window location `/`. Re-verified with the debug driver; tests and `check-safety.sh` re-run.
+
+### 8.8 Phase 3 — Network shares
+
+Findings (Nautilus 51.1, owner's `smb://media-server.local/mediadrive/` mounted):
+- Mounted shares **are** in Nautilus' sidebar, as mount rows (`section MOUNTS`, `place EXTERNAL_MOUNT`).
+  Shares that aren't mounted are not listed (S1 keeps it that way).
+- Measured sort order within the mounts section: **place type first** (EXTERNAL 2 before INTERNAL 3), then
+  `g_utf8_collate` on the label. So shares (and USB sticks) always sort above internal drives.
+- `section-type` is construct-only (setting it later logs a GLib warning); the header (separator) function
+  only separates sections. Nautilus' own rows can therefore not be re-sorted or separated → S6.
+
+Design (S6): Nautilus' row of every network share is hidden (`sd-net-hidden`, restored on detach); our own
+`GtkListBox` (CSS classes copied from Nautilus' list) and a `GtkSeparator` (margins/classes copied from
+Nautilus' row-header separators) are inserted into the sidebar's box right after Nautilus' list. Our rows
+mimic Nautilus' (`row > revealer.sidebar-revealer > box`, spacing and per-widget margins copied) with name,
+usage bar, caption and an eject button. Network = not native, or `filesystem::remote` (kernel NFS/CIFS:
+detected when its size query returns, then moved). Reconciled after every rebuild (mount/unmount). Click →
+`slot.open-location`; eject → `clicked` on the hidden Nautilus row's eject button (Nautilus' own unmount
+path). Highlight follows the window location like the OS row. The list is hidden when no share is mounted.
+
+Spacing (owner review): our separator sits between two lists, so Nautilus' list bottom padding, the box
+spacing and our list's top padding added up (12 px above and below, vs 8 px / 6 px for Nautilus' own
+separators, measured). Fixed with CSS on our widgets only: `list.sd-net-list { padding-top: 0 }` and
+`separator.sd-net-separator { margin-top: 2px }` (a CSS margin replaces the theme's, it doesn't add) →
+8 px / 6 px, identical to the native separators.
+
+Oddity: a themed `GIcon` with drive names (e.g. `drive-harddisk-symbolic`, from Nautilus' row or from
+`g_mount_get_symbolic_icon`) rendered **blank** in our row, while `folder-remote-symbolic` renders; network
+rows therefore always use `folder-remote-symbolic`. Root cause not found (only reproducible with a faked
+local disk; real shares use that icon anyway).
+
+Test aid (debug builds only): `SD_DEBUG_FAKE_NETWORK=<label>` treats that local drive as a share;
+debug commands `sd-click-net`, `sd-dump` (network section). Never test eject with a faked share (it would
+unmount the real disk). Verified: separator + list below the local drives, bar/caption, click opens it and
+highlights, highlight moves to the OS row on `/`, kept across rebuilds, no warnings; light/dark.
+Still manual (owner, real share): appearance, click, eject/unmount, unmount from elsewhere removes the row,
+a slow/unreachable server never freezes Files.
+
+### 8.9 Phase 4 — Refresh & hardening, Phase 5 — Docs (2026-11-12)
+
+- Free-space refresh: on `notify::is-active` of the window (focus) and every `SD_REFRESH_S` (60 s) while the
+  sidebar is mapped; refreshes closer than 2 s are skipped; a row never has more than one query in flight.
+  Verified: a 2 GB file on `/` → OS row 445.7 → 443.5 GB free after a refresh (btrfs releases deleted space
+  with a delay; the value always matches `statvfs`).
+- Slow/dead servers: every query is async with a 3 s timeout that returns even if the backend ignores
+  cancellation (Phase 1 tests); a failed refresh keeps the last known values instead of hiding the bar.
+  Clicking a share hands navigation to Nautilus (its behaviour for unreachable servers is its own).
+- Smoke test: `tools/smoke-nautilus.sh` now also drives the sidebar under ASan (`sidebar_round`: OS row,
+  Home, network row, refresh, back to the test folder, plus random rounds), fails on `sidebar-drives`
+  warnings and if the OS row never appears; `SMOKE_FAKE_NETWORK=<label>` exercises the network list.
+  Debug commands added: `sd-refresh`, `sd-open <uri>`.
+  Result (120 s, `SMOKE_FAKE_NETWORK="User Drive"`): PASS — 45 sidebar steps, 15 sidebar self-dumps,
+  0 wrong previews, no sanitizer report mentioning our code.
+- Final `check-safety.sh`: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS; 9/9 test suites.
+  Unit-test coverage: `drive_info.c` 95.9 %, `sidebar_hook.c` 3.8 % (runs only inside Nautilus → smoke test).
+- Docs: README "Sidebar drives" section (behaviour, limitations, debug/smoke usage, layout table) and the
+  RPM description.

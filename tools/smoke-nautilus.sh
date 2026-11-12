@@ -3,7 +3,8 @@
 # the extension (plus the test-only debug driver), browse, quit, and fail if
 #   - any sanitizer report points into our code, or
 #   - the view-hook self-check ever finds a preview on the wrong folder ("debug verify: … wrong=N>0"), or
-#   - our log domain printed a WARNING/CRITICAL.
+#   - our log domain printed a WARNING/CRITICAL, or
+#   - the sidebar-drives hook never became active (no OS row in its self-dump).
 #
 # Usage:
 #   tools/smoke-nautilus.sh [DIR]                     interactive: browse/scroll/hover/zoom, then press Enter
@@ -11,6 +12,8 @@
 #                                                     random browsing until SECS have passed
 #
 # SMOKE_XDG_CACHE=DIR: give the test Nautilus its own cache dir (thumbnails + frames), e.g. the benchmark's.
+# SMOKE_FAKE_NETWORK=LABEL: show that local drive as a network share in the sidebar (exercises the network
+#   list; the smoke test never ejects anything).
 #
 # Isolation: the test Nautilus runs in its own D-Bus session (dbus-run-session), so your own Nautilus
 # windows are NOT closed and the scripted driver only acts on DIR (FP_DEBUG_ROOT). A test window does
@@ -57,7 +60,8 @@ echo "Starting an isolated Nautilus on $DIR (logs: $LOG)"
     ASAN_OPTIONS="log_path='$LOG/asan':detect_leaks=1:verify_asan_link_order=0" \
     UBSAN_OPTIONS="log_path='$LOG/ubsan':print_stacktrace=1" \
     LSAN_OPTIONS="suppressions='$ROOT/tools/lsan.supp':print_suppressions=0" \
-    G_MESSAGES_DEBUG="nautilus-utils folder-preview" \
+    G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives" \
+    SD_DEBUG_FAKE_NETWORK="${SMOKE_FAKE_NETWORK:-}" \
     FP_DEBUG_DIR="$CMD_DIR" FP_DEBUG_ROOT="$DIR" ${SMOKE_XDG_CACHE:+XDG_CACHE_HOME=$SMOKE_XDG_CACHE} \
     nautilus --new-window "$DIR" >"$LOG/nautilus.log" 2>&1 &
 )
@@ -74,9 +78,16 @@ echo "test Nautilus pid $PID"
 sleep 5
 
 cmd() { echo "$1" > "$CMD_DIR/cmd"; kill -USR2 "$PID" 2>/dev/null; sleep "${2:-1}"; }
+DIR_URI="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$DIR")"
+# Sidebar drives (PLAN.md §8): OS row, Home, network row, refresh; then back to DIR for the preview checks.
+sidebar_round() {
+  cmd sd-dump 0.3; cmd sd-click-os 1.5; cmd sd-open-home 1.5; cmd sd-click-net 1.5
+  cmd sd-refresh 1; cmd sd-dump 0.3; cmd "sd-open $DIR_URI" 2
+}
 
 if [ -n "$AUTO" ]; then
   end=$(( $(date +%s) + AUTO ))
+  sidebar_round
   cmd verify 1
   for f in 0.5 1.0 0.25 0.75 0.0; do cmd "scroll $f" 2; cmd verify 0.3; done
   cmd hover 2.5; cmd leave 0.5
@@ -84,11 +95,12 @@ if [ -n "$AUTO" ]; then
     cmd "action $a" 1.5; cmd "scroll 0.$((RANDOM % 10))" 1.5; cmd verify 0.3
   done
   while [ "$(date +%s)" -lt "$end" ]; do
-    case $((RANDOM % 6)) in
+    case $((RANDOM % 7)) in
       0|1|2) cmd "scroll 0.$((RANDOM % 100))" 0.3 ;;
       3)     cmd hover 1.6; cmd leave 0.3 ;;
       4)     cmd "action view.zoom-$([ $((RANDOM % 2)) = 0 ] && echo in || echo out)" 1 ;;
       5)     cmd verify 0.3 ;;
+      6)     sidebar_round ;;
     esac
   done
   cmd "action view.zoom-standard" 1.5; cmd verify 0.5
@@ -96,6 +108,7 @@ else
   echo
   echo "Browse in the test window: open folders, scroll fast, hover icons, zoom in/out (Ctrl +/-)."
   read -r -p "Press Enter when done ... " _
+  cmd sd-dump 0.3
   cmd verify 0.5
 fi
 
@@ -120,7 +133,7 @@ for r in "${reports[@]}"; do
   fi
 done
 
-ours_warnings="$(grep -E '(nautilus-utils|folder-preview)-(WARNING|CRITICAL)' "$LOG/nautilus.log" || true)"
+ours_warnings="$(grep -E '(nautilus-utils|folder-preview|sidebar-drives)-(WARNING|CRITICAL)' "$LOG/nautilus.log" || true)"
 if [ -n "$ours_warnings" ]; then
   echo "FINDING: warnings/criticals from our log domain:"
   echo "$ours_warnings" | sed 's/^/    | /'
@@ -136,10 +149,13 @@ if [ -n "$wrong" ]; then
 fi
 
 loaded="$(grep -c 'folder-preview loaded' "$LOG/nautilus.log" || true)"
+sidebar_ok="$(grep -c 'sd dump: .*OS-ROW' "$LOG/nautilus.log" || true)"
+[ "$sidebar_ok" -gt 0 ] || { echo "FINDING: the sidebar-drives hook never showed its OS row"; fail=1; }
 echo
 echo "Smoke summary:"
 echo "  module loaded:          $([ "$loaded" -gt 0 ] && echo yes || echo NO)"
 echo "  self-checks (verify):   $n_verify, wrong previews: $([ -z "$wrong" ] && echo 0 || echo SOME)"
+echo "  sidebar self-dumps:     $sidebar_ok"
 echo "  sanitizer report files: ${#reports[@]} (only blocks mentioning our code count)"
 echo "  result:                 $([ $fail -eq 0 ] && [ "$loaded" -gt 0 ] && echo PASS || echo FAIL)"
 [ "$loaded" -gt 0 ] || fail=1

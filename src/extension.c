@@ -5,6 +5,7 @@
 #include <nautilus-extension.h>
 
 #include "folder-preview/folder_preview.h"
+#include "sidebar-drives/sidebar_drives.h"
 
 typedef struct
 {
@@ -15,6 +16,7 @@ typedef struct
 
 static const NuFeature features[] = {
   { fp_feature_initialize, fp_feature_shutdown, fp_feature_list_types },
+  { sd_feature_initialize, sd_feature_shutdown, sd_feature_list_types },
 };
 
 /* Upper bound on provider types across all features; checked in nautilus_module_initialize(). */
