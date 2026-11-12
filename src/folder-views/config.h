@@ -10,3 +10,10 @@
 /* In-memory cache of folders read or saved this session (PLAN.md §10.7, design consequence 1). Least
  * recently used entries are dropped beyond this. ~100 bytes per entry. */
 #define FV_CACHE_MAX 4096
+
+/* Files writes its global view/zoom keys on every switch; we put them back to our default this long after
+ * the last change, so a burst of navigation costs one write (PLAN.md §10.1.1, D1). */
+#define FV_RESTORE_KEYS_DELAY_MS 2000
+
+/* Upper bound on zoom steps per apply (the grid view has 5 levels). */
+#define FV_MAX_ZOOM_STEPS 6

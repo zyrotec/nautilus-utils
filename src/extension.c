@@ -5,6 +5,7 @@
 #include <nautilus-extension.h>
 
 #include "folder-preview/folder_preview.h"
+#include "folder-views/folder_views.h"
 #include "settings/settings.h"
 #include "sidebar-drives/sidebar_drives.h"
 
@@ -20,6 +21,7 @@ static const NuFeature features[] = {
   { st_feature_initialize, st_feature_shutdown, st_feature_list_types },
   { fp_feature_initialize, fp_feature_shutdown, fp_feature_list_types },
   { sd_feature_initialize, sd_feature_shutdown, sd_feature_list_types },
+  { fv_feature_initialize, fv_feature_shutdown, fv_feature_list_types },
 };
 
 /* Upper bound on provider types across all features; checked in nautilus_module_initialize(). */

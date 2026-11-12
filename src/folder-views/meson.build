@@ -14,4 +14,16 @@ fv_core_lib = static_library('fv-core',
   pic: true,
   gnu_symbol_visibility: 'hidden',
 )
-# Linked into the module from Phase 2, together with the Nautilus hook.
+
+# Feature entry points + the hook (the only file using Nautilus internals, PLAN.md §10.3.1).
+fv_feature_lib = static_library('fv-feature',
+  'folder_views.c',
+  'view_mode_hook.c',
+  c_args: fv_c_args + (get_option('debug_driver') ? ['-DFV_DEBUG_DRIVER'] : []),
+  dependencies: fv_core_deps + [gtk_dep, adw_dep],
+  include_directories: [fv_inc, nu_common_inc],
+  pic: true,
+  gnu_symbol_visibility: 'hidden',
+)
+
+feature_libs += [fv_feature_lib, fv_core_lib]
