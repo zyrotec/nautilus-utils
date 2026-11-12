@@ -202,6 +202,60 @@ sidebar_drives_page (GSettings *settings)
   return page;
 }
 
+/* Confirmation answered (PLAN.md §10.1.3): only "reset" acts, and right away (not a pending setting). */
+static void
+on_reset_response (AdwAlertDialog *alert,
+                   const char     *response,
+                   gpointer        data)
+{
+  (void) alert;
+  (void) data;
+  if (g_strcmp0 (response, "reset") == 0 && nu_settings_reset_folder_views ())
+    g_debug ("all folder views reset");
+}
+
+static void
+on_reset_activated (AdwButtonRow *row,
+                    gpointer      data)
+{
+  (void) data;
+  AdwDialog *alert = adw_alert_dialog_new ("Reset All Folder Views?",
+                                           "Every folder will show the default view and icon size again. "
+                                           "This can’t be undone.");
+  adw_alert_dialog_add_responses (ADW_ALERT_DIALOG (alert), "cancel", "_Cancel", "reset", "_Reset", NULL);
+  adw_alert_dialog_set_response_appearance (ADW_ALERT_DIALOG (alert), "reset", ADW_RESPONSE_DESTRUCTIVE);
+  adw_alert_dialog_set_default_response (ADW_ALERT_DIALOG (alert), "cancel");
+  adw_alert_dialog_set_close_response (ADW_ALERT_DIALOG (alert), "cancel");
+  g_signal_connect (alert, "response", G_CALLBACK (on_reset_response), NULL);
+  adw_dialog_present (alert, GTK_WIDGET (row));
+}
+
+static GtkWidget *
+folder_views_page (GSettings *settings)
+{
+  GtkWidget *page = adw_preferences_page_new ();
+  GtkWidget *main_group = group (NULL, NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (main_group),
+                             switch_row (settings, "folder-views-enabled", "Remember View per Folder",
+                                         "Each folder keeps its own view type and icon size; folders you "
+                                         "haven’t changed use the default"));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (main_group));
+
+  GtkWidget *saved_group = group ("Saved Views", NULL);
+  GtkWidget *reset = adw_button_row_new ();
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (reset), "Reset All Folder Views…");
+  adw_preferences_row_set_use_underline (ADW_PREFERENCES_ROW (reset), FALSE);
+  adw_button_row_set_start_icon_name (ADW_BUTTON_ROW (reset), "edit-clear-all-symbolic");
+  gtk_widget_add_css_class (reset, "destructive-action");
+  g_signal_connect (reset, "activated", G_CALLBACK (on_reset_activated), NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (saved_group), reset);
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (saved_group));
+
+  /* Like the other tabs: options of a switched-off feature can't be used (follows the pending switch). */
+  g_settings_bind (settings, "folder-views-enabled", saved_group, "sensitive", G_SETTINGS_BIND_GET);
+  return page;
+}
+
 /* Shown instead of the tabs when the schema isn't installed. */
 static GtkWidget *
 unavailable_page (void)
@@ -283,6 +337,8 @@ st_settings_dialog_present (GtkWidget *parent)
                                            "folder-preview", "Folder Preview", "folder-pictures-symbolic");
       adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), sidebar_drives_page (settings),
                                            "sidebar-drives", "Sidebar Drives", "drive-harddisk-symbolic");
+      adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), folder_views_page (settings),
+                                           "folder-views", "Folder Views", "view-grid-symbolic");
       adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar), stack);
 
       GtkWidget *switcher = adw_view_switcher_new ();

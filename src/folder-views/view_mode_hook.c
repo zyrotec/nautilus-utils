@@ -27,6 +27,7 @@ typedef struct
   GWeakRef      slot;          /* The NautilusWindowSlot (weak: the slot owns this struct via qdata) */
   gulong        location_id;   /* notify::location on the slot */
   gulong        icon_name_id;  /* notify::icon-name on the slot */
+  gulong        loading_id;    /* notify::loading on the slot */
   GWeakRef      list_base;     /* Inner view whose icon size we watch (weak; Nautilus replaces it) */
   gulong        icon_size_id;  /* notify::icon-size on @list_base, or 0 */
   char         *uri;           /* Owned; URI of the location shown, NULL before the first one */
@@ -47,6 +48,7 @@ typedef struct
   guint         attach_signal;
   guint         restore_id;     /* Timeout restoring Files' global keys, or 0 */
   guint         disable_idle;   /* Idle detaching everything after disable(), or 0 */
+  guint         types_watch;    /* Timeout checking that Nautilus' view types appeared, or 0 */
   gboolean      disabled;
   GSettings    *n_pref;         /* Owned; org.gnome.nautilus.preferences, NULL if not installed */
   GSettings    *n_icon;         /* Owned; org.gnome.nautilus.icon-view, or NULL */
@@ -514,6 +516,19 @@ slot_location_changed (SlotHook  *hook,
     }
 }
 
+/* A tab whose first location arrived before Nautilus' view types existed (D3) — Nautilus doesn't notify the
+ * same location again — is caught up when its view starts loading (the view exists by then). */
+static void
+on_loading (GObject    *slot,
+            GParamSpec *pspec,
+            gpointer    data)
+{
+  (void) pspec;
+  SlotHook *hook = data;
+  if (!fv->disabled && hook->uri == NULL)
+    slot_location_changed (hook, GTK_WIDGET (slot));
+}
+
 static void
 on_location (GObject    *slot,
              GParamSpec *pspec,
@@ -545,25 +560,42 @@ hook_free (gpointer data)
   g_free (hook);
 }
 
-/* Looks up Nautilus' view types once. They are registered when the first view is built, which is after
- * the first tab is attached but before its first location notification, so this is called from there:
- * missing then = Nautilus changed → FALSE and the feature off. */
 static gboolean
-types_ready (void)
+lookup_types (void)
 {
-  if (fv->list_type != 0)
-    return TRUE;
   fv->files_view_type = g_type_from_name ("NautilusFilesView");
   fv->list_base_type = g_type_from_name ("NautilusListBase");
   fv->grid_type = g_type_from_name ("NautilusGridView");
   fv->list_type = g_type_from_name ("NautilusListView");
   if (fv->files_view_type == 0 || fv->list_base_type == 0 || fv->grid_type == 0 || fv->list_type == 0)
     {
-      fv->list_type = 0;
-      disable ("NautilusFilesView / NautilusListBase / NautilusGridView / NautilusListView not found");
+      fv->list_type = 0; /* "not ready" marker */
       return FALSE;
     }
   return TRUE;
+}
+
+static gboolean
+types_watchdog (gpointer data)
+{
+  (void) data;
+  fv->types_watch = 0;
+  if (!lookup_types ())
+    disable ("NautilusFilesView / NautilusListBase / NautilusGridView / NautilusListView not found");
+  return G_SOURCE_REMOVE;
+}
+
+/* Looks up Nautilus' view types. They are registered when the first view is built; a tab can report a
+ * location before that (D3), so a miss isn't an error yet: that tab's real location change follows. If the
+ * types are still missing FV_TYPES_TIMEOUT_MS later, Nautilus changed → the feature switches itself off. */
+static gboolean
+types_ready (void)
+{
+  if (fv->list_type != 0 || lookup_types ())
+    return TRUE;
+  if (fv->types_watch == 0 && !fv->disabled)
+    fv->types_watch = g_timeout_add (FV_TYPES_TIMEOUT_MS, types_watchdog, NULL);
+  return FALSE;
 }
 
 static void
@@ -587,6 +619,8 @@ attach_slot (GtkWidget *slot)
   g_hash_table_add (fv->hooks, hook);
   hook->location_id = g_signal_connect (slot, "notify::location", G_CALLBACK (on_location), hook);
   hook->icon_name_id = g_signal_connect (slot, "notify::icon-name", G_CALLBACK (on_icon_name), hook);
+  if (g_object_class_find_property (klass, "loading") != NULL)
+    hook->loading_id = g_signal_connect (slot, "notify::loading", G_CALLBACK (on_loading), hook);
   /* A slot that already shows a folder (feature switched on later): apply now. */
   slot_location_changed (hook, slot);
 }
@@ -599,6 +633,7 @@ detach_slot (SlotHook *hook)
     return;
   g_clear_signal_handler (&hook->location_id, slot);
   g_clear_signal_handler (&hook->icon_name_id, slot);
+  g_clear_signal_handler (&hook->loading_id, slot);
   g_object_set_data (G_OBJECT (slot), SLOT_KEY, NULL); /* frees @hook */
 }
 
@@ -670,8 +705,10 @@ attach_existing (void)
  *   fv-new-tab                  open a new tab (Files' win.new-tab)
  *   fv-view <1|2>               switch the selected tab to list (1) / grid (2) like the user would
  *   fv-zoom <in|out|standard>   zoom the selected tab like the user would
- *   fv-dump                     per tab: folder, what it shows, what it should show
- *   fv-keys                     Files' global keys and our default                                       */
+ *   fv-dump                     per tab: folder, what it shows, what it should show (feature off: tabs
+ *                               still hooked, must be 0, and whether Files' keys are at our default)
+ *   fv-keys                     Files' global keys and our default
+ *   fv-reset                    Reset All, exactly as the settings dialog's button                        */
 
 #ifdef FV_DEBUG_DRIVER
 static guint debug_signal_id;
@@ -741,6 +778,34 @@ debug_dump (void)
              fv_cache_size (fv->cache), fv->disabled);
 }
 
+/* Feature off: count tabs that still carry our hook (must be 0) and show Files' keys (must be our
+ * default again). */
+static void
+debug_dump_off (void)
+{
+  AdwTabView *tv = debug_tab_view ();
+  int n = tv != NULL ? adw_tab_view_get_n_pages (tv) : 0, left = 0;
+  for (int i = 0; i < n; i++)
+    if (g_object_get_data (G_OBJECT (adw_tab_page_get_child (adw_tab_view_get_nth_page (tv, i))), SLOT_KEY) != NULL)
+      left++;
+  g_autoptr (GSettings) pref = settings_if_installed ("org.gnome.nautilus.preferences");
+  g_autoptr (GSettings) icon = settings_if_installed ("org.gnome.nautilus.icon-view");
+  g_autoptr (GSettings) list = settings_if_installed ("org.gnome.nautilus.list-view");
+  const NuFolderView *d = &nu_settings_get ()->folder_views_default;
+  gboolean keys_ok = (pref == NULL || g_settings_get_enum (pref, "default-folder-viewer") == (int) d->view) &&
+                     (icon == NULL || g_settings_get_enum (icon, "default-zoom-level") == d->grid_zoom) &&
+                     (list == NULL || g_settings_get_enum (list, "default-zoom-level") == d->list_zoom);
+  g_message ("fv dump: off tabs=%d leftover=%d keys-at-default=%d", n, left, keys_ok);
+}
+
+/* The selected tab's NautilusFilesView, looked up by name (works with the feature off). Borrowed. */
+static GtkWidget *
+debug_files_view (GtkWidget *slot)
+{
+  GType t = g_type_from_name ("NautilusFilesView");
+  return slot != NULL && t != 0 ? find_descendant (slot, t, 8) : NULL;
+}
+
 static gboolean
 on_debug_signal (gpointer data)
 {
@@ -748,10 +813,19 @@ on_debug_signal (gpointer data)
   const char *dir = g_getenv ("FP_DEBUG_DIR");
   g_autofree char *path = dir != NULL ? g_build_filename (dir, "cmd", NULL) : NULL;
   g_autofree char *cmd = NULL;
-  if (fv == NULL || path == NULL || !g_file_get_contents (path, &cmd, NULL, NULL))
+  if (path == NULL || !g_file_get_contents (path, &cmd, NULL, NULL))
     return G_SOURCE_CONTINUE;
   g_strstrip (cmd);
-  if (g_str_has_prefix (cmd, "fv-open "))
+  if (!g_str_has_prefix (cmd, "fv-"))
+    return G_SOURCE_CONTINUE;
+  if (fv == NULL && (g_str_equal (cmd, "fv-dump") || g_str_equal (cmd, "fv-keys")))
+    {
+      debug_dump_off ();
+      return G_SOURCE_CONTINUE;
+    }
+  if (g_str_equal (cmd, "fv-reset"))
+    g_message ("fv: reset %s", nu_settings_reset_folder_views () ? "ok" : "FAILED");
+  else if (g_str_has_prefix (cmd, "fv-open "))
     debug_open (-1, cmd + 8);
   else if (g_str_has_prefix (cmd, "fv-tab-open "))
     {
@@ -776,13 +850,13 @@ on_debug_signal (gpointer data)
   else if (g_str_has_prefix (cmd, "fv-zoom "))
     {
       GtkWidget *slot = debug_slot (-1);
-      GtkWidget *files_view = slot != NULL ? files_view_of (slot) : NULL;
+      GtkWidget *files_view = debug_files_view (slot);
       g_autofree char *action = g_strdup_printf ("view.zoom-%s", cmd + 8);
       g_message ("fv: user %s %s", action,
                  files_view != NULL && gtk_widget_activate_action (files_view, action, NULL) ? "ok" : "FAILED");
     }
   else if (g_str_equal (cmd, "fv-dump"))
-    debug_dump ();
+    debug_dump (); /* fv != NULL here */
   else if (g_str_equal (cmd, "fv-keys"))
     {
       const NuFolderView *d = &nu_settings_get ()->folder_views_default;
@@ -795,6 +869,23 @@ on_debug_signal (gpointer data)
   return G_SOURCE_CONTINUE;
 }
 #endif
+
+void
+fv_view_mode_hook_debug_init (void)
+{
+#ifdef FV_DEBUG_DRIVER
+  if (debug_signal_id == 0)
+    debug_signal_id = g_unix_signal_add (SIGUSR2, on_debug_signal, NULL);
+#endif
+}
+
+void
+fv_view_mode_hook_debug_shutdown (void)
+{
+#ifdef FV_DEBUG_DRIVER
+  g_clear_handle_id (&debug_signal_id, g_source_remove);
+#endif
+}
 
 /* ------------------------------------------------------------------------------------------------ */
 /* Public API                                                                                       */
@@ -821,9 +912,23 @@ fv_view_mode_hook_init (void)
     }
   fv->attach_hook_id = g_signal_add_emission_hook (fv->attach_signal, 0, on_page_attached, NULL, NULL);
   attach_existing ();
-#ifdef FV_DEBUG_DRIVER
-  debug_signal_id = g_unix_signal_add (SIGUSR2, on_debug_signal, NULL);
-#endif
+}
+
+void
+fv_view_mode_hook_refresh (gboolean forget_saved)
+{
+  if (fv == NULL || fv->disabled)
+    return;
+  if (forget_saved)
+    fv_cache_clear (fv->cache);
+  g_autoptr (GList) hooks = g_hash_table_get_keys (fv->hooks); /* list owned, hooks borrowed */
+  for (GList *l = hooks; l != NULL; l = l->next)
+    {
+      SlotHook *hook = l->data;
+      g_autoptr (GtkWidget) slot = g_weak_ref_get (&hook->slot);
+      if (slot != NULL)
+        slot_location_changed (hook, slot); /* never frees a hook */
+    }
 }
 
 void
@@ -831,13 +936,11 @@ fv_view_mode_hook_shutdown (void)
 {
   if (fv == NULL)
     return;
-#ifdef FV_DEBUG_DRIVER
-  g_clear_handle_id (&debug_signal_id, g_source_remove);
-#endif
   if (fv->attach_hook_id != 0)
     g_signal_remove_emission_hook (fv->attach_signal, fv->attach_hook_id);
   fv->attach_hook_id = 0;
   g_clear_handle_id (&fv->disable_idle, g_source_remove);
+  g_clear_handle_id (&fv->types_watch, g_source_remove);
   detach_all ();
   g_cancellable_cancel (fv->cancel);
   g_clear_handle_id (&fv->restore_id, g_source_remove);

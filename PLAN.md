@@ -145,7 +145,7 @@ findings and the smoke test is clean.
 | 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover | `src/folder-preview/` | **v1 done** (grid view) |
 | 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
-| 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **Phase 2 done** (2026-11-12), branch `dev-path-view-size` |
+| 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **Phase 3 done** (2026-11-12), branch `dev-path-view-size` |
 
 Open items:
 
@@ -1017,8 +1017,8 @@ folder that was ever saved). Open windows switch to our default immediately. Ask
 
 - Group "Folder Views": switch row **"Remember View per Folder"** (feature on/off), subtitle "Each folder
   keeps its own view type and icon size".
-- Group "Saved Views": button row **"Reset All Folder Views…"** (`.destructive-action`), insensitive while
-  the feature is off. Unlike the other controls it acts immediately after confirmation (it is not a pending
+- Group "Saved Views": button row **"Reset All Folder Views…"** (`AdwButtonRow`, libadwaita ≥ 1.6,
+  `.destructive-action`), insensitive while the feature is off. Unlike the other controls it acts immediately after confirmation (it is not a pending
   setting, so the Apply button doesn't apply to it).
 - On/off still waits for **Apply** like every other setting (N5).
 
@@ -1057,7 +1057,7 @@ folder that was ever saved). Open windows switch to our default immediately. Ask
 | F3 | Settings tab: **on/off** and a **Reset All** button (§10.2). |
 | D1 | Files' global keys are put back to our default **2 s after the last change** (`FV_RESTORE_KEYS_DELAY_MS`), not after every switch: a burst of navigation costs one dconf write. Nothing in Files reads them in between except a new tab/window, which then starts from the last folder's view and is switched like any other navigation. Also restored on shutdown. |
 | D2 | A **search inside a folder** keeps that folder's view and saves nothing; only Files' **global** search (slot `search-global`) uses our default. |
-| D3 | Tabs are found with an emission hook on `AdwTabView::page-attached` (public libadwaita signal; Nautilus adds the page before the tab loads, §10.7) plus a sweep of existing windows. Nautilus' view types are looked up at a tab's first location change, because they are registered only when the first view is built, after the first tab is attached. |
+| D3 | Tabs are found with an emission hook on `AdwTabView::page-attached` (public libadwaita signal; Nautilus adds the page before the tab loads, §10.7) plus a sweep of existing windows. Nautilus' view types are registered only when the first view is built; a tab can report its location before that (seen in Phase 3, intermittently), and Nautilus doesn't notify the same location again. So a miss is not an error: the tab is caught up at its first `notify::loading` (the view exists then); only if the types are still missing 5 s later (`FV_TYPES_TIMEOUT_MS`) does the feature switch itself off. |
 
 ### 10.6 Phases
 
@@ -1182,3 +1182,28 @@ it would write test metadata into the owner's real gvfs metadata.
 Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS; the module still exports only the 3
 Nautilus entry points. Coverage: `fv_state.c` 100 %, `folder_views.c` 100 %; `view_mode_hook.c` 18 % (runs
 only inside Nautilus → the isolated-Nautilus checks above, and the smoke test from Phase 4).
+
+**Phase 3 — Settings tab (done 2026-11-12).** Settings dialog: third tab **Folder Views** (icon
+`view-grid-symbolic`): switch row "Remember View per Folder" (pending until Apply, like every setting) and
+group "Saved Views" with the button row "Reset All Folder Views…" (destructive style, insensitive while the
+pending switch is off). It opens an `AdwAlertDialog` ("Reset All Folder Views?", Cancel default, Reset
+destructive); only Reset calls `nu_settings_reset_folder_views()`, right away. libadwaita requirement raised
+to 1.6 (`AdwButtonRow`) in Meson and the RPM. Feature: settings listener in `folder_views.c`. On → the hook
+starts and attaches to every open tab, applying each folder's saved view. Off → it detaches everything and
+puts Files' keys back to our default (tabs keep what they show; Files' stock behaviour from then on).
+Reset All / our default changing → `fv_view_mode_hook_refresh` re-applies every open tab (Reset also drops
+the in-memory cache so folders are read again and older-generation values are ignored). The debug driver
+now lives as long as the module, with `fv-reset` (same call as the button) and an off-dump (tabs still
+hooked, Files' keys at our default).
+Found and fixed: a tab could report its first location before Nautilus' view types existed, which switched
+the feature off at start (D3). It now catches up at `notify::loading`, with a 5 s watchdog.
+Checked in the isolated ASan Nautilus (two runs): the first folder of the first window applied; saved views
+in two tabs; **off** → 0 tabs still hooked, Files' keys at our default; a change made while off is not
+saved; **on** → both tabs back to their folders' saved views; **Reset All** → both tabs at the default at
+once, the old value ignored on revisit, saving works again with the new generation; **25 off/on rounds**:
+26 off-dumps with 0 leftovers, 70 tab checks with 0 mismatches, no warnings. Dialog (probe on the real
+dialog, rendered): tab layout; Reset insensitive while the switch is pending off (stored value unchanged
+until Apply); confirmation shown; Cancel → generation unchanged; Reset → generation + 1; narrow layout
+moves the three tabs to the bottom bar.
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS (coverage of the Nautilus-side
+files is from the isolated-Nautilus checks above, not the unit tests).

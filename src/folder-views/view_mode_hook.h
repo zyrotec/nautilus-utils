@@ -15,4 +15,14 @@ void fv_view_mode_hook_init (void);
  * everything. Safe without init. */
 void fv_view_mode_hook_shutdown (void);
 
+/* Re-applies the right view to every open tab: after Reset All (@forget_saved: drop the in-memory cache,
+ * so every folder is read again and older-generation values are ignored) or when our default changed.
+ * No-op without init. */
+void fv_view_mode_hook_refresh (gboolean forget_saved);
+
+/* Debug driver (only does something in -Ddebug_driver=true builds): lives for the whole module, so the smoke
+ * test can also check that nothing is attached while the feature is off. */
+void fv_view_mode_hook_debug_init (void);
+void fv_view_mode_hook_debug_shutdown (void);
+
 G_END_DECLS

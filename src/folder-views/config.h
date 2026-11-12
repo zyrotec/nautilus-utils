@@ -17,3 +17,7 @@
 
 /* Upper bound on zoom steps per apply (the grid view has 5 levels). */
 #define FV_MAX_ZOOM_STEPS 6
+
+/* Nautilus' view types must be registered this long after a tab first reports a location (D3), otherwise
+ * the feature assumes Nautilus changed and switches itself off. */
+#define FV_TYPES_TIMEOUT_MS 5000
