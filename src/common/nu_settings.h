@@ -23,6 +23,24 @@ typedef struct
   guint8 r, g, b;
 } NuRgb;
 
+/* Folder views (PLAN.md §10). Values equal Nautilus' own view ids and zoom enums. */
+typedef enum
+{
+  NU_VIEW_LIST = 1,
+  NU_VIEW_GRID = 2,
+} NuViewType;
+
+#define NU_GRID_ZOOM_MAX 4 /* small, small-plus, medium, large, extra-large */
+#define NU_LIST_ZOOM_MAX 2 /* small, medium, large */
+
+/* One folder's view: its view type plus one icon size (zoom level) per view type. */
+typedef struct
+{
+  NuViewType view;
+  guint8     grid_zoom; /* 0 .. NU_GRID_ZOOM_MAX */
+  guint8     list_zoom; /* 0 .. NU_LIST_ZOOM_MAX */
+} NuFolderView;
+
 /* Which groups of settings changed in one batch (bit flags for listeners). */
 typedef enum
 {
@@ -31,6 +49,9 @@ typedef enum
   NU_CHANGED_BAR_COLOUR     = 1 << 2, /* bar-colour-mode, bar-colour, bar-gradient-* */
   NU_CHANGED_ROW_CONTENT    = 1 << 3, /* show-usage-bars, show-size-labels */
   NU_CHANGED_EJECT          = 1 << 4, /* eject-slide */
+  NU_CHANGED_FOLDER_VIEWS   = 1 << 5, /* folder-views-enabled */
+  NU_CHANGED_FV_GENERATION  = 1 << 6, /* folder-views-generation (Reset All) */
+  NU_CHANGED_FV_DEFAULT     = 1 << 7, /* folder-views-default-*, folder-views-defaults-captured */
 } NuChanged;
 
 typedef struct
@@ -44,6 +65,10 @@ typedef struct
   gboolean        show_usage_bars;
   gboolean        show_size_labels;
   gboolean        eject_slide;
+  gboolean        folder_views_enabled;
+  guint           folder_views_generation;
+  NuFolderView    folder_views_default;
+  gboolean        folder_views_defaults_captured;
 } NuConfig;
 
 typedef void (*NuSettingsListener) (NuChanged changed, gpointer user_data);
@@ -85,6 +110,18 @@ gboolean nu_rgb_parse (const char *text,
 
 /* "#rrggbb" (lower case). Caller owns the returned string (g_free). */
 char *nu_rgb_to_string (NuRgb rgb);
+
+/* TRUE if @v holds a known view type and in-range zoom levels. */
+gboolean nu_folder_view_valid (const NuFolderView *v);
+
+/* One-time copy of Files' default into folder-views-default-* (PLAN.md §10.1.1): writes @files_default and
+ * sets folder-views-defaults-captured, unless that is already set. An invalid @files_default is replaced by
+ * the built-in default. Returns TRUE if it wrote; FALSE if already captured or without schema. */
+gboolean nu_settings_capture_folder_view_default (const NuFolderView *files_default);
+
+/* "Reset All Folder Views" (PLAN.md §10.1.3): increments folder-views-generation right away (not a pending
+ * dialog setting). Returns FALSE without schema. */
+gboolean nu_settings_reset_folder_views (void);
 
 /* The built-in defaults (static, never freed). */
 const NuConfig *nu_settings_defaults (void);

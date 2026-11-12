@@ -14,6 +14,10 @@ static const NuConfig defaults = {
   .show_usage_bars = TRUE,
   .show_size_labels = TRUE,
   .eject_slide = FALSE,
+  .folder_views_enabled = TRUE,
+  .folder_views_generation = 0,
+  .folder_views_default = { NU_VIEW_GRID, 2 /* medium */, 1 /* medium */ },
+  .folder_views_defaults_captured = FALSE,
 };
 
 /* Key name → group reported to listeners. */
@@ -31,6 +35,12 @@ static const struct
   { "show-usage-bars", NU_CHANGED_ROW_CONTENT },
   { "show-size-labels", NU_CHANGED_ROW_CONTENT },
   { "eject-slide", NU_CHANGED_EJECT },
+  { "folder-views-enabled", NU_CHANGED_FOLDER_VIEWS },
+  { "folder-views-generation", NU_CHANGED_FV_GENERATION },
+  { "folder-views-default-view", NU_CHANGED_FV_DEFAULT },
+  { "folder-views-default-grid-zoom", NU_CHANGED_FV_DEFAULT },
+  { "folder-views-default-list-zoom", NU_CHANGED_FV_DEFAULT },
+  { "folder-views-defaults-captured", NU_CHANGED_FV_DEFAULT },
 };
 
 typedef struct
@@ -83,6 +93,13 @@ nu_rgb_to_string (NuRgb rgb)
   return g_strdup_printf ("#%02x%02x%02x", rgb.r, rgb.g, rgb.b);
 }
 
+gboolean
+nu_folder_view_valid (const NuFolderView *v)
+{
+  return v != NULL && (v->view == NU_VIEW_LIST || v->view == NU_VIEW_GRID) && v->grid_zoom <= NU_GRID_ZOOM_MAX &&
+         v->list_zoom <= NU_LIST_ZOOM_MAX;
+}
+
 const NuConfig *
 nu_settings_defaults (void)
 {
@@ -120,6 +137,16 @@ read_all (void)
   c->show_usage_bars = g_settings_get_boolean (s, "show-usage-bars");
   c->show_size_labels = g_settings_get_boolean (s, "show-size-labels");
   c->eject_slide = g_settings_get_boolean (s, "eject-slide");
+  c->folder_views_enabled = g_settings_get_boolean (s, "folder-views-enabled");
+  c->folder_views_generation = g_settings_get_uint (s, "folder-views-generation");
+  /* The schema enums keep these in range; check anyway, a value outside is the built-in default. */
+  NuFolderView d = {
+    .view = (NuViewType) g_settings_get_enum (s, "folder-views-default-view"),
+    .grid_zoom = (guint8) CLAMP (g_settings_get_enum (s, "folder-views-default-grid-zoom"), 0, 255),
+    .list_zoom = (guint8) CLAMP (g_settings_get_enum (s, "folder-views-default-list-zoom"), 0, 255),
+  };
+  c->folder_views_default = nu_folder_view_valid (&d) ? d : defaults.folder_views_default;
+  c->folder_views_defaults_captured = g_settings_get_boolean (s, "folder-views-defaults-captured");
 }
 
 static gboolean
@@ -254,4 +281,31 @@ nu_settings_remove_listener (guint id)
         g_array_remove_index (ns->listeners, i);
         return;
       }
+}
+
+gboolean
+nu_settings_capture_folder_view_default (const NuFolderView *files_default)
+{
+  if (!nu_settings_available () || g_settings_get_boolean (ns->settings, "folder-views-defaults-captured"))
+    return FALSE;
+  const NuFolderView *d = nu_folder_view_valid (files_default) ? files_default : &defaults.folder_views_default;
+  /* One batch through a delayed copy (delay mode can't be undone, so not on ns->settings itself). */
+  g_autoptr (GSettings) batch = nu_settings_new_delayed ();
+  g_settings_set_enum (batch, "folder-views-default-view", d->view);
+  g_settings_set_enum (batch, "folder-views-default-grid-zoom", d->grid_zoom);
+  g_settings_set_enum (batch, "folder-views-default-list-zoom", d->list_zoom);
+  g_settings_set_boolean (batch, "folder-views-defaults-captured", TRUE);
+  g_settings_apply (batch);
+  return TRUE;
+}
+
+gboolean
+nu_settings_reset_folder_views (void)
+{
+  if (!nu_settings_available ())
+    return FALSE;
+  /* Wraps to 0 after 2^32 resets; the old generation-0 values would then count again (accepted). */
+  guint next = g_settings_get_uint (ns->settings, "folder-views-generation") + 1;
+  g_settings_set_uint (ns->settings, "folder-views-generation", next);
+  return TRUE;
 }

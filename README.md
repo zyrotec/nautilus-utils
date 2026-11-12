@@ -73,6 +73,36 @@ Known limitations:
   stays as stock Nautilus.
 - Only mounted network shares are listed (mount them via *Network*).
 
+### Folder views
+
+Every folder remembers its own **view type** (grid or list) and **icon size**, like Windows File Explorer.
+Switch a folder to list view (or zoom it with Ctrl + / Ctrl − / Ctrl + scroll) and only that folder
+changes; other folders, tabs and windows keep theirs. Each folder keeps one icon size per view type, so
+switching it back to the grid restores its grid size.
+
+- A folder you never changed uses the **default** view and icon size. The default is copied once from Files'
+  own setting the first time the feature runs, and changing a folder never changes it.
+- Views are saved in the folder's GIO metadata (where Files keeps each folder's sort order), so they survive
+  restarts and follow folders you rename or move in Files. This works on local and NTFS drives, read-only
+  folders, Trash and Recent.
+- **Starred**, **Other Locations** and Files' global search always use the default (they can't store a
+  view). A search inside a folder keeps that folder's view. The Network view is left alone.
+- **Reset All Folder Views…** (in the settings) makes every folder use the default again.
+- Switching off puts Files' own default back, so Files behaves as before.
+
+Known limitations:
+
+- **Nautilus updates may switch the feature off.** It relies on Nautilus' private tab and view widgets
+  (verified on Nautilus 51.1). If they change, it logs one warning ("folder views disabled: …") and Files
+  keeps its normal global view.
+- The saved views of a folder's subfolders, siblings and parent are read in the background after it loads,
+  so the next folder's view is known when you click. When two folders in a row have different view types,
+  the old folder stays on screen as a still picture while the new one loads and appears at once when its
+  files are in. The switch underneath is Files' own view rebuild (what Ctrl+1 / Ctrl+2 costs, 0.1–0.3 s),
+  so such a folder appears about 0.1 s later than in stock Files; folders with the same view type open as
+  fast as stock.
+- Network shares (SMB, SFTP) haven't been tested yet; reading a saved view never blocks Files.
+
 ### Settings
 
 Files' main menu (☰) gets a **Nautilus Utils Settings** entry above *Preferences*. It opens a dialog with
@@ -83,6 +113,8 @@ one tab per feature; every tab can switch its feature on or off. Changes only ta
 - **Sidebar Drives**: enhanced drive rows (on/off), bar colour (accent colour, a custom colour, or a
   two-colour gradient), show/hide the usage bars and the size labels, and slide the eject button in only
   on hover.
+- **Folder Views**: remember the view per folder (on/off), and **Reset All Folder Views…**, which asks for
+  confirmation and acts right away (it isn't a setting waiting for Apply).
 
 The settings are stored with GSettings (schema `io.github.zyrotec.NautilusUtils`, inspect with
 `gsettings list-recursively io.github.zyrotec.NautilusUtils`). If the schema isn't installed, the features
@@ -179,7 +211,8 @@ SMOKE_TOGGLES=5 tools/smoke-nautilus.sh --auto 60 DIR   # fewer settings on/off 
 ```
 
 Logs land in `safety-logs/`. The smoke test also drives the settings (colours, show/hide, sliding eject,
-feature on/off) through an in-memory settings store, so it never changes your own settings.
+feature on/off) through an in-memory settings store, and runs with its own data directory (so the folder views
+it saves stay in its own gvfs metadata), so it never changes your own settings or folder views.
 
 ## Benchmarks (folder preview)
 
@@ -212,6 +245,10 @@ build/tests/folder-preview/bench-core DIR  # per-stage timings of the pipeline o
 | `src/sidebar-drives/bar_style.c` | Bar colours from the settings, as CSS |
 | `src/sidebar-drives/fade_bin.c` | Container that fades its content out under the sliding eject button |
 | `src/sidebar-drives/config.h` | Tunable constants |
+| `src/folder-views/folder_views.c` | Feature set-up / tear-down, follows the settings |
+| `src/folder-views/fv_state.c` | Saved-value format, location kinds, zoom levels, in-memory cache |
+| `src/folder-views/view_mode_hook.c` | **Unsupported**: hooks into Nautilus' private tabs and views (switch view, zoom, detect the user's changes) |
+| `src/folder-views/config.h` | Tunable constants |
 | `src/common/nu_settings.c` | Shared settings service (GSettings snapshot + change notifications) |
 | `src/settings/settings_dialog.c` | The "Nautilus Utils Settings" dialog |
 | `src/settings/menu_hook.c` | **Unsupported**: adds the entry to Nautilus' private main menu |

@@ -145,6 +145,7 @@ findings and the smoke test is clean.
 | 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover | `src/folder-preview/` | **v1 done** (grid view) |
 | 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
+| 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **v1 done** (2026-11-12), pending the owner's final check |
 
 Open items:
 
@@ -959,3 +960,349 @@ RPM description.
 Still manual (owner): real right-click / Menu key on the OS row and the menu's position; hover/focus feel of
 the sliding eject and a real eject from a slid-in button (on a removable drive or share); custom/gradient bars
 in the light and high-contrast themes; the settings dialog with a real mouse and keyboard.
+
+---
+
+## 10. Feature 4 — Folder views (per-folder view type and icon size)
+
+Every folder remembers its **own view type** (grid / list) and **icon size**, like Windows File Explorer.
+Files itself keeps one global view type and one global icon size per view type, so changing them in one
+folder changes them everywhere. With this feature, a change only applies to the folder it was made in.
+Prefix `fv_`, log domain `folder-views`, dir `src/folder-views/`, branch `dev-path-view-size`.
+
+### 10.1 Behaviour
+
+- **Opening a folder** (any window, tab, back/forward, typed path, sidebar, bookmark): if the folder has a
+  saved view, show it with that view type and that view type's icon size; otherwise use **our default**
+  (§10.1.1). This happens before the folder's files are shown: they are never drawn in the wrong view
+  (verified in Phase 0, §10.7).
+- **Changing the view in a folder** (the grid/list toggle, Ctrl+1 / Ctrl+2, zoom in/out/reset in the view
+  menu, Ctrl +/−/0, Ctrl+scroll): saved for **that folder only**. A folder stores its view type plus one icon
+  size per view type (switching a folder from grid to list and back keeps its grid size).
+- **Other open windows and tabs** are not changed by a change in another folder; each tab follows the
+  folder it shows.
+- **Not saved, always our default:** locations that can't store metadata (§10.1.2), and Files' global search.
+  The Network view keeps Files' own Network view.
+- Sort order is not part of this feature: Files already saves it per folder.
+
+#### 10.1.1 Our default (owner: "Files default", F1)
+
+Files writes its global keys (`org.gnome.nautilus.preferences default-folder-viewer`,
+`org.gnome.nautilus.icon-view default-zoom-level`, `org.gnome.nautilus.list-view default-zoom-level`) every
+time the view or size is changed anywhere, and its Preferences window doesn't show them. So the default
+would drift with every per-folder change. Instead the feature keeps **its own copy of the default**,
+captured once from Files' keys the first time the feature runs, and unchanged by per-folder changes.
+Turning the feature off writes that default back into Files' keys, so Files behaves exactly as before the
+feature was used.
+
+#### 10.1.2 Storage (owner: GIO metadata, F2)
+
+- One GIO metadata attribute per folder, `metadata::nautilus-utils-folder-view` (Files stores its per-folder
+  sort order the same way), value `1;<generation>;<view>;<grid-zoom>;<list-zoom>` (format version 1).
+  It follows folders renamed or moved inside Files (gvfs metadata).
+- Reads and writes are asynchronous (`g_file_query_info_async`, `g_file_set_attributes_async`) with a
+  `GCancellable`; nothing blocks the main thread.
+- Locations whose filesystem can't store metadata (checked in Phase 0: Trash, Recent, Starred, search,
+  `other-locations`, some network shares) use our default and save nothing.
+- Malformed, unknown-version or out-of-range values are ignored (= our default).
+
+#### 10.1.3 Reset all (owner, F3)
+
+"Reset All Folder Views" on the settings tab forgets every saved folder view: it increments the
+`folder-views-generation` key, and saved values with an older generation are ignored (no need to find every
+folder that was ever saved). Open windows switch to our default immediately. Asks for confirmation first
+(`AdwAlertDialog`, destructive style), because it can't be undone.
+
+### 10.2 Settings tab "Folder Views" (in the existing Nautilus Utils Settings dialog, §9.1.2)
+
+- Group "Folder Views": switch row **"Remember View per Folder"** (feature on/off), subtitle "Each folder
+  keeps its own view type and icon size".
+- Group "Saved Views": button row **"Reset All Folder Views…"** (`AdwButtonRow`, libadwaita ≥ 1.6,
+  `.destructive-action`), insensitive while the feature is off. Unlike the other controls it acts immediately after confirmation (it is not a pending
+  setting, so the Apply button doesn't apply to it).
+- On/off still waits for **Apply** like every other setting (N5).
+
+### 10.3 Rules
+
+1. All §4 and §9.2 rules. Nautilus-internals code (slots, view switching, zoom actions) only in
+   `src/folder-views/view_mode_hook.c`; the encoding/decoding, generation and default logic in a
+   Nautilus-free, unit-tested `fv_state.c`.
+2. Only Nautilus' **own actions** change the view: `slot.files-view-mode` (u: grid/list) and
+   `view.zoom-in` / `view.zoom-out` / `view.zoom-standard`. No private structs, no private headers.
+3. Our own view/zoom changes must never be mistaken for user changes (no save loops), and a save never
+   writes the same value twice.
+4. Turning the feature off stops applying and saving, restores Files' global keys to our default and leaves
+   saved metadata in place (turning it back on brings the folders' views back). Repeated toggling must not
+   leak (smoke test).
+5. If an expected action or widget is missing: one warning, the feature switches itself off, Files keeps
+   working with its normal global behaviour.
+
+### 10.4 Settings keys (added to `io.github.zyrotec.NautilusUtils`)
+
+| Key | Type | Default |
+|---|---|---|
+| `folder-views-enabled` | b | true |
+| `folder-views-generation` | u | 0 |
+| `folder-views-default-view` | enum grid / list | grid |
+| `folder-views-default-grid-zoom` | enum small / small-plus / medium / large / extra-large | medium |
+| `folder-views-default-list-zoom` | enum small / medium / large | medium |
+| `folder-views-defaults-captured` | b | false (set true after the one-time capture, §10.1.1) |
+
+### 10.5 Decisions (owner, 2026-11-12)
+
+| # | Decision |
+|---|---|
+| F1 | A folder with no saved view uses **Files' default**; changing one folder never changes that default (§10.1.1). |
+| F2 | Saved in **GIO metadata**, like Files' per-folder sort order (§10.1.2). |
+| F3 | Settings tab: **on/off** and a **Reset All** button (§10.2). |
+| D1 | Files' global keys are put back to our default **2 s after the last change** (`FV_RESTORE_KEYS_DELAY_MS`), not after every switch: a burst of navigation costs one dconf write. Nothing in Files reads them in between except a new tab/window, which then starts from the last folder's view and is switched like any other navigation. Also restored on shutdown. |
+| D2 | A **search inside a folder** keeps that folder's view and saves nothing; only Files' **global** search (slot `search-global`) uses our default. |
+| D3 | Tabs are found with an emission hook on `AdwTabView::page-attached` (public libadwaita signal; Nautilus adds the page before the tab loads, §10.7) plus a sweep of existing windows. Nautilus' view types are registered only when the first view is built; a tab can report its location before that (seen in Phase 3, intermittently), and Nautilus doesn't notify the same location again. So a miss is not an error: the tab is caught up at its first `notify::loading` (the view exists then); only if the types are still missing 5 s later (`FV_TYPES_TIMEOUT_MS`) does the feature switch itself off. |
+
+### 10.6 Phases
+
+| Phase | Work | Acceptance |
+|---|---|---|
+| 0 Spike | Probe (not built): the earliest point a slot's new location is known (slot `notify::location`, `notify::loading`, view `notify::...`) and whether switching `slot.files-view-mode` there shows no flash of the old view; how to read a view's current zoom level and step it with `view.zoom-*` (also for background tabs, whose `view` action group isn't on the window); detecting user changes (action state changes, view `icon-size` notify) vs ours; metadata read latency on the owner's drives (ext4/btrfs, NTFS `ntfs3`, SMB/SFTP) and which locations can store metadata. | Every question answered and recorded here; anything infeasible reported before building. |
+| 1 Core | Schema keys, `fv_state.c` (encode/decode, validation, generation, defaults capture), unit tests. | Tests + `check-safety.sh` pass. |
+| 2 Apply & save | `view_mode_hook.c`: apply on navigation in every slot, save on user change, async metadata, global keys kept at our default. | Folders keep their own view type and size across navigation, tabs, windows and restarts; no flash; no save loops; 16 ms probe clean. |
+| 3 Settings tab | "Folder Views" tab, live on/off with full undo, Reset All with confirmation. | Off = stock Files behaviour with our default restored; Reset All resets every folder; toggling 50× in the smoke test without leaks/warnings. |
+| 4 Hardening & docs | Smoke-test rounds (navigate, change views, reopen, reset, toggle), `check-safety.sh`, README + RPM. | All PASS. |
+
+### 10.7 Phase 0 findings (2026-11-12, Nautilus 51.1 / GTK 4.24.1)
+
+Method: Nautilus 51.1 source read for reference (not vendored); throwaway probe `LD_PRELOAD`ed into an
+isolated Nautilus (own D-Bus session, in-memory GSettings, own `XDG_DATA_HOME` so the owner's real gvfs
+metadata was never touched), logging every painted frame (view type, icon size, which folder's files are
+drawn). Test folders on tmpfs, btrfs (`/home`) and NTFS (`ntfs3`, Personal Drive), 150 files each plus one
+with 10 000 files; all removed afterwards. Not in the repo.
+
+**How Files picks the view.** Each slot (tab) reads `default-folder-viewer` once when it is created and keeps
+its own copy; on every navigation it switches to that copy (`nautilus_window_slot_get_view_id_for_location`).
+`slot.files-view-mode` (u: 1 = list, 2 = grid) switches the view and updates the slot's copy **and** the
+global key. Zoom lives in the inner view (`NautilusGridView` / `NautilusListView`, both `NautilusListBase`),
+read from the global key only when an inner view is created; `view.zoom-in/out/standard` change it and write
+the global key. **Nothing in Files listens to those global keys**, so writing or restoring them never
+changes an open tab (§10.1.1 is safe).
+
+**Hook point: slot `notify::location`.** Order inside Files' navigation callback: view switch to the slot's
+default → view gets the new location (starts loading) → slot `notify::location`, all synchronously. At that
+moment the **old folder's files are still on screen**; the new folder's files arrive 200 ms – 1 s later (also
+for Back to a folder visited before). Measured in every case (tmpfs, btrfs, NTFS, 10 k files, Back):
+
+- Switch synchronously at `notify::location` (value already in memory): no frame in between.
+- Switch after an async metadata read: read took 0.3–18 ms; at most one frame painted before the switch,
+  and that frame still shows the **old** folder.
+- So the new folder's files are **never** drawn in the wrong view. What is visible: after the click, the
+  old folder's files are re-laid out in the new folder's view type until the new files arrive (a list view
+  usually shows empty instead). Files already keeps the old files on screen while loading; we only change
+  their layout.
+
+**Cost.** Switching view type is Files' own switch, the same as pressing Ctrl+1/Ctrl+2: 100–190 ms on the
+main thread with 150 files, **295 ms when leaving a 10 000-file folder** (the old files are re-laid out
+once). Only paid when two folders in a row differ in view type; same type = no switch. A zoom step costs
+~10 ms.
+
+**Detecting user changes.** View type: slot `notify::icon-name` fires on every view switch (Files' own,
+ours, the user's). A switch followed by `notify::location` in the same main-loop iteration is navigation;
+one that isn't (checked in an idle) is the user → save. Ours are marked by a guard flag around our action
+call. Icon size: `NautilusListBase` `notify::icon-size` outside our guard → save (reconnected when the inner
+view is replaced).
+
+**Background tabs.** `slot.files-view-mode` is on the slot widget and `view.zoom-*` on the
+`NautilusFilesView` widget itself (the window only gets a copy for the active tab), so
+`gtk_widget_activate_action` on those widgets works for tabs that aren't selected (verified: background tab
+zoomed and switched, the selected tab unchanged).
+
+**Metadata support** (`metadata::nautilus-utils-folder-view`, write + read back):
+
+| Location | Result |
+|---|---|
+| tmpfs, btrfs, NTFS `ntfs3`, read-only folders (`/`, `/usr`) | stored (write 1–7 ms, read 0.2–4 ms) |
+| `trash:///`, `recent:///`, `network:///` | stored |
+| `starred:///`, `other-locations:///` | write "succeeds" but nothing is stored → our default |
+| SMB / SFTP shares | **not tested** (no real share here); async, so a slow share can't block |
+
+**Design consequences (for Phase 2).**
+1. Apply at slot `notify::location`; keep an in-memory cache (URI → value) of folders read or saved this
+   session so revisits apply synchronously; first visits read async and apply on arrival.
+2. Never switch for `network:///` (Files' Network view) or global search.
+3. The switch cost above is Files' own and only happens when the view type changes between folders; no
+   way around it through public behaviour. Recorded as expected cost, measured again in Phase 2 with the
+   16 ms latency probe.
+
+### 10.8 Phase results
+
+**Phase 1 — Core (done 2026-11-12).** Schema: three enums (`FolderView` list=1/grid=2, `GridZoom` 0–4,
+`ListZoom` 0–2, same values as Nautilus' own) and the six keys of §10.4. `nu_settings` (shared): `NuViewType`,
+`NuFolderView`, the new keys in `NuConfig`, change groups `NU_CHANGED_FOLDER_VIEWS` / `_FV_GENERATION` /
+`_FV_DEFAULT`, `nu_folder_view_valid`, `nu_settings_capture_folder_view_default` (one batch through a
+delayed copy, only once, invalid input → built-in default) and `nu_settings_reset_folder_views` (generation
++ 1 right away, wraps at 2^32). `src/folder-views/fv_state.c` (GLib only): `fv_encode` / `fv_decode`
+(`1;<generation>;<view>;<grid-zoom>;<list-zoom>`, digits only, every field range-checked, other generation
+or format version rejected), `fv_location_kind` (save / default only: starred, other-locations, search /
+ignore: `network:///` root, no scheme), zoom level ↔ Nautilus 51.1 icon size, and `FvCache`, an LRU of
+URI → saved view or "has none" (`FV_CACHE_MAX` 4096). `fv-core` is not linked into the module until Phase 2.
+Tests: `test-fv-state` 10 (round trip of every view × generation, 29 rejected values, generation reset,
+location kinds, zoom tables, LRU order, 5 × 12 288-entry fill with clears + 1000 create/free cycles);
+`test-settings` 15 (+3: validity, capture, reset; defaults-match-schema and each-group cover the new keys).
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS. Coverage: `fv_state.c` 100 %,
+`nu_settings.c` 99.3 % (the one line is from Feature 3).
+The dev schema in `~/.local/share/glib-2.0/schemas` was updated (the module in `build/` reads the new keys;
+GSettings aborts on unknown keys).
+
+**Phase 2 — Apply & save (done 2026-11-12).** `src/folder-views/view_mode_hook.c` (all Nautilus internals of
+the feature) and `folder_views.c` (entry, registered after the other features in `src/extension.c`; reads the
+on/off switch once at start until Phase 3). Per tab (`NautilusWindowSlot`, qdata-owned `SlotHook`, weak refs
+only): at `notify::location` the folder's view comes from the cache (synchronous) or an async metadata read;
+the view is switched with `slot.files-view-mode` and zoomed step by step with `view.zoom-in/out` on the tab's
+own `NautilusFilesView` (works for background tabs). User changes: `notify::icon-name` not followed by a
+location change (idle) and `NautilusListBase` `notify::icon-size` outside our guard → saved with
+`g_file_set_attributes_async`, skipped when unchanged. Files' global keys restored per D1. Debug driver
+(`-Ddebug_driver=true`): `fv-open`, `fv-tab-open`, `fv-new-tab`, `fv-view`, `fv-zoom`, `fv-dump`, `fv-keys`.
+
+Checked in an isolated Nautilus (own D-Bus session, own `XDG_DATA_HOME` so the gvfs metadata was the test's
+own, in-memory GSettings), ASan + UBSan build, two sessions on the same metadata: 33 tab dumps, **0
+mismatches** between what a tab shows and what its folder should show. Covered: user list/grid switch and
+zoom saved per folder; a never-visited folder gets our default; revisit from the cache; new tab; a
+**background tab** navigated and switched while another tab is selected; NTFS (`ntfs3`) and tmpfs folders;
+a 10 000-file folder; Trash (saved); Starred (default only, the user's change is not saved); Files' global
+keys back at our default 2 s later; **session 2 (fresh process): every folder came back with its saved
+view** from metadata, a never-visited folder with the default. No warnings from our log domains.
+Our apply time (normal build, `G_MESSAGES_DEBUG`): 33–89 ms when the view type changes (Files' own switch,
+§10.7), 1–9 ms for a zoom-only change, 0 ms when the folder already matches. The 16 ms probe's larger
+stalls in the same runs (up to 323 ms) are Files loading the folders (the 10 000-file folder) and appear
+with or without a switch.
+ASan: no report in our code. One leak report has our `restore_global_keys` → `g_settings_set_enum` in its
+stack: a **third-party** leak in `pygi` (`pygi_method_cache_new`), from a Python Nautilus extension on this
+system reacting to the settings change. Phase 4 must teach the smoke test's matcher to skip leaks
+allocated in third-party code even when our frames are further down the stack. The smoke test must also
+isolate `XDG_DATA_HOME` (exported before `dbus-run-session`, so `gvfsd-metadata` gets it too); otherwise
+it would write test metadata into the owner's real gvfs metadata.
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS; the module still exports only the 3
+Nautilus entry points. Coverage: `fv_state.c` 100 %, `folder_views.c` 100 %; `view_mode_hook.c` 18 % (runs
+only inside Nautilus → the isolated-Nautilus checks above, and the smoke test from Phase 4).
+
+**Phase 3 — Settings tab (done 2026-11-12).** Settings dialog: third tab **Folder Views** (icon
+`view-grid-symbolic`): switch row "Remember View per Folder" (pending until Apply, like every setting) and
+group "Saved Views" with the button row "Reset All Folder Views…" (destructive style, insensitive while the
+pending switch is off). It opens an `AdwAlertDialog` ("Reset All Folder Views?", Cancel default, Reset
+destructive); only Reset calls `nu_settings_reset_folder_views()`, right away. libadwaita requirement raised
+to 1.6 (`AdwButtonRow`) in Meson and the RPM. Feature: settings listener in `folder_views.c`. On → the hook
+starts and attaches to every open tab, applying each folder's saved view. Off → it detaches everything and
+puts Files' keys back to our default (tabs keep what they show; Files' stock behaviour from then on).
+Reset All / our default changing → `fv_view_mode_hook_refresh` re-applies every open tab (Reset also drops
+the in-memory cache so folders are read again and older-generation values are ignored). The debug driver
+now lives as long as the module, with `fv-reset` (same call as the button) and an off-dump (tabs still
+hooked, Files' keys at our default).
+Found and fixed: a tab could report its first location before Nautilus' view types existed, which switched
+the feature off at start (D3). It now catches up at `notify::loading`, with a 5 s watchdog.
+Checked in the isolated ASan Nautilus (two runs): the first folder of the first window applied; saved views
+in two tabs; **off** → 0 tabs still hooked, Files' keys at our default; a change made while off is not
+saved; **on** → both tabs back to their folders' saved views; **Reset All** → both tabs at the default at
+once, the old value ignored on revisit, saving works again with the new generation; **25 off/on rounds**:
+26 off-dumps with 0 leftovers, 70 tab checks with 0 mismatches, no warnings. Dialog (probe on the real
+dialog, rendered): tab layout; Reset insensitive while the switch is pending off (stored value unchanged
+until Apply); confirmation shown; Cancel → generation unchanged; Reset → generation + 1; narrow layout
+moves the three tabs to the bottom bar.
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS (coverage of the Nautilus-side
+files is from the isolated-Nautilus checks above, not the unit tests).
+
+**Phase 4 — Hardening & docs (done 2026-11-12).** Smoke test (`tools/smoke-nautilus.sh`): the test Nautilus
+gets its own `XDG_DATA_HOME` (exported before `dbus-run-session`, so `gvfsd-metadata` uses it too) and the
+`folder-views` log domain; a **folder-views round** on a test tree under the log dir (NTFS, path with a space):
+user list + zoom, default for an unchanged folder, zoom saved, revisit, new tab + background tab, off (change
+while off not saved) / on, Reset All, old value ignored; folder views on/off added to every toggle round;
+random browsing also switches view types. New checks: every `fv dump: tab=` line `ok=1`, every
+`fv expect: ok=1` (new debug command: what the selected tab must show), no `FAILED`, off-dumps with 0
+tabs still hooked and Files' keys at our default, at least one checked tab. The sanitizer matcher now skips a
+**leak allocated by another extension's Python runtime** (first frame below the allocator and
+GLib/GObject/GIO in pygi/libpython) even when our frames are further down (the Phase 2 pygi case). Verified
+on sample reports: that block skipped, our own leaks (also one allocated inside a GTK call made by us) still
+reported. Docs: README (Folder views section, Settings tab, smoke isolation, layout table), RPM description
+(and libadwaita ≥ 1.6 from Phase 3).
+Final smoke (`smoke-20261112-231322`, ASan, fake network share, 150 s random browsing + every settings
+round): **PASS**. Folder views: 57 tab checks and 9 named checks, 0 wrong, 26 off-dumps without leftovers;
+the other features unchanged (38 verifies, 0 wrong previews; 26 sidebar off-dumps; 25 preview off-states
+and re-hooks; 64 style dumps; sliding eject; OS menu). No warnings, no sanitizer report mentioning our code.
+The owner's real gvfs metadata was not touched (unchanged since before the tests).
+Final `check-safety.sh`: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS; coverage `fv_state.c` 100 %,
+`nu_settings.c` 99.3 %.
+
+Still manual (owner): real mouse and keyboard (Ctrl+1/2, Ctrl +/−, Ctrl + scroll, the view menu) in a few
+of your own folders; restart Files and check they come back; a real SMB/SFTP share (untested, §10.7);
+the Folder Views tab and the Reset confirmation with a real mouse.
+
+### 10.9 Smooth transitions (owner, 2026-11-12: "The transition between folders needs to be more smooth")
+
+What was rough (§10.7): when a folder needs another view type or icon size than the one before it, Files
+re-lays out the **old** folder's files in the new layout (they jump), then the new files pop in; the switch
+also blocks the main loop for 30–300 ms.
+
+Now (`view_mode_hook.c`, "Smooth transitions"), only when something actually changes:
+1. **Cover:** before switching, a static picture of the current view (`gtk_widget_paintable_new` →
+   `gdk_paintable_get_current_image`, a render-node copy, no pixel readback) goes on top of it. It sits in a
+   box with the `view` style, so nothing shows through, as an extra child of the files view's `GtkOverlay`,
+   just above the view and below Files' floating "Loading…" bar. It is not a target for clicks or focus and
+   is hidden from accessibility.
+2. **Switch:** view type and zoom change underneath. The old files' jump and the main-loop block happen
+   behind an unchanged picture.
+3. **Fade:** when the tab stops loading (`notify::loading` false, i.e. the new files are in), or after
+   `FV_COVER_MAX_MS` (1 s) for slow folders, the cover fades out over `FV_FADE_MS` (180 ms, ease-out cubic,
+   `AdwTimedAnimation`, so it is instant with GTK animations off) and is removed. Another folder change during
+   the cover keeps the same picture and restarts the wait.
+4. Background tabs (not mapped) and folders that already match get no cover. Feature off or tab closed →
+   the cover is removed with the hook.
+
+Measured (isolated Nautilus, normal debug build, 180-file folders and a 10 000-file folder): the cover is up
+from the click until 210–950 ms (= when Files has loaded the folder, the same moment stock Files would show
+it), then fades in 180 ms. Whole-window renders during list → grid and grid → list: the old view stays
+still, then crossfades into the new layout, with no jump or flash and the same background. The switch
+underneath still costs 105–325 ms of main loop (Files' own view rebuild), but the screen doesn't change
+during it.
+Smoke (ASan, fake network share, 150 s + every round): `smoke-20261112-234613` **PASS**. Folder views: 57 tab
+checks, 9 named checks, 0 wrong; 26 off-dumps without leftovers; 6 transitions completed (cover up →
+fade → removed). The run before it (`smoke-20261112-234043`) failed only the sidebar's OS-drive-menu check
+("row not in the places list" right after the network-row click, `sidebar_hook.c`, Feature 3). That code is
+not touched by this change, and it passed in the re-run and in the Phase 4 run: an intermittent timing issue
+in that check, recorded here for Feature 3's follow-up.
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+
+### 10.10 Instant feel: read-ahead, switch after the click's frame, no fade (owner, 2026-11-13: "I want the transition to feel instant, can't we read the next dir pref and load it beforehand?")
+
+Measured before this change (§10.9 build): the click itself wasn't drawn for 100–300 ms (the switch ran
+inside Nautilus' location notification, before the next frame), then the cover waited for loading and
+faded for 180 ms. Reading a folder's view takes 0.3–18 ms, so it was never the main delay, but it is
+removed too.
+
+1. **Read-ahead** (the owner's idea): when a local folder has finished loading, the saved views of its
+   **subfolders**, its **siblings** (the parent's subfolders) and its **parent** are read in the background
+   (`g_file_enumerate_children_async` + `next_files_async`, `G_PRIORITY_LOW`, GIO worker threads, up to
+   `FV_PREFETCH_MAX` 2000 entries per folder, batches of 64) into the cache (`FV_CACHE_MAX` raised to 8192).
+   Only folders the cache doesn't know are stored, so a value the user just saved is never replaced by an
+   older one. It is cancelled when the tab moves on, and skipped on network shares (no second enumeration
+   over the network).
+2. **Switch after the click's frame:** at the location change only the still picture goes up (cheap); the
+   switch runs in an idle right after the next frame has been drawn (`after-paint` on the slot's frame
+   clock, with a `FV_SWITCH_FALLBACK_MS` 100 ms fallback). The path bar and loading state show at once, and
+   Files' 0.1–0.3 s view rebuild happens behind an unchanged picture. Background tabs switch right away.
+3. **No fade:** `FV_FADE_MS` 0. The picture is removed the moment the new folder's files are in, a cut
+   like stock Files (the fade code stays for a non-zero value).
+
+Measured (isolated Nautilus, normal build, 180-file folders A/B/C and a 10 000-file folder, same
+navigation, frame logger probe), from the location change to the first drawn frame / to the first frame
+showing the new folder's files uncovered:
+
+| | first frame | new folder shown |
+|---|---|---|
+| stock Files (feature off) | 10–16 ms | 335–458 ms (10 000 files: 840 ms) |
+| folder views, §10.9 build | 100–300 ms | ~390–980 ms (load + switch + 180 ms fade) |
+| folder views, this build | 13–31 ms | 279–697 ms (10 000 files: 887 ms) |
+
+Every folder's view was known at the click (read-ahead/cache) except the very first one. The one first-frame
+outlier (417 ms, first visit to B) matches stock's first-visit stall (335 ms on its first folder).
+**Remaining gap:** on list ↔ grid changes the new folder appears on average ~0.13 s later than stock. That
+is Files' own view rebuild (the same as Ctrl+1/Ctrl+2), which the main thread has to run, and it can't be
+skipped through Files' public behaviour. Folder changes with the same view type, or that only zoom, are as
+fast as stock (zoom ~10 ms).
+Smoke (ASan, 150 s + every round): `smoke-20261113-001117` **PASS** (57 tab checks, 9 named checks, 0 wrong; 26 off-dumps clean; 6 transitions). Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.

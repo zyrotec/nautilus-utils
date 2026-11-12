@@ -7,6 +7,25 @@
     <value nick="gradient" value="2"/>
   </enum>
 
+  <!-- Folder views (PLAN.md §10.4). Values match Nautilus' own enums (org.gnome.nautilus.FolderView,
+       GridZoomLevel, ListZoomLevel) so they can be copied across unchanged. -->
+  <enum id="io.github.zyrotec.NautilusUtils.FolderView">
+    <value nick="list" value="1"/>
+    <value nick="grid" value="2"/>
+  </enum>
+  <enum id="io.github.zyrotec.NautilusUtils.GridZoom">
+    <value nick="small" value="0"/>
+    <value nick="small-plus" value="1"/>
+    <value nick="medium" value="2"/>
+    <value nick="large" value="3"/>
+    <value nick="extra-large" value="4"/>
+  </enum>
+  <enum id="io.github.zyrotec.NautilusUtils.ListZoom">
+    <value nick="small" value="0"/>
+    <value nick="medium" value="1"/>
+    <value nick="large" value="2"/>
+  </enum>
+
   <schema id="io.github.zyrotec.NautilusUtils" path="/io/github/zyrotec/NautilusUtils/">
     <key name="folder-preview-enabled" type="b">
       <default>true</default>
@@ -52,6 +71,37 @@
     <key name="eject-slide" type="b">
       <default>false</default>
       <summary>Slide the eject button in on hover or focus</summary>
+    </key>
+    <key name="folder-views-enabled" type="b">
+      <default>true</default>
+      <summary>Remember the view type and icon size per folder</summary>
+    </key>
+
+    <key name="folder-views-generation" type="u">
+      <default>0</default>
+      <summary>Folder views generation</summary>
+      <description>Incremented by "Reset All Folder Views"; saved folder views with an older generation are ignored.</description>
+    </key>
+
+    <key name="folder-views-default-view" enum="io.github.zyrotec.NautilusUtils.FolderView">
+      <default>'grid'</default>
+      <summary>View type for folders without a saved view</summary>
+    </key>
+
+    <key name="folder-views-default-grid-zoom" enum="io.github.zyrotec.NautilusUtils.GridZoom">
+      <default>'medium'</default>
+      <summary>Grid icon size for folders without a saved view</summary>
+    </key>
+
+    <key name="folder-views-default-list-zoom" enum="io.github.zyrotec.NautilusUtils.ListZoom">
+      <default>'medium'</default>
+      <summary>List icon size for folders without a saved view</summary>
+    </key>
+
+    <key name="folder-views-defaults-captured" type="b">
+      <default>false</default>
+      <summary>Whether the folder views default was copied from Files' settings</summary>
+      <description>Set once, the first time the feature runs (PLAN.md §10.1.1).</description>
     </key>
   </schema>
 </schemalist>
