@@ -674,7 +674,7 @@ drive menu, without Unmount/Format and their separator:
   Properties
 ```
 
-All act on `/`. Network share rows keep no menu (S6 unchanged).
+All act on `/`. Network share rows keep no menu (S6 unchanged). Implementation: Nautilus' own menu (N6, §9.6).
 
 #### 9.1.4 Sliding eject button (when "Slide In on Hover" is on)
 
@@ -734,6 +734,7 @@ Constants: `SD_EJECT_SLIDE_MS` 200.
 | N2 | Gradient spans the **filled part** of the bar (every bar shows the whole gradient). |
 | N3 | Warning/error colours are **dropped** for Custom/Gradient, **kept** for Accent Colour (owner confirmed). |
 | N5 | The dialog has an **Apply** button; controls change nothing until it is pressed; closing without Apply discards. |
+| N6 | OS drive menu = **Nautilus' own row menu**, opened for our row via the sidebar's long-press gesture (§9.6); no menu code of our own. |
 | N4 | OS drive menu: Open / Open in New Tab / Open in New Window / — / Properties. Network rows: no menu. |
 
 ### 9.5 Phases
@@ -748,3 +749,66 @@ Constants: `SD_EJECT_SLIDE_MS` 200.
 | 5 Bar options | Colour modes (accent/custom/gradient), hide bars/labels. | Matches spec in light/dark; changes live. |
 | 6 Eject slide | Hidden eject button, slide + gradient mask, full-width bars, focus support, reduced motion. | Works on local and network rows; eject still unmounts; no reflow; 16 ms probe clean. |
 | 7 Hardening & docs | Smoke-test coverage for settings changes, `check-safety.sh`, README section + RPM (schema install). | All PASS. |
+
+### 9.6 Phase 0 findings (2026-11-12, Nautilus 51.1 / GTK 4.24.1 / libadwaita 1.10)
+
+Method: Nautilus 51.1 source read for reference (not vendored); throwaway probe `LD_PRELOAD`ed into an
+isolated Nautilus (own D-Bus session) alongside the real module, rendering widgets to PNG. No eject was
+ever pressed. Not in the repo.
+
+**Main menu.** Defined in `nautilus-window.blp` as `menu app_menu` (template child, so **one `GMenu` per
+window**), set on the header bar's `GtkMenuButton` (`icon-name open-menu-symbolic`). Three sections:
+New Window/Tab/Show All Tabs · Undo/Redo · Preferences/Keyboard Shortcuts/Help/About. Nautilus only
+rewrites the *contents* of the Undo section (`nautilus_gmenu_set_from_model`), never the top-level list.
+- `g_menu_insert_section (menu, <index of the section whose first item is app.preferences>, NULL, ours)`
+  gives exactly the requested layout (separator above and below our entry). ✅ (rendered)
+- Our action: `gtk_widget_insert_action_group (window, "nautilus-utils", group)`; the menu's popover
+  resolves `nautilus-utils.settings` through the window. ✅
+- Inject per window when it maps; find the section by action name (not index) and mark the window so it
+  happens once.
+
+**Settings dialog.** `AdwDialog` + `AdwToolbarView` + `AdwHeaderBar` (title widget `AdwViewSwitcher`,
+policy wide) + `AdwViewStack` of `AdwPreferencesPage`s + Apply button (`.suggested-action`, pack end)
+presents over the Nautilus window with the usual dimmed backdrop; `GtkColorDialogButton` works. ✅
+libadwaita 1.10 is already in Nautilus' process; we link `libadwaita-1` (same library).
+
+**GSettings.** The default schema source finds a compiled schema in `$XDG_DATA_HOME/glib-2.0/schemas`
+(✅ with a test schema) and not otherwise, so: RPM/`meson install` → `/usr/share/glib-2.0/schemas`;
+development → install the schema into `~/.local/share/glib-2.0/schemas` (README). Missing schema →
+defaults + one warning (§9.2.3), never a crash (`g_settings_new` aborts on an unknown schema, so we look
+it up with `g_settings_schema_source_lookup` first).
+
+**OS drive menu — use Nautilus' own menu (better than building our own).** Nautilus' row menu
+(`create_row_popover`) builds its items from the row's properties; for our OS row (`uri file:///`, no
+mount/volume/drive) that is exactly **Open / Open in New Tab / Open in New Window / — / Properties**
+(no Unmount/Format; the bookmark section is hidden-when-disabled). It is reached from the row's own click
+gesture (which our row lacks), the Menu key / Shift+F10 on the selected row (already works for our row),
+and the sidebar's touch long-press gesture, whose handler takes `gtk_list_box_get_row_at_y (list, y)`.
+- Right-click on our row → emit `pressed (x, y)` on the sidebar's `GtkGestureLongPress` with our row's
+  centre in list coordinates → Nautilus shows its native popover for our row. ✅ (rendered: identical to
+  the owner's screenshot minus Unmount/Format)
+- Actions go through Nautilus' `row.*` group with our row as context row: `open_row()` and
+  `properties_cb()` only read the row's `uri`. Verified: *Open in New Tab* added a background tab
+  (1 → 2 tabs), *Properties* opened Nautilus' properties dialog for `/`; no warnings. ✅
+- Difference to native rows: the popover points at the row, not the click position (long-press path).
+- Fallback: no long-press gesture found → no menu, one debug message (row still works).
+
+**Sliding eject.** Row box children: `[GtkImage, our .sd-drive-info box, GtkImage (end, hidden),
+GtkButton.sidebar-button (eject, natural width 30 px, margin-start 4 px), AdwSpinner]`.
+- Moving Nautilus' eject button into a `GtkOverlay` (child: a small container that holds our info box,
+  overlay: `GtkRevealer` slide-left, `halign END`) keeps its 3 controllers; Nautilus keeps its pointer to
+  the button. ✅
+- Hidden → the bar spans the full row width (like the OS row) ✅. Revealed → the button sits over the
+  right end and the content under it fades out through `gtk_snapshot_push_mask` (alpha mask, linear
+  gradient over the last *button width + margins* = 34 px) ✅ (rendered).
+- The fade width follows the revealer's animated width each frame (tick callback while animating).
+- `on_net_eject` looks Nautilus' eject button up inside its (hidden) row, so the lookup must search
+  descendants, not only direct children of the row box (Phase 6).
+
+**Live on/off.** Both hooks already have a full "disable" path (graceful failure): folder preview gives
+every image back to Nautilus (`detach_all`), sidebar drives removes our rows/network list and unhides
+Nautilus' rows. Missing for a clean live toggle: sidebar drives must also **undecorate** Nautilus' drive
+rows (move the label back, remove the info box, restore the eject button), and both hooks need a "re-enable"
+that re-scans already-mapped widgets (the map emission hook only sees widgets mapped later). Phase 3.
+
+**Phase 0 status: done** (2026-11-12). Design change → N6.
