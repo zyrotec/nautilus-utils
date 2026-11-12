@@ -27,6 +27,12 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_cmpint (a->show_usage_bars, ==, b->show_usage_bars);
   g_assert_cmpint (a->show_size_labels, ==, b->show_size_labels);
   g_assert_cmpint (a->eject_slide, ==, b->eject_slide);
+  g_assert_cmpint (a->folder_views_enabled, ==, b->folder_views_enabled);
+  g_assert_cmpuint (a->folder_views_generation, ==, b->folder_views_generation);
+  g_assert_cmpint (a->folder_views_default.view, ==, b->folder_views_default.view);
+  g_assert_cmpuint (a->folder_views_default.grid_zoom, ==, b->folder_views_default.grid_zoom);
+  g_assert_cmpuint (a->folder_views_default.list_zoom, ==, b->folder_views_default.list_zoom);
+  g_assert_cmpint (a->folder_views_defaults_captured, ==, b->folder_views_defaults_captured);
 }
 
 /* Runs every pending main-context event (GSettings delivers backend changes through idles). */
@@ -224,6 +230,8 @@ test_each_group (void)
     { "show-usage-bars", NU_CHANGED_ROW_CONTENT },
     { "show-size-labels", NU_CHANGED_ROW_CONTENT },
     { "eject-slide", NU_CHANGED_EJECT },
+    { "folder-views-enabled", NU_CHANGED_FOLDER_VIEWS },
+    { "folder-views-defaults-captured", NU_CHANGED_FV_DEFAULT },
   };
   g_autoptr (GSettingsBackend) backend = start ();
   g_autoptr (GSettings) s = direct_settings (backend);
@@ -245,6 +253,133 @@ test_each_group (void)
       g_assert_cmpuint (counter.calls, ==, 1);
       g_assert_cmpuint (counter.last, ==, NU_CHANGED_BAR_COLOUR);
     }
+  static const struct
+  {
+    const char *key;
+    int         value;
+  } enums[] = {
+    { "folder-views-default-view", NU_VIEW_LIST },
+    { "folder-views-default-grid-zoom", 4 },
+    { "folder-views-default-list-zoom", 0 },
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS (enums); i++)
+    {
+      counter.calls = 0;
+      g_settings_set_enum (s, enums[i].key, enums[i].value);
+      drain ();
+      g_assert_cmpuint (counter.calls, ==, 1);
+      g_assert_cmpuint (counter.last, ==, NU_CHANGED_FV_DEFAULT);
+    }
+  NuFolderView d = nu_settings_get ()->folder_views_default;
+  g_assert_cmpint (d.view, ==, NU_VIEW_LIST);
+  g_assert_cmpuint (d.grid_zoom, ==, 4);
+  g_assert_cmpuint (d.list_zoom, ==, 0);
+  counter.calls = 0;
+  g_settings_set_uint (s, "folder-views-generation", 5);
+  drain ();
+  g_assert_cmpuint (counter.calls, ==, 1);
+  g_assert_cmpuint (counter.last, ==, NU_CHANGED_FV_GENERATION);
+  g_assert_cmpuint (nu_settings_get ()->folder_views_generation, ==, 5);
+  nu_settings_shutdown ();
+}
+
+static void
+test_folder_view_valid (void)
+{
+  g_assert_false (nu_folder_view_valid (NULL));
+  g_assert_true (nu_folder_view_valid (&nu_settings_defaults ()->folder_views_default));
+  const NuFolderView good[] = { { NU_VIEW_LIST, 0, 0 }, { NU_VIEW_GRID, NU_GRID_ZOOM_MAX, NU_LIST_ZOOM_MAX } };
+  const NuFolderView bad[] = { { 0, 0, 0 }, { 3, 0, 0 }, { NU_VIEW_GRID, NU_GRID_ZOOM_MAX + 1, 0 },
+                               { NU_VIEW_LIST, 0, NU_LIST_ZOOM_MAX + 1 } };
+  for (gsize i = 0; i < G_N_ELEMENTS (good); i++)
+    g_assert_true (nu_folder_view_valid (&good[i]));
+  for (gsize i = 0; i < G_N_ELEMENTS (bad); i++)
+    g_assert_false (nu_folder_view_valid (&bad[i]));
+}
+
+/* The one-time copy of Files' default (PLAN.md §10.1.1): one batch, only once, invalid → built-in. */
+static void
+test_capture_folder_view_default (void)
+{
+  g_autoptr (GSettingsBackend) backend = start ();
+  Counter counter = { 0 };
+  nu_settings_add_listener (count_listener, &counter);
+  g_assert_false (nu_settings_get ()->folder_views_defaults_captured);
+
+  NuFolderView files = { NU_VIEW_LIST, 1, 2 };
+  g_assert_true (nu_settings_capture_folder_view_default (&files));
+  drain ();
+  g_assert_cmpuint (counter.calls, ==, 1);
+  g_assert_cmpuint (counter.last, ==, NU_CHANGED_FV_DEFAULT);
+  const NuConfig *c = nu_settings_get ();
+  g_assert_true (c->folder_views_defaults_captured);
+  g_assert_cmpint (c->folder_views_default.view, ==, NU_VIEW_LIST);
+  g_assert_cmpuint (c->folder_views_default.grid_zoom, ==, 1);
+  g_assert_cmpuint (c->folder_views_default.list_zoom, ==, 2);
+
+  /* Second capture (e.g. next start, after Files' keys drifted): nothing changes. */
+  NuFolderView drifted = { NU_VIEW_GRID, 4, 0 };
+  g_assert_false (nu_settings_capture_folder_view_default (&drifted));
+  drain ();
+  g_assert_cmpuint (counter.calls, ==, 1);
+  g_assert_cmpint (nu_settings_get ()->folder_views_default.view, ==, NU_VIEW_LIST);
+
+  /* Persisted: a fresh service on the same backend sees the captured default. */
+  nu_settings_shutdown ();
+  nu_settings_init_full (NU_SETTINGS_SCHEMA_ID, backend);
+  g_assert_true (nu_settings_get ()->folder_views_defaults_captured);
+  g_assert_cmpuint (nu_settings_get ()->folder_views_default.list_zoom, ==, 2);
+  nu_settings_shutdown ();
+
+  /* Invalid input → built-in default, still marked captured. */
+  g_autoptr (GSettingsBackend) backend2 = start ();
+  NuFolderView bad = { 9, 9, 9 };
+  g_assert_true (nu_settings_capture_folder_view_default (&bad));
+  drain ();
+  const NuFolderView *d = &nu_settings_defaults ()->folder_views_default;
+  g_assert_cmpint (nu_settings_get ()->folder_views_default.view, ==, d->view);
+  g_assert_cmpuint (nu_settings_get ()->folder_views_default.grid_zoom, ==, d->grid_zoom);
+  g_assert_true (nu_settings_get ()->folder_views_defaults_captured);
+  nu_settings_shutdown ();
+
+  /* NULL input behaves like invalid. */
+  g_autoptr (GSettingsBackend) backend3 = start ();
+  g_assert_true (nu_settings_capture_folder_view_default (NULL));
+  drain ();
+  g_assert_true (nu_settings_get ()->folder_views_defaults_captured);
+  nu_settings_shutdown ();
+}
+
+/* Reset All bumps the generation immediately, persisted, one notification each. */
+static void
+test_reset_folder_views (void)
+{
+  g_autoptr (GSettingsBackend) backend = start ();
+  Counter counter = { 0 };
+  nu_settings_add_listener (count_listener, &counter);
+  g_assert_cmpuint (nu_settings_get ()->folder_views_generation, ==, 0);
+  for (guint i = 1; i <= 3; i++)
+    {
+      g_assert_true (nu_settings_reset_folder_views ());
+      drain ();
+      g_assert_cmpuint (nu_settings_get ()->folder_views_generation, ==, i);
+      g_assert_cmpuint (counter.calls, ==, i);
+      g_assert_cmpuint (counter.last, ==, NU_CHANGED_FV_GENERATION);
+    }
+  /* A pending dialog copy doesn't hold the reset back. */
+  g_autoptr (GSettings) pending = nu_settings_new_delayed ();
+  g_settings_set_boolean (pending, "folder-views-enabled", FALSE);
+  g_assert_true (nu_settings_reset_folder_views ());
+  drain ();
+  g_assert_cmpuint (nu_settings_get ()->folder_views_generation, ==, 4);
+  g_assert_true (nu_settings_get ()->folder_views_enabled);
+  /* Wraps around instead of failing. */
+  g_autoptr (GSettings) s = direct_settings (backend);
+  g_settings_set_uint (s, "folder-views-generation", G_MAXUINT);
+  drain ();
+  g_assert_true (nu_settings_reset_folder_views ());
+  drain ();
+  g_assert_cmpuint (nu_settings_get ()->folder_views_generation, ==, 0);
   nu_settings_shutdown ();
 }
 
@@ -256,6 +391,9 @@ test_missing_schema (void)
   g_test_assert_expected_messages ();
   g_assert_false (nu_settings_available ());
   g_assert_null (nu_settings_new_delayed ());
+  NuFolderView v = { NU_VIEW_LIST, 0, 0 };
+  g_assert_false (nu_settings_capture_folder_view_default (&v));
+  g_assert_false (nu_settings_reset_folder_views ());
   const NuConfig *d = nu_settings_defaults ();
   assert_config_equal (nu_settings_get (), d);
   /* Listeners can still be registered; they just never fire. */
@@ -371,6 +509,9 @@ main (int argc, char **argv)
   g_test_add_func ("/settings/delayed-apply-coalesces", test_delayed_apply_coalesces);
   g_test_add_func ("/settings/revert-discards", test_revert_discards);
   g_test_add_func ("/settings/each-group", test_each_group);
+  g_test_add_func ("/settings/folder-view-valid", test_folder_view_valid);
+  g_test_add_func ("/settings/capture-folder-view-default", test_capture_folder_view_default);
+  g_test_add_func ("/settings/reset-folder-views", test_reset_folder_views);
   g_test_add_func ("/settings/missing-schema", test_missing_schema);
   g_test_add_func ("/settings/without-init", test_without_init);
   g_test_add_func ("/settings/default-init-idempotent", test_default_init_idempotent);

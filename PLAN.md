@@ -145,7 +145,7 @@ findings and the smoke test is clean.
 | 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover | `src/folder-preview/` | **v1 done** (grid view) |
 | 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
-| 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **Phase 0 done** (2026-11-12), branch `dev-path-view-size` |
+| 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **Phase 1 done** (2026-11-12), branch `dev-path-view-size` |
 
 Open items:
 
@@ -1127,3 +1127,23 @@ zoomed and switched, the selected tab unchanged).
 3. The switch cost above is Files' own and only happens when the view type changes between folders; no
    way around it through public behaviour. Recorded as expected cost, measured again in Phase 2 with the
    16 ms latency probe.
+
+### 10.8 Phase results
+
+**Phase 1 — Core (done 2026-11-12).** Schema: three enums (`FolderView` list=1/grid=2, `GridZoom` 0–4,
+`ListZoom` 0–2, same values as Nautilus' own) and the six keys of §10.4. `nu_settings` (shared): `NuViewType`,
+`NuFolderView`, the new keys in `NuConfig`, change groups `NU_CHANGED_FOLDER_VIEWS` / `_FV_GENERATION` /
+`_FV_DEFAULT`, `nu_folder_view_valid`, `nu_settings_capture_folder_view_default` (one batch through a
+delayed copy, only once, invalid input → built-in default) and `nu_settings_reset_folder_views` (generation
++ 1 right away, wraps at 2^32). `src/folder-views/fv_state.c` (GLib only): `fv_encode` / `fv_decode`
+(`1;<generation>;<view>;<grid-zoom>;<list-zoom>`, digits only, every field range-checked, other generation
+or format version rejected), `fv_location_kind` (save / default only: starred, other-locations, search /
+ignore: `network:///` root, no scheme), zoom level ↔ Nautilus 51.1 icon size, and `FvCache`, an LRU of
+URI → saved view or "has none" (`FV_CACHE_MAX` 4096). `fv-core` is not linked into the module until Phase 2.
+Tests: `test-fv-state` 10 (round trip of every view × generation, 29 rejected values, generation reset,
+location kinds, zoom tables, LRU order, 5 × 12 288-entry fill with clears + 1000 create/free cycles);
+`test-settings` 15 (+3: validity, capture, reset; defaults-match-schema and each-group cover the new keys).
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS. Coverage: `fv_state.c` 100 %,
+`nu_settings.c` 99.3 % (the one line is from Feature 3).
+The dev schema in `~/.local/share/glib-2.0/schemas` was updated (the module in `build/` reads the new keys;
+GSettings aborts on unknown keys).
