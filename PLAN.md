@@ -144,6 +144,7 @@ findings and the smoke test is clean.
 |---|---|---|---|
 | 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover | `src/folder-preview/` | **v1 done** (grid view) |
 | 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
+| 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **in progress** (§9, approved 2026-11-12) |
 
 Open items:
 
@@ -601,3 +602,149 @@ a slow/unreachable server never freezes Files.
   Unit-test coverage: `drive_info.c` 95.9 %, `sidebar_hook.c` 3.8 % (runs only inside Nautilus → smoke test).
 - Docs: README "Sidebar drives" section (behaviour, limitations, debug/smoke usage, layout table) and the
   RPM description.
+
+---
+
+## 9. Feature 3 — Settings (and sidebar-drives v2)
+
+A "Nautilus Utils Settings" window, opened from Nautilus' main menu, with one tab per feature. Every tab
+can switch its feature on or off; the Sidebar drives tab also controls the bar colour, what the drive rows
+show and a sliding eject button. Also adds a right-click menu to the OS drive row. Prefix `nu_` (shared
+settings core) / `st_` (window + menu hook), log domain `settings`, branch `dev-settings`.
+
+### 9.1 Behaviour
+
+#### 9.1.1 Menu entry
+
+Nautilus' main (hamburger) menu gets one entry, **"Nautilus Utils Settings"**, directly above
+"Preferences", in its own section so a separator sits below it (and the existing separator above it):
+
+```
+  Undo Trash / Redo
+  ─────────────────────────
+  Nautilus Utils Settings      ← new
+  ─────────────────────────    ← new
+  Preferences
+  Keyboard Shortcuts / Help / About Files
+```
+
+No other menu item is changed, moved or hidden. If the menu can't be found, log one warning and skip the
+entry (the features keep working with their stored settings).
+
+#### 9.1.2 Settings window (GNOME HIG, libadwaita)
+
+An `AdwDialog` presented over the Nautilus window it was opened from: `AdwToolbarView` with an
+`AdwHeaderBar` holding an `AdwViewSwitcher` (one tab per feature, each an `AdwPreferencesPage`) and an
+**Apply** button (`.suggested-action`) at the header bar's end. Controls only change a pending copy of the
+settings (GSettings in delay-apply mode, `g_settings_delay`); **Apply** writes them
+(`g_settings_apply`) and every open Nautilus window then updates live (no restart). Apply is insensitive
+until something has changed (`has-unapplied`). Closing the dialog with unapplied changes discards them
+(`g_settings_revert`). One dialog at a time per window (N5).
+
+**Tab "Folder Preview"**
+- Group "Folder Preview": switch row **"Show previews on folder icons"** (feature on/off).
+
+**Tab "Sidebar Drives"**
+- Group "Sidebar Drives": switch row **"Enhanced drive rows"** (feature on/off). Off = the stock Nautilus
+  sidebar (no OS row, no bars, network shares back in Nautilus' own list). All other rows on this tab are
+  insensitive while it is off.
+- Group "Usage Bar":
+  - Combo row **"Bar Colour"**: *Accent Colour* (follows the GNOME accent colour, live) / *Custom Colour* /
+    *Gradient*.
+  - **"Colour"** (`GtkColorDialogButton`), visible only for *Custom Colour*.
+  - **"Start Colour"** and **"End Colour"**, visible only for *Gradient*: a two-point linear gradient,
+    left → right, stretched across the **filled part** of the bar (N2).
+  - Switch **"Show Usage Bars"**, switch **"Show Size Labels"** (the "x free of y" caption). Both off →
+    drive rows go back to one line (name only), still in our order with the OS row.
+- Group "Eject Button": switch **"Slide In on Hover"** (§9.1.4).
+
+Every row has an accessible label; the dialog is fully keyboard-usable; light/dark/high-contrast follow the
+system.
+
+#### 9.1.3 OS drive context menu
+
+Right-click (and long-press / Menu key) on the OS drive row opens a popover menu styled like Nautilus'
+drive menu, without Unmount/Format and their separator:
+
+```
+  Open
+  Open in New Tab
+  Open in New Window
+  ─────────────────
+  Properties
+```
+
+All act on `/`. Network share rows keep no menu (S6 unchanged).
+
+#### 9.1.4 Sliding eject button (when "Slide In on Hover" is on)
+
+- The eject button of every ejectable drive row (local and network) is hidden; the row's text, bar and
+  caption take the **full width of the row**, exactly like the OS row.
+- When the pointer is over the row **or the row has keyboard focus**, the button slides in from the right
+  edge, over the content (no reflow). Under it, the row content fades out through a **gradient mask** whose
+  width equals the button plus its padding: transparent at the right edge, full opacity at the mask's left
+  edge. Pointer leaves / focus lost → slides out, mask goes away. Animation ~200 ms, ease-out; disabled when
+  GTK's "enable-animations" is off (instant show/hide).
+- The mask fades the content itself (not a painted colour), so it works on every row background (normal,
+  hover, selected, light, dark).
+- Off → today's layout (button always visible, bars end before it).
+
+#### 9.1.5 Bar colours
+
+- *Accent Colour*: `var(--accent-bg-color)`, follows accent changes live.
+- *Custom Colour* / *Gradient*: the chosen colours; stored as `#rrggbb`.
+- Warning (≥ 90 %) / error (≥ 95 %) colours apply **only with Accent Colour**; a custom colour or gradient
+  is always shown as chosen (N3).
+
+### 9.2 Rules
+
+1. All §4 rules. The settings window and menu entry only exist on the main thread; no I/O in them except
+   GSettings (dconf, async by design).
+2. Nautilus-internals code stays in one file per feature: menu injection in `src/settings/menu_hook.c`,
+   everything sidebar-related in `src/sidebar-drives/sidebar_hook.c`, folder preview in `view_hook.c`.
+3. Settings live in **GSettings**, schema `io.github.zyrotec.NautilusUtils` (installed by Meson/RPM).
+   If the schema isn't installed, log one warning and run with the built-in defaults (= today's behaviour).
+   A shared, Nautilus-free wrapper `src/common/nu_settings.c` (first shared code, §3) gives typed getters +
+   change notifications and is unit-tested.
+4. Turning a feature off must fully undo its changes on open windows (folder icons back to stock, sidebar
+   rows restored, our rows/CSS removed) and stop its timers/monitors; turning it on re-applies. Repeated
+   toggling must not leak (stress test + smoke test).
+5. Never alter Nautilus' existing UI beyond what is listed here (menu: one added section).
+
+### 9.3 Settings keys (defaults = current behaviour)
+
+| Key | Type | Default |
+|---|---|---|
+| `folder-preview-enabled` | b | true |
+| `sidebar-drives-enabled` | b | true |
+| `bar-colour-mode` | enum accent / custom / gradient | accent |
+| `bar-colour` | s `#rrggbb` | `#3584e4` |
+| `bar-gradient-start` / `bar-gradient-end` | s `#rrggbb` | `#3584e4` / `#9141ac` |
+| `show-usage-bars` | b | true |
+| `show-size-labels` | b | true |
+| `eject-slide` | b | false |
+
+Constants: `SD_EJECT_SLIDE_MS` 200.
+
+### 9.4 Decisions (owner, 2026-11-12)
+
+| # | Decision |
+|---|---|
+| N1 | Eject button slides in on **hover or keyboard focus**. |
+| N2 | Gradient spans the **filled part** of the bar (every bar shows the whole gradient). |
+| N3 | Warning/error colours are **dropped** for Custom/Gradient, **kept** for Accent Colour (owner confirmed). |
+| N5 | The dialog has an **Apply** button; controls change nothing until it is pressed; closing without Apply discards. |
+| N4 | OS drive menu: Open / Open in New Tab / Open in New Window / — / Properties. Network rows: no menu. |
+
+### 9.5 Phases
+
+| Phase | Work | Acceptance |
+|---|---|---|
+| 0 Spike | Probe (not built): how Nautilus builds its main menu (`GtkMenuButton` → `GMenuModel`, mutable?), insert a section above Preferences + our own action group; how Nautilus opens a location in a new tab / window and shows Properties (window/slot actions, else the public `org.freedesktop.FileManager1.ShowItemProperties` D-Bus call); right-click popover on our OS row; eject button moved into a `GtkOverlay` over the row content while keeping Nautilus' click handling; content mask via `gtk_snapshot_push_mask` in a small container widget; live undo of folder preview and sidebar drives. | Every question answered and recorded here; anything infeasible reported before building. |
+| 1 Settings core | Schema + Meson install, `nu_settings.c` (typed getters, colour parsing/validation, change signals), unit tests. | Tests + `check-safety.sh` pass. |
+| 2 Window + menu | Dialog with both tabs bound to a delayed GSettings, Apply button; menu entry + separator. | Entry above Preferences with separator below; nothing changes before Apply; Apply persists across restarts; close discards; light/dark. |
+| 3 Feature toggles | Live on/off for folder preview and sidebar drives, full undo. | Toggle 50× in the smoke test without leaks/warnings; stock UI restored when off. |
+| 4 OS row menu | Popover menu, actions on `/`. | All four items work; Computer row and other rows unchanged. |
+| 5 Bar options | Colour modes (accent/custom/gradient), hide bars/labels. | Matches spec in light/dark; changes live. |
+| 6 Eject slide | Hidden eject button, slide + gradient mask, full-width bars, focus support, reduced motion. | Works on local and network rows; eject still unmounts; no reflow; 16 ms probe clean. |
+| 7 Hardening & docs | Smoke-test coverage for settings changes, `check-safety.sh`, README section + RPM (schema install). | All PASS. |
