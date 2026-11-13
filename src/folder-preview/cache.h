@@ -2,7 +2,7 @@
  *
  * fp_cache_get_frame_async() is the one entry point the view hook needs. In a worker it:
  *   1. reads the folder's mtime (cache key part, D5);
- *   2. frame 0 only: looks in the disk cache  <dir>/v2/<sha1(uri)>/<sec>.<usec>-<px>-<frames>.png  (or a
+ *   2. frame 0 only: looks in the disk cache  <dir>/v4/<sha1(style key + uri)>/<sec>.<usec>-<px>-<frames>.png  (or a
  *      "<sec>.<usec>-none" marker for folders with nothing to preview) and returns at once on a hit —
  *      no scan, no thumbnail decoding;
  *   3. otherwise scans (reusing the scan it already has for this mtime), resolves the needed thumbnails
@@ -18,6 +18,7 @@
 
 #include <gtk/gtk.h>
 
+#include "composite.h"
 #include "thumbs.h"
 #include "workers.h"
 
@@ -28,7 +29,7 @@ typedef struct
   GdkTexture *texture;       /* Owned; NULL = no such frame (folder has no previewable files, or fewer
                               * than 4·frame+1 of them). */
   guint       frame;
-  guint       frame_px;      /* Frame width; height = fp_composite_frame_height (frame_px). */
+  guint       frame_px;      /* Frame width; height = fp_composite_frame_height (style, frame_px). */
   guint       n_frames_hint; /* Upper bound on frames available (0 = nothing to preview). Some may turn
                               * out empty if thumbnails fail; treat a NULL frame as "wrap around". */
   gboolean    from_disk;     /* Served from the disk cache (no scan, no thumbnail decoding). */
@@ -84,6 +85,16 @@ gboolean fp_cache_peek_frame (FpCache     *cache,
 GdkTexture *fp_cache_peek_frame_any_size (FpCache    *cache,
                                           const char *uri,
                                           guint       frame);
+
+/* Sets the look of new frames (starts as fp_style_init_default). If it differs from the current one,
+ * everything in memory is forgotten and results of requests started before are dropped (they finish with
+ * G_IO_ERROR_CANCELLED), so a frame of the old look is never shown. The disk cache keeps one set of frames
+ * per look. Returns TRUE if the style changed. */
+gboolean fp_cache_set_style (FpCache       *cache,
+                             const FpStyle *style);
+
+/* Borrowed; valid until the next fp_cache_set_style. */
+const FpStyle *fp_cache_get_style (FpCache *cache);
 
 /* Forgets everything in memory about @uri (e.g. Nautilus reported the folder changed). The disk cache is
  * keyed by mtime, so it needs no invalidation. Returns TRUE if something was cached. */

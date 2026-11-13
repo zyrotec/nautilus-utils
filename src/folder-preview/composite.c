@@ -11,9 +11,56 @@
 /* Fraction of its section a photo may use (before tilting); tilted corners spill into FRAME_PAD. */
 #define CELL_FILL 0.96
 
-guint
-fp_composite_frame_height (guint width)
+void
+fp_style_init_default (FpStyle *style)
 {
+  *style = (FpStyle) {
+    .layout = FP_LAYOUT_GRID,
+    .stack_step = 1,
+    .border = TRUE,
+    .border_r = 0xff, .border_g = 0xff, .border_b = 0xff,
+    .shadow = TRUE,
+    .rotation = TRUE,
+  };
+}
+
+gboolean
+fp_style_equal (const FpStyle *a, const FpStyle *b)
+{
+  return a->layout == b->layout && a->stack_step == b->stack_step && a->border == b->border &&
+         a->border_r == b->border_r && a->border_g == b->border_g && a->border_b == b->border_b &&
+         a->shadow == b->shadow && a->rotation == b->rotation;
+}
+
+/* Returns a new string (caller frees). */
+char *
+fp_style_key (const FpStyle *style)
+{
+  return g_strdup_printf ("%s%u-b%d%02x%02x%02x-s%d-r%d", style->layout == FP_LAYOUT_STACKED ? "stack" : "grid",
+                          style->layout == FP_LAYOUT_STACKED ? style->stack_step : 0u, style->border != FALSE,
+                          style->border_r, style->border_g, style->border_b, style->shadow != FALSE,
+                          style->rotation != FALSE);
+}
+
+guint
+fp_style_slots (const FpStyle *style)
+{
+  return style->layout == FP_LAYOUT_STACKED ? STACK_CARDS : PREVIEW_SLOTS;
+}
+
+guint
+fp_style_step (const FpStyle *style)
+{
+  if (style->layout != FP_LAYOUT_STACKED)
+    return PREVIEW_SLOTS;
+  return style->stack_step >= STACK_CARDS ? STACK_CARDS : 1;
+}
+
+guint
+fp_composite_frame_height (const FpStyle *style, guint width)
+{
+  if (style->layout == FP_LAYOUT_STACKED)
+    return (guint) lround ((double) width * (STACK_H + 2 * STACK_PAD) / (1.0 + 2 * STACK_PAD));
   return (guint) lround ((double) width * FRAME_FACE_H / FRAME_FACE_W);
 }
 
@@ -75,8 +122,10 @@ void
 fp_composite_slot_rect (guint n_items, guint index, guint width, double *x, double *y, double *w, double *h)
 {
   /* The face area: the frame minus the FRAME_PAD margin on each side. */
+  FpStyle grid;
+  fp_style_init_default (&grid);
   double fw = width / (1.0 + 2 * FRAME_PAD);
-  double fh = fp_composite_frame_height (width) / (1.0 + 2 * FRAME_PAD);
+  double fh = fp_composite_frame_height (&grid, width) / (1.0 + 2 * FRAME_PAD);
   double ox = fw * FRAME_PAD, oy = fh * FRAME_PAD;
   double hw = fw / 2, hh = fh / 2;
 
@@ -101,13 +150,62 @@ fp_composite_slot_rect (guint n_items, guint index, guint width, double *x, doub
     }
 }
 
-/* Draws one photo centred at (cx, cy), fitted in a cw×ch section, tilted by @seed. */
+void
+fp_composite_card_rect (guint index, guint width, double *x, double *y, double *w, double *h)
+{
+  double sw = width / (1.0 + 2 * STACK_PAD); /* stack width */
+  double inset = MIN (index, (guint) STACK_CARDS - 1) * STACK_STEP * sw;
+  *x = STACK_PAD * sw + inset;
+  *y = STACK_PAD * sw + (STACK_CARDS - 1) * STACK_STEP * sw - inset;
+  *w = sw - 2 * inset;
+  *h = STACK_CARD_H * sw;
+}
+
+/* Sets the style's border colour as the cairo source. */
 static void
-draw_photo (cairo_t *cr, cairo_surface_t *img, double cx, double cy, double cw, double ch, guint seed)
+set_border_colour (cairo_t *cr, const FpStyle *style)
+{
+  cairo_set_source_rgb (cr, style->border_r / 255.0, style->border_g / 255.0, style->border_b / 255.0);
+}
+
+/* Adds a rounded rectangle path. */
+static void
+rounded_rect (cairo_t *cr, double x, double y, double w, double h, double r)
+{
+  r = CLAMP (r, 0.0, MIN (w, h) / 2);
+  cairo_new_sub_path (cr);
+  cairo_arc (cr, x + w - r, y + r, r, -G_PI / 2, 0);
+  cairo_arc (cr, x + w - r, y + h - r, r, 0, G_PI / 2);
+  cairo_arc (cr, x + r, y + h - r, r, G_PI / 2, G_PI);
+  cairo_arc (cr, x + r, y + r, r, G_PI, 3 * G_PI / 2);
+  cairo_close_path (cr);
+}
+
+/* Soft shadow under a w×h shape centred at the origin: a few stacked translucent shapes, offset down-right.
+ * @radius < 0 = plain rectangles. */
+static void
+draw_shadow (cairo_t *cr, double w, double h, double radius, double s)
+{
+  for (int i = 3; i >= 1; i--)
+    {
+      double grow = s * i * 0.6;
+      if (radius < 0)
+        cairo_rectangle (cr, -w / 2 - grow + s * 0.6, -h / 2 - grow + s, w + 2 * grow, h + 2 * grow);
+      else
+        rounded_rect (cr, -w / 2 - grow + s * 0.6, -h / 2 - grow + s, w + 2 * grow, h + 2 * grow, radius + grow);
+      cairo_set_source_rgba (cr, 0, 0, 0, 0.07);
+      cairo_fill (cr);
+    }
+}
+
+/* Draws one grid photo centred at (cx, cy), fitted in a cw×ch section, tilted by @seed. */
+static void
+draw_photo (cairo_t *cr, const FpStyle *style, cairo_surface_t *img, double cx, double cy, double cw, double ch,
+            guint seed)
 {
   double iw = cairo_image_surface_get_width (img);
   double ih = cairo_image_surface_get_height (img);
-  double border = MAX (1.0, round (MIN (cw, ch) * 0.045));
+  double border = style->border ? MAX (1.0, round (MIN (cw, ch) * 0.045)) : 0.0;
 
   /* Fit the bordered photo inside the cell, keeping the image's aspect ratio. */
   double scale = MIN ((cw * CELL_FILL - 2 * border) / iw, (ch * CELL_FILL - 2 * border) / ih);
@@ -118,22 +216,18 @@ draw_photo (cairo_t *cr, cairo_surface_t *img, double cx, double cy, double cw, 
 
   cairo_save (cr);
   cairo_translate (cr, cx, cy);
-  cairo_rotate (cr, fp_composite_tilt (seed) * G_PI / 180.0);
+  if (style->rotation)
+    cairo_rotate (cr, fp_composite_tilt (seed) * G_PI / 180.0);
 
-  /* Soft shadow: a few stacked translucent rectangles, offset down-right. */
-  double s = MAX (1.0, MIN (cw, ch) * 0.025);
-  for (int i = 3; i >= 1; i--)
+  if (style->shadow)
+    draw_shadow (cr, fw, fh, -1, MAX (1.0, MIN (cw, ch) * 0.025));
+
+  if (border > 0)
     {
-      double grow = s * i * 0.6;
-      cairo_rectangle (cr, -fw / 2 - grow + s * 0.6, -fh / 2 - grow + s, fw + 2 * grow, fh + 2 * grow);
-      cairo_set_source_rgba (cr, 0, 0, 0, 0.07);
+      cairo_rectangle (cr, -fw / 2, -fh / 2, fw, fh);
+      set_border_colour (cr, style);
       cairo_fill (cr);
     }
-
-  /* White border. */
-  cairo_rectangle (cr, -fw / 2, -fh / 2, fw, fh);
-  cairo_set_source_rgb (cr, 1, 1, 1);
-  cairo_fill (cr);
 
   /* The picture, downscaled with a proper filter. */
   cairo_rectangle (cr, -pw / 2, -ph / 2, pw, ph);
@@ -146,20 +240,76 @@ draw_photo (cairo_t *cr, cairo_surface_t *img, double cx, double cy, double cw, 
   cairo_restore (cr);
 }
 
+/* Draws one stacked card (x, y, w, h before tilting) with @img filling it (cropped), or a blank card if
+ * @img is NULL; darkened by @dim (0 = front card). */
+static void
+draw_card (cairo_t *cr, const FpStyle *style, cairo_surface_t *img, double x, double y, double w, double h,
+           double radius, guint seed, double dim)
+{
+  cairo_save (cr);
+  cairo_translate (cr, x + w / 2, y + h / 2);
+  if (style->rotation)
+    cairo_rotate (cr, unit (seed, 0x9e3779b9U) * STACK_MAX_TILT_DEG * G_PI / 180.0);
+
+  if (style->shadow)
+    draw_shadow (cr, w, h, radius, MAX (1.0, w * 0.012));
+
+  double border = style->border ? MAX (1.0, round (w * 0.022)) : 0.0;
+  if (border > 0)
+    {
+      rounded_rect (cr, -w / 2, -h / 2, w, h, radius);
+      set_border_colour (cr, style);
+      cairo_fill (cr);
+    }
+
+  /* The picture area: inside the border. */
+  double pw = w - 2 * border, ph = h - 2 * border;
+  cairo_save (cr);
+  rounded_rect (cr, -pw / 2, -ph / 2, pw, ph, MAX (0.0, radius - border));
+  cairo_clip (cr);
+  if (img != NULL)
+    {
+      double iw = cairo_image_surface_get_width (img);
+      double ih = cairo_image_surface_get_height (img);
+      double scale = MAX (pw / iw, ph / ih); /* cover: fill the card, crop the rest */
+      cairo_translate (cr, -iw * scale / 2, -ih * scale / 2);
+      cairo_scale (cr, scale, scale);
+      cairo_set_source_surface (cr, img, 0, 0);
+      cairo_pattern_set_filter (cairo_get_source (cr), CAIRO_FILTER_GOOD);
+      cairo_paint (cr);
+    }
+  else if (border == 0)
+    {
+      cairo_set_source_rgb (cr, 0.95, 0.95, 0.95); /* blank card (with a border it is the border colour) */
+      cairo_paint (cr);
+    }
+  cairo_restore (cr);
+
+  if (dim > 0)
+    {
+      rounded_rect (cr, -w / 2, -h / 2, w, h, radius);
+      cairo_set_source_rgba (cr, 0, 0, 0, dim);
+      cairo_fill (cr);
+    }
+  cairo_restore (cr);
+}
+
 GdkTexture *
-fp_composite_frame (const FpCompositeItem *items,
+fp_composite_frame (const FpStyle         *style,
+                    const FpCompositeItem *items,
                     guint                  n_items,
                     guint                  width,
                     guint                 *n_unreadable)
 {
-  g_return_val_if_fail (n_items <= PREVIEW_SLOTS, NULL);
+  g_return_val_if_fail (style != NULL, NULL);
+  g_return_val_if_fail (n_items <= fp_style_slots (style), NULL);
   g_return_val_if_fail (n_items == 0 || items != NULL, NULL);
 
   if (n_unreadable != NULL)
     *n_unreadable = 0;
   if (width < 16 || width > 4096)
     return NULL;
-  guint height = MAX (1u, fp_composite_frame_height (width));
+  guint height = MAX (1u, fp_composite_frame_height (style, width));
 
   cairo_surface_t *surface = cairo_image_surface_create (CAIRO_FORMAT_ARGB32, (int) width, (int) height);
   if (cairo_surface_status (surface) != CAIRO_STATUS_SUCCESS)
@@ -170,21 +320,28 @@ fp_composite_frame (const FpCompositeItem *items,
   cairo_t *cr = cairo_create (surface); /* starts fully transparent */
   cairo_set_antialias (cr, CAIRO_ANTIALIAS_GOOD);
 
-  for (guint i = 0; i < n_items; i++)
+  gboolean stacked = style->layout == FP_LAYOUT_STACKED;
+  double radius = STACK_RADIUS * width / (1.0 + 2 * STACK_PAD);
+  /* Stacked: back to front, so the front card (item 0) ends up on top. */
+  for (guint k = 0; k < n_items; k++)
     {
-      if (items[i].path == NULL)
-        continue;
-      cairo_surface_t *img = load_surface (items[i].path);
-      if (img == NULL)
-        {
-          if (n_unreadable != NULL)
-            (*n_unreadable)++;
-          continue;
-        }
+      guint i = stacked ? n_items - 1 - k : k;
+      cairo_surface_t *img = items[i].path != NULL ? load_surface (items[i].path) : NULL; /* owned */
+      if (items[i].path != NULL && img == NULL && n_unreadable != NULL)
+        (*n_unreadable)++;
       double sx, sy, sw, sh;
-      fp_composite_slot_rect (n_items, i, width, &sx, &sy, &sw, &sh);
-      draw_photo (cr, img, sx + sw / 2, sy + sh / 2, sw, sh, items[i].seed);
-      cairo_surface_destroy (img);
+      if (stacked)
+        {
+          fp_composite_card_rect (i, width, &sx, &sy, &sw, &sh);
+          draw_card (cr, style, img, sx, sy, sw, sh, radius, items[i].seed, i * STACK_DIM);
+        }
+      else if (img != NULL)
+        {
+          fp_composite_slot_rect (n_items, i, width, &sx, &sy, &sw, &sh);
+          draw_photo (cr, style, img, sx + sw / 2, sy + sh / 2, sw, sh, items[i].seed);
+        }
+      if (img != NULL)
+        cairo_surface_destroy (img);
     }
   cairo_destroy (cr);
   cairo_surface_flush (surface);

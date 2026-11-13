@@ -26,10 +26,68 @@
     <value nick="large" value="2"/>
   </enum>
 
+  <!-- Folder preview v2 (PLAN.md §11.3). -->
+  <enum id="io.github.zyrotec.NautilusUtils.PreviewLayout">
+    <value nick="grid" value="0"/>
+    <value nick="stacked" value="1"/>
+  </enum>
+  <enum id="io.github.zyrotec.NautilusUtils.StackStep">
+    <value nick="one" value="0"/>
+    <value nick="three" value="1"/>
+  </enum>
+
   <schema id="io.github.zyrotec.NautilusUtils" path="/io/github/zyrotec/NautilusUtils/">
     <key name="folder-preview-enabled" type="b">
       <default>true</default>
       <summary>Show previews on folder icons</summary>
+    </key>
+
+    <key name="folder-preview-layout" enum="io.github.zyrotec.NautilusUtils.PreviewLayout">
+      <default>'grid'</default>
+      <summary>Preview layout</summary>
+      <description>grid = up to 4 photos on the folder's front face; stacked = a stack of up to 3 cards.</description>
+    </key>
+
+    <key name="folder-preview-cycle" type="b">
+      <default>true</default>
+      <summary>Cycle through more photos while hovering</summary>
+    </key>
+
+    <key name="folder-preview-stack-step" enum="io.github.zyrotec.NautilusUtils.StackStep">
+      <default>'one'</default>
+      <summary>Photos per hover step in the stacked layout</summary>
+    </key>
+
+    <key name="folder-preview-border" type="b">
+      <default>true</default>
+      <summary>Draw a border around each photo</summary>
+    </key>
+
+    <key name="folder-preview-border-colour" type="s">
+      <default>'#ffffff'</default>
+      <summary>Photo border colour (#rrggbb)</summary>
+    </key>
+
+    <key name="folder-preview-shadow" type="b">
+      <default>true</default>
+      <summary>Draw a soft shadow under each photo</summary>
+    </key>
+
+    <key name="folder-preview-rotation" type="b">
+      <default>true</default>
+      <summary>Tilt each photo by a random (but stable) angle</summary>
+    </key>
+
+    <key name="folder-preview-folder-icon" type="s">
+      <default>''</default>
+      <summary>Custom folder icon (SVG path) for the stacked layout</summary>
+      <description>Empty = the theme's folder icon.</description>
+    </key>
+
+    <key name="folder-preview-overlay-icon" type="s">
+      <default>''</default>
+      <summary>Front overlay (SVG path) drawn over the stack in the stacked layout</summary>
+      <description>Empty = none. Drawn at the folder icon's scale, anchored at the folder's bottom centre.</description>
     </key>
 
     <key name="sidebar-drives-enabled" type="b">

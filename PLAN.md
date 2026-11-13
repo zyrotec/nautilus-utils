@@ -142,7 +142,7 @@ findings and the smoke test is clean.
 
 | # | Feature | Dir | Status |
 |---|---|---|---|
-| 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover | `src/folder-preview/` | **v1 done** (grid view) |
+| 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover; v2: stacked layout, custom folder SVGs, thumbnail style (§11) | `src/folder-preview/` | **v1 done** (grid view); v2 in progress |
 | 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **v1 done** (2026-11-12), pending the owner's final check |
@@ -1306,3 +1306,82 @@ is Files' own view rebuild (the same as Ctrl+1/Ctrl+2), which the main thread ha
 skipped through Files' public behaviour. Folder changes with the same view type, or that only zoom, are as
 fast as stock (zoom ~10 ms).
 Smoke (ASan, 150 s + every round): `smoke-20261113-001117` **PASS** (57 tab checks, 9 named checks, 0 wrong; 26 off-dumps clean; 6 transitions). Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+
+---
+
+## 11. Feature 1 v2 — Folder preview: stacked layout, custom folder icons, thumbnail style
+
+Owner request (2026-11-13): a second **Stacked** layout beside the existing **Grid** (2×2) layout, the
+option to replace the folder icon with your own SVGs in that layout, style options for the thumbnails, and
+an on/off switch for hover cycling. Branch `folder-thumbnail-preview-extended`. Mock-ups: the owner's
+`Asset-1` (back of the folder), `Asset-2` (the card stack), `g1` (front overlay), `Asset-3` (result).
+
+### 11.1 Behaviour
+
+- **Which folders get previews (both layouts):** only folders whose icon is the theme's plain `folder` icon
+  (icon file `folder.svg`/`folder.png`). Every `folder-*` icon (Pictures, Documents, Downloads, Music,
+  Videos, Templates, Public, remote, …) and any custom icon keeps its normal icon, with no preview.
+- **Layout** (setting): **Grid** = the v1 look (§6.1.2), **Stacked** = up to 3 rounded "cards" stacked
+  like the mock: the front card full width, each card behind it inset on both sides and raised by
+  4 % of the stack width and dimmed a little. The front card shows the first photo, the cards behind show
+  the next photos (only their top edges are visible). Each photo fills its card (cropped, not letterboxed).
+  A folder with 1 or 2 photos shows 1 or 2 cards.
+- **Thumbnail style (both layouts):** border on/off, border colour, shadow on/off, random rotation on/off.
+  Defaults = the v1 look (white border, shadow, rotation on). Stacked cards tilt at most ±4°.
+- **Cycle on hover** (both layouts, on/off). Stacked layout: **photos per step** = *One* (each step brings
+  the next photo to the front: 1-2-3, 2-3-4, …, every photo once, up to 16) or *Three* (fresh set of 3 per
+  step like Grid). The stack wraps around at the end so it never shrinks.
+- **Custom folder icon (Stacked only):** an SVG that replaces the folder icon (the back of the folder),
+  drawn centred in the icon square, aspect ratio kept. **Front overlay (Stacked only):** an SVG drawn on
+  top of the cards, at the **same scale** as the custom folder icon (export both from one artboard) and
+  anchored at the folder's visible bottom centre (the bottom of its opaque body, not its shadow). Without a
+  custom folder icon the overlay is fitted to the theme folder's width. Either one may be set alone.
+- Folders with nothing to preview (or not loaded yet) keep the **theme icon** (owner); the custom SVGs are
+  drawn only together with the cards.
+- Card stack placement (Stacked): measured from the folder's visible body (its opaque bounding box): stack
+  width 0.969 × body width, centred, top at 0.204 × body height below the body top (= the mock).
+
+### 11.2 Rules
+
+1. All §4 and §6.2 rules. Frames are still composited in workers; the frame cache (memory and disk) is
+   keyed by the style, so changing a style setting never shows a frame of the old style.
+2. Custom SVGs are rendered with GTK's own SVG renderer (`GtkSvg`, GTK ≥ 4.22; external resources and
+   animations off) into textures at the exact device size, once per zoom level (decision V3).
+3. A missing or invalid SVG = not set (logged at debug level); Files keeps working.
+
+### 11.3 Settings keys (added to `io.github.zyrotec.NautilusUtils`)
+
+| Key | Type | Default |
+|---|---|---|
+| `folder-preview-layout` | enum grid / stacked | grid |
+| `folder-preview-cycle` | b | true |
+| `folder-preview-stack-step` | enum one / three | one |
+| `folder-preview-border` | b | true |
+| `folder-preview-border-colour` | s `#rrggbb` | `#ffffff` |
+| `folder-preview-shadow` | b | true |
+| `folder-preview-rotation` | b | true |
+| `folder-preview-folder-icon` | s (path, empty = theme) | '' |
+| `folder-preview-overlay-icon` | s (path, empty = none) | '' |
+
+Settings tab "Folder Preview": group *Layout* (layout, cycle on hover, photos per step — Stacked only),
+group *Thumbnails* (border, border colour, shadow, random rotation), group *Folder Icon* (Stacked only:
+folder icon and front overlay, each with Choose…/Clear). Everything waits for **Apply** (N5).
+
+### 11.4 Decisions (owner, 2026-11-13)
+
+| # | Decision |
+|---|---|
+| V1 | Style options apply to **both** layouts. |
+| V2 | Stacked cycling step is a **user option** (one / three photos per step). |
+| V3 | Folders without previews keep the **theme icon**, even with custom SVGs set. |
+| V4 | The overlay uses the **same scale** as the custom folder SVG; fitted to the folder width with the theme icon. |
+| V5 | SVG rasterising runs on the main thread (GtkSvg is not thread-safe), once per (zoom, scale) per settings change; textures are cached and shared by all icons. |
+
+### 11.5 Phases
+
+| Phase | Work | Acceptance |
+|---|---|---|
+| 1 Core | Schema keys + `nu_settings`; `FpStyle` in `composite.c` (stacked cards, border/shadow/rotation); cache keyed by style (memory generation + disk path); stacked frame stepping; tests. | Tests + `check-safety.sh` pass. |
+| 2 Icons & hook | `icon_art.c` (GtkSvg → textures, opaque bounds); paintable decor (back, frame, overlay); view hook: plain-`folder` filter, decor, live restyle, cycle off; tests. | Isolated Nautilus shows both layouts and the custom SVGs; `folder-*` folders untouched. |
+| 3 Settings tab | Groups and rows of §11.3. | Every option applies live on Apply. |
+| 4 Hardening & docs | Smoke rounds switching layouts/styles, `check-safety.sh`, README. | All PASS. |

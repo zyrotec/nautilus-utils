@@ -33,6 +33,15 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_cmpuint (a->folder_views_default.grid_zoom, ==, b->folder_views_default.grid_zoom);
   g_assert_cmpuint (a->folder_views_default.list_zoom, ==, b->folder_views_default.list_zoom);
   g_assert_cmpint (a->folder_views_defaults_captured, ==, b->folder_views_defaults_captured);
+  g_assert_cmpint (a->preview_layout, ==, b->preview_layout);
+  g_assert_cmpint (a->preview_cycle, ==, b->preview_cycle);
+  g_assert_cmpint (a->preview_stack_step, ==, b->preview_stack_step);
+  g_assert_cmpint (a->preview_border, ==, b->preview_border);
+  g_assert_true (rgb_equal (a->preview_border_colour, b->preview_border_colour));
+  g_assert_cmpint (a->preview_shadow, ==, b->preview_shadow);
+  g_assert_cmpint (a->preview_rotation, ==, b->preview_rotation);
+  g_assert_cmpstr (a->preview_folder_icon, ==, b->preview_folder_icon);
+  g_assert_cmpstr (a->preview_overlay_icon, ==, b->preview_overlay_icon);
 }
 
 /* Runs every pending main-context event (GSettings delivers backend changes through idles). */
@@ -232,6 +241,10 @@ test_each_group (void)
     { "eject-slide", NU_CHANGED_EJECT },
     { "folder-views-enabled", NU_CHANGED_FOLDER_VIEWS },
     { "folder-views-defaults-captured", NU_CHANGED_FV_DEFAULT },
+    { "folder-preview-border", NU_CHANGED_PREVIEW_STYLE },
+    { "folder-preview-shadow", NU_CHANGED_PREVIEW_STYLE },
+    { "folder-preview-rotation", NU_CHANGED_PREVIEW_STYLE },
+    { "folder-preview-cycle", NU_CHANGED_PREVIEW_ICONS },
   };
   g_autoptr (GSettingsBackend) backend = start ();
   g_autoptr (GSettings) s = direct_settings (backend);
@@ -270,6 +283,40 @@ test_each_group (void)
       g_assert_cmpuint (counter.calls, ==, 1);
       g_assert_cmpuint (counter.last, ==, NU_CHANGED_FV_DEFAULT);
     }
+  static const struct
+  {
+    const char *key;
+    int         value;
+  } preview_enums[] = {
+    { "folder-preview-layout", NU_PREVIEW_STACKED },
+    { "folder-preview-stack-step", NU_STACK_STEP_THREE },
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS (preview_enums); i++)
+    {
+      counter.calls = 0;
+      g_settings_set_enum (s, preview_enums[i].key, preview_enums[i].value);
+      drain ();
+      g_assert_cmpuint (counter.calls, ==, 1);
+      g_assert_cmpuint (counter.last, ==, NU_CHANGED_PREVIEW_STYLE);
+    }
+  g_assert_cmpint (nu_settings_get ()->preview_layout, ==, NU_PREVIEW_STACKED);
+  g_assert_cmpint (nu_settings_get ()->preview_stack_step, ==, NU_STACK_STEP_THREE);
+  counter.calls = 0;
+  g_settings_set_string (s, "folder-preview-border-colour", "#102030");
+  drain ();
+  g_assert_cmpuint (counter.last, ==, NU_CHANGED_PREVIEW_STYLE);
+  g_assert_cmpuint (nu_settings_get ()->preview_border_colour.g, ==, 0x20);
+  for (const char *const *k = (const char *const[]) { "folder-preview-folder-icon", "folder-preview-overlay-icon", NULL };
+       *k; k++)
+    {
+      counter.calls = 0;
+      g_settings_set_string (s, *k, "/some/icon.svg");
+      drain ();
+      g_assert_cmpuint (counter.calls, ==, 1);
+      g_assert_cmpuint (counter.last, ==, NU_CHANGED_PREVIEW_ICONS);
+    }
+  g_assert_cmpstr (nu_settings_get ()->preview_folder_icon, ==, "/some/icon.svg");
+  g_assert_cmpstr (nu_settings_get ()->preview_overlay_icon, ==, "/some/icon.svg");
   NuFolderView d = nu_settings_get ()->folder_views_default;
   g_assert_cmpint (d.view, ==, NU_VIEW_LIST);
   g_assert_cmpuint (d.grid_zoom, ==, 4);

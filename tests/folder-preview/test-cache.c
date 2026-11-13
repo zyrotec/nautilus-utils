@@ -84,13 +84,15 @@ folder_of_images (const char *name, guint n)
   return dir;
 }
 
-/* Files in our disk cache for @path (sorted, space-separated); caller frees. */
+/* Files in our disk cache for @path in look @style (sorted, space-separated); caller frees. */
 static char *
-disk_files_for (const char *path)
+disk_files_for_style (const char *path, const FpStyle *style)
 {
   g_autoptr (GFile) f = g_file_new_for_path (path);
   g_autofree char *uri = g_file_get_uri (f);
-  g_autofree char *hash = g_compute_checksum_for_string (G_CHECKSUM_SHA1, uri, -1);
+  g_autofree char *key = fp_style_key (style);
+  g_autofree char *name = g_strconcat (key, "|", uri, NULL);
+  g_autofree char *hash = g_compute_checksum_for_string (G_CHECKSUM_SHA1, name, -1);
   g_autofree char *dir = g_build_filename (disk_dir, CACHE_DISK_VERSION, hash, NULL);
   g_autoptr (GPtrArray) names = g_ptr_array_new_with_free_func (g_free);
   g_autoptr (GDir) d = g_dir_open (dir, 0, NULL);
@@ -104,6 +106,15 @@ disk_files_for (const char *path)
   g_ptr_array_sort_values (names, (GCompareFunc) g_strcmp0);
   g_ptr_array_add (names, NULL);
   return g_strjoinv (" ", (char **) names->pdata);
+}
+
+/* Same, for the default (v1 grid) look. Caller frees. */
+static char *
+disk_files_for (const char *path)
+{
+  FpStyle grid;
+  fp_style_init_default (&grid);
+  return disk_files_for_style (path, &grid);
 }
 
 /* Downloads @t; caller owns the bytes. */
@@ -221,6 +232,94 @@ test_hover_frames (void)
   session_stop (&s);
 }
 
+/* PLAN.md §11: stacked frames step through the photos (1 or 3 per frame) and wrap around; a style change
+ * forgets memory, drops results of older requests, and keeps one disk entry per look. */
+static void
+test_styles (void)
+{
+  g_autofree char *dir = folder_of_images ("styles", 6);
+  g_autofree char *uri = g_filename_to_uri (dir, NULL, NULL);
+  Session s = { 0 };
+  session_start (&s, LRU_FOLDERS, CACHE_MAX_BYTES);
+  FpStyle grid = *fp_cache_get_style (s.cache);
+  g_assert_cmpint (grid.layout, ==, FP_LAYOUT_GRID);
+  g_assert_false (fp_cache_set_style (s.cache, &grid)); /* same look: nothing changes */
+
+  g_autoptr (FpFrame) g0 = get_frame (s.cache, dir, 0, 128);
+  g_assert_cmpuint (g0->n_frames_hint, ==, 2);
+  g_assert_cmpuint (fp_cache_get_n_folders (s.cache), ==, 1);
+
+  /* A request still running when the style changes is dropped (CANCELLED), never cached. */
+  FpStyle stack = grid;
+  stack.layout = FP_LAYOUT_STACKED;
+  stack.stack_step = 1;
+  g_autoptr (GFile) folder = g_file_new_for_path (dir);
+  Wait w = { 0 };
+  fp_cache_get_frame_async (s.cache, folder, 1, 128, 0, NULL, on_frame, &w);
+  g_assert_true (fp_cache_set_style (s.cache, &stack));
+  g_assert_cmpuint (fp_cache_get_n_folders (s.cache), ==, 0);
+  tu_wait_for (&w.done, 1);
+  g_assert_error (w.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error (&w.error);
+  g_assert_cmpuint (fp_cache_get_n_folders (s.cache), ==, 0);
+
+  /* Stacked, one per step: a frame per photo, the last ones wrap around. */
+  g_autoptr (FpFrame) s0 = get_frame (s.cache, dir, 0, 128);
+  g_assert_nonnull (s0->texture);
+  g_assert_cmpint (gdk_texture_get_height (s0->texture), ==, (int) fp_composite_frame_height (&stack, 128));
+  g_assert_cmpuint (s0->n_frames_hint, ==, 6);
+  debug_save (s0->texture, "styles-stack0.png");
+  g_autoptr (FpFrame) s5 = get_frame (s.cache, dir, 5, 128);
+  g_assert_nonnull (s5->texture);
+  g_autoptr (FpFrame) s6 = get_frame (s.cache, dir, 6, 128);
+  g_assert_null (s6->texture);
+  g_autoptr (GdkTexture) peeked = NULL;
+  g_assert_true (fp_cache_peek_frame (s.cache, uri, 5, 128, &peeked, NULL));
+  g_assert_true (peeked == s5->texture);
+
+  /* Stacked, three per step: 6 photos = 2 frames. */
+  stack.stack_step = 3;
+  g_assert_true (fp_cache_set_style (s.cache, &stack));
+  g_autoptr (FpFrame) t0 = get_frame (s.cache, dir, 0, 128);
+  g_assert_cmpuint (t0->n_frames_hint, ==, 2);
+  g_autoptr (FpFrame) t1 = get_frame (s.cache, dir, 1, 128);
+  g_assert_nonnull (t1->texture);
+  g_autoptr (FpFrame) t2 = get_frame (s.cache, dir, 2, 128);
+  g_assert_null (t2->texture);
+
+  /* One disk entry per look; going back to a look is a disk hit. */
+  g_autofree char *gfiles = disk_files_for (dir);
+  g_assert_cmpstr (gfiles, ==, "128-2.png");
+  stack.stack_step = 1;
+  g_autofree char *sfiles = disk_files_for_style (dir, &stack);
+  g_assert_cmpstr (sfiles, ==, "128-6.png");
+  g_assert_true (fp_cache_set_style (s.cache, &grid));
+  g_autoptr (FpFrame) back = get_frame (s.cache, dir, 0, 128);
+  g_assert_true (back->from_disk);
+  session_stop (&s);
+}
+
+/* Stacked with fewer photos than cards: the stack has as many cards as photos, and cycling still works. */
+static void
+test_stacked_few_photos (void)
+{
+  g_autofree char *dir = folder_of_images ("two", 2);
+  Session s = { 0 };
+  session_start (&s, LRU_FOLDERS, CACHE_MAX_BYTES);
+  FpStyle stack = *fp_cache_get_style (s.cache);
+  stack.layout = FP_LAYOUT_STACKED;
+  fp_cache_set_style (s.cache, &stack);
+  g_autoptr (FpFrame) f0 = get_frame (s.cache, dir, 0, 96);
+  g_autoptr (FpFrame) f1 = get_frame (s.cache, dir, 1, 96);
+  g_autoptr (FpFrame) f2 = get_frame (s.cache, dir, 2, 96);
+  g_assert_nonnull (f0->texture);
+  g_assert_nonnull (f1->texture);
+  g_assert_null (f2->texture);
+  g_assert_cmpuint (f0->n_frames_hint, ==, 2);
+  debug_save (f1->texture, "two-stack1.png");
+  session_stop (&s);
+}
+
 static void
 test_no_media (void)
 {
@@ -308,7 +407,11 @@ test_sizes_and_corrupt_disk_file (void)
   /* Corrupt the 64 px file: next launch must rebuild it, not fail. */
   g_autoptr (GFile) f = g_file_new_for_path (dir);
   g_autofree char *uri = g_file_get_uri (f);
-  g_autofree char *hash = g_compute_checksum_for_string (G_CHECKSUM_SHA1, uri, -1);
+  FpStyle grid;
+  fp_style_init_default (&grid);
+  g_autofree char *key = fp_style_key (&grid);
+  g_autofree char *name = g_strconcat (key, "|", uri, NULL);
+  g_autofree char *hash = g_compute_checksum_for_string (G_CHECKSUM_SHA1, name, -1);
   g_autofree char *hdir = g_build_filename (disk_dir, CACHE_DISK_VERSION, hash, NULL);
   g_autoptr (GDir) d = g_dir_open (hdir, 0, NULL);
   const char *n;
@@ -484,6 +587,8 @@ main (int argc, char **argv)
   g_test_add_func ("/cache/second-launch-from-disk", test_second_launch_from_disk);
   g_test_add_func ("/cache/hover-frames", test_hover_frames);
   g_test_add_func ("/cache/no-media", test_no_media);
+  g_test_add_func ("/cache/styles", test_styles);
+  g_test_add_func ("/cache/stacked-few-photos", test_stacked_few_photos);
   g_test_add_func ("/cache/invalidation-by-mtime", test_invalidation_by_mtime);
   g_test_add_func ("/cache/sizes-and-corrupt-disk-file", test_sizes_and_corrupt_disk_file);
   g_test_add_func ("/cache/lru-limits", test_lru_limits);

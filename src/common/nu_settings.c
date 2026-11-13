@@ -18,6 +18,15 @@ static const NuConfig defaults = {
   .folder_views_generation = 0,
   .folder_views_default = { NU_VIEW_GRID, 2 /* medium */, 1 /* medium */ },
   .folder_views_defaults_captured = FALSE,
+  .preview_layout = NU_PREVIEW_GRID,
+  .preview_cycle = TRUE,
+  .preview_stack_step = NU_STACK_STEP_ONE,
+  .preview_border = TRUE,
+  .preview_border_colour = { 0xff, 0xff, 0xff },
+  .preview_shadow = TRUE,
+  .preview_rotation = TRUE,
+  .preview_folder_icon = "",
+  .preview_overlay_icon = "",
 };
 
 /* Key name → group reported to listeners. */
@@ -41,6 +50,15 @@ static const struct
   { "folder-views-default-grid-zoom", NU_CHANGED_FV_DEFAULT },
   { "folder-views-default-list-zoom", NU_CHANGED_FV_DEFAULT },
   { "folder-views-defaults-captured", NU_CHANGED_FV_DEFAULT },
+  { "folder-preview-layout", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-stack-step", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-border", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-border-colour", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-shadow", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-rotation", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-cycle", NU_CHANGED_PREVIEW_ICONS },
+  { "folder-preview-folder-icon", NU_CHANGED_PREVIEW_ICONS },
+  { "folder-preview-overlay-icon", NU_CHANGED_PREVIEW_ICONS },
 };
 
 typedef struct
@@ -57,6 +75,8 @@ typedef struct
   GSettings        *settings;   /* Owned ref; NULL without schema */
   gulong            changed_id; /* "changed" handler on @settings */
   NuConfig          config;     /* Current values */
+  char             *folder_icon;  /* Owned: storage of config.preview_folder_icon (freed by read_all/shutdown) */
+  char             *overlay_icon; /* Owned: storage of config.preview_overlay_icon */
   GArray           *listeners;  /* Owned; of Listener */
   guint             next_id;
   NuChanged         pending;    /* Groups changed since the last notification */
@@ -147,6 +167,25 @@ read_all (void)
   };
   c->folder_views_default = nu_folder_view_valid (&d) ? d : defaults.folder_views_default;
   c->folder_views_defaults_captured = g_settings_get_boolean (s, "folder-views-defaults-captured");
+
+  int layout = g_settings_get_enum (s, "folder-preview-layout");
+  c->preview_layout = (layout == NU_PREVIEW_GRID || layout == NU_PREVIEW_STACKED)
+                        ? (NuPreviewLayout) layout : defaults.preview_layout;
+  int step = g_settings_get_enum (s, "folder-preview-stack-step");
+  c->preview_stack_step = (step == NU_STACK_STEP_ONE || step == NU_STACK_STEP_THREE)
+                            ? (NuStackStep) step : defaults.preview_stack_step;
+  c->preview_cycle = g_settings_get_boolean (s, "folder-preview-cycle");
+  c->preview_border = g_settings_get_boolean (s, "folder-preview-border");
+  read_colour (s, "folder-preview-border-colour", defaults.preview_border_colour, &c->preview_border_colour);
+  c->preview_shadow = g_settings_get_boolean (s, "folder-preview-shadow");
+  c->preview_rotation = g_settings_get_boolean (s, "folder-preview-rotation");
+  /* Replace the owned strings; the config borrows them. */
+  g_free (ns->folder_icon);
+  ns->folder_icon = g_settings_get_string (s, "folder-preview-folder-icon");
+  c->preview_folder_icon = ns->folder_icon;
+  g_free (ns->overlay_icon);
+  ns->overlay_icon = g_settings_get_string (s, "folder-preview-overlay-icon");
+  c->preview_overlay_icon = ns->overlay_icon;
 }
 
 static gboolean
@@ -234,6 +273,8 @@ nu_settings_shutdown (void)
   g_clear_pointer (&ns->schema, g_settings_schema_unref);
   g_clear_object (&ns->backend);
   g_clear_pointer (&ns->listeners, g_array_unref);
+  g_clear_pointer (&ns->folder_icon, g_free);
+  g_clear_pointer (&ns->overlay_icon, g_free);
   g_clear_pointer (&ns, g_free);
 }
 
