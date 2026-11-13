@@ -19,6 +19,7 @@
 
 #include "config.h"
 #include "folder_paintable.h"
+#include "icon_art.h"
 
 #ifdef FP_DEBUG_DRIVER
 #include <glib-unix.h>
@@ -95,6 +96,16 @@ typedef struct
   guint       detect_timer;   /* DETECT_TIMEOUT_MS watchdog, see on_detect_timeout. */
   guint       disable_idle;
   guint       n_attached_total;
+  /* Look (PLAN.md §11), set by fp_view_hook_set_look. */
+  FpStyle     style;          /* Same as the cache's style. */
+  FpStackPosition position;   /* Stacked: where the stack goes (placement only: frames don't change). */
+  int         offset;         /* Stacked: vertical fine-tuning, px at 64 × 64. */
+  gboolean    cycle;          /* Hover cycling on. */
+  FpIconArt  *back_art;       /* Owned or NULL: custom folder SVG (stacked layout only). */
+  FpIconArt  *overlay_art;    /* Owned or NULL: front overlay SVG (stacked layout only). */
+  char       *back_path;      /* Owned or NULL: path @back_art was loaded from (or failed to load from). */
+  char       *overlay_path;   /* Owned or NULL: same for @overlay_art. */
+  GHashTable *theme_bodies;   /* Owned: theme icon file URI (owned) → graphene_rect_t* (owned): its opaque body. */
 } ViewHook;
 
 static ViewHook *vh; /* NULL when not initialised. Main thread only. */
@@ -185,6 +196,100 @@ cell_file (GtkWidget *image)
 }
 
 /* ------------------------------------------------------------------------------------------------ */
+/* Which icons get previews, and the decor (PLAN.md §11)                                            */
+
+/* New string: URI of the file a theme icon was loaded from, or NULL if @icon isn't a theme/file icon. */
+static char *
+icon_file_uri (GdkPaintable *icon)
+{
+  if (icon == NULL || !GTK_IS_ICON_PAINTABLE (icon))
+    return NULL;
+  g_autoptr (GFile) file = gtk_icon_paintable_get_file (GTK_ICON_PAINTABLE (icon)); /* transfer full */
+  return file != NULL ? g_file_get_uri (file) : NULL;
+}
+
+/* Only the theme's plain folder icon gets previews: never folder-pictures, folder-download, …, nor a custom
+ * icon (§11.1). Nautilus looks the plain folder up as "inode-directory" first, then "folder" (Adwaita and
+ * Hatter ship both: mimetypes/inode-directory.svg, places/folder.svg), so both names count (V6). */
+static gboolean
+is_plain_folder_icon (GdkPaintable *icon)
+{
+  if (icon == NULL || !GTK_IS_ICON_PAINTABLE (icon))
+    return FALSE;
+  g_autoptr (GFile) file = gtk_icon_paintable_get_file (GTK_ICON_PAINTABLE (icon)); /* transfer full */
+  g_autofree char *base = file != NULL ? g_file_get_basename (file) : NULL;
+  if (base == NULL)
+    return FALSE;
+  char *dot = strchr (base, '.');
+  if (dot != NULL)
+    *dot = '\0';
+  return g_str_equal (base, "folder") || g_str_equal (base, "inode-directory");
+}
+
+/* Opaque body of the theme folder icon @icon, as fractions of the icon (measured once per icon file). */
+static void
+theme_body (GdkPaintable *icon, graphene_rect_t *out)
+{
+  graphene_rect_init (out, 0, 0, 1, 1); /* if it can't be measured: the whole icon */
+  g_autofree char *uri = icon_file_uri (icon);
+  if (uri == NULL)
+    return;
+  graphene_rect_t *known = g_hash_table_lookup (vh->theme_bodies, uri); /* borrowed */
+  if (known == NULL)
+    {
+      g_autoptr (GdkTexture) probe = fp_render_paintable (icon, 256, 256);
+      known = g_new (graphene_rect_t, 1);
+      if (probe == NULL || !fp_texture_opaque_bounds (probe, known))
+        graphene_rect_init (known, 0, 0, 1, 1);
+      g_hash_table_insert (vh->theme_bodies, g_steal_pointer (&uri), known); /* table owns both */
+    }
+  *out = *known;
+}
+
+/* Where the frame goes for @hook's icon, without textures (cheap after the first call). Also returns the
+ * folder body and whether the custom back SVG is used. */
+static void
+hook_geometry (ImageHook *hook, FpDecor *decor, graphene_rect_t *body, gboolean *custom_back)
+{
+  *custom_back = FALSE;
+  if (vh->style.layout != FP_LAYOUT_STACKED)
+    {
+      fp_decor_init_grid (decor);
+      graphene_rect_init (body, 0, 0, 1, 1);
+      return;
+    }
+  *custom_back = vh->back_art != NULL && fp_icon_art_get_body (vh->back_art, body);
+  if (!*custom_back)
+    theme_body (hook->icon, body);
+  fp_decor_init_stacked (decor, &vh->style, body, vh->position, vh->offset);
+}
+
+/* The full decor for @hook at its current size and scale; *decor gets owned texture refs (release with
+ * decor_clear). */
+static void
+hook_decor (ImageHook *hook, FpDecor *decor)
+{
+  graphene_rect_t body;
+  gboolean custom_back;
+  hook_geometry (hook, decor, &body, &custom_back);
+  if (decor->layout != FP_LAYOUT_STACKED || hook->size <= 0)
+    return;
+  int px = hook->size * gtk_widget_get_scale_factor (hook->image);
+  if (custom_back)
+    decor->back = fp_icon_art_render (vh->back_art, px, px);
+  /* Same size and place as the folder icon (V4): the SVG itself positions the overlay. */
+  if (vh->overlay_art != NULL)
+    decor->overlay = fp_icon_art_render (vh->overlay_art, px, px);
+}
+
+static void
+decor_clear (FpDecor *decor)
+{
+  g_clear_object (&decor->back);
+  g_clear_object (&decor->overlay);
+}
+
+/* ------------------------------------------------------------------------------------------------ */
 /* Installing / removing our paintable                                                              */
 
 /* Shows @frame (may be NULL = icon only) through our paintable, installing it if needed. */
@@ -209,6 +314,10 @@ install (ImageHook *hook, GdkTexture *frame)
     hook->paintable = fp_folder_paintable_new (hook->icon, hook->size);
   fp_folder_paintable_set_icon (hook->paintable, hook->icon);
   fp_folder_paintable_set_size (hook->paintable, hook->size);
+  FpDecor decor;
+  hook_decor (hook, &decor);
+  fp_folder_paintable_set_decor (hook->paintable, &decor); /* takes its own refs */
+  decor_clear (&decor);
   fp_folder_paintable_set_frame (hook->paintable, frame, hook->uri);
 
   g_autoptr (GdkPaintable) fallback = NULL;
@@ -377,6 +486,17 @@ monitor_start (ImageHook *hook)
   g_signal_connect (hook->monitor, "changed", G_CALLBACK (on_folder_changed), hook);
 }
 
+/* Frame width in device pixels for @hook's icon at its current size, layout and scale. */
+static guint
+current_px (ImageHook *hook)
+{
+  FpDecor decor;
+  graphene_rect_t body;
+  gboolean custom_back;
+  hook_geometry (hook, &decor, &body, &custom_back);
+  return fp_decor_frame_px (&decor, hook->size, gtk_widget_get_scale_factor (hook->image));
+}
+
 static void
 reset_for_new_folder (ImageHook *hook)
 {
@@ -426,7 +546,6 @@ sync_hook (ImageHook *hook)
       uninstall (hook);
       return;
     }
-  monitor_start (hook);
 
   /* Remember Nautilus' own folder icon: whatever fallback it set that isn't ours. */
   g_autoptr (GdkPaintable) fallback = NULL;
@@ -436,12 +555,19 @@ sync_hook (ImageHook *hook)
     g_set_object (&hook->icon, fallback);
   hook->size = size;
 
-  guint px = fp_folder_paintable_frame_px (size, gtk_widget_get_scale_factor (image));
-  if (hook->icon == NULL || px < 8)
+  if (!is_plain_folder_icon (hook->icon))
+    {
+      uninstall (hook); /* folder-pictures, folder-download, custom icons, …: no preview (§11.1) */
+      monitor_stop (hook);
+      return;
+    }
+  guint px = current_px (hook);
+  if (px < 8)
     {
       uninstall (hook);
       return;
     }
+  monitor_start (hook);
 
   guint want = vh->hover == hook ? hook->shown_frame : 0;
   g_autoptr (GdkTexture) texture = NULL;
@@ -505,12 +631,6 @@ schedule_sync (ImageHook *hook)
 /* ------------------------------------------------------------------------------------------------ */
 /* Hover (PLAN.md §6.1.3)                                                                                */
 
-static guint
-current_px (ImageHook *hook)
-{
-  return fp_folder_paintable_frame_px (hook->size, gtk_widget_get_scale_factor (hook->image));
-}
-
 /* Shows hover frame @frame if cached, else requests it (shown on arrival if still wanted). */
 static void
 show_hover_frame (ImageHook *hook, guint frame)
@@ -570,7 +690,7 @@ hover_tick (gpointer data)
 static void
 hover_start (ImageHook *hook)
 {
-  if (hook->uri == NULL || hook->n_frames <= 1 || hook->paintable == NULL ||
+  if (!vh->cycle || hook->uri == NULL || hook->n_frames <= 1 || hook->paintable == NULL ||
       fp_folder_paintable_get_frame (hook->paintable) == NULL)
     return;
   hover_stop ();
@@ -1228,7 +1348,9 @@ debug_state (void)
       g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
       installed += count_installed (window);
     }
-  g_message ("fp state: off=%d hooks=%u installed=%u", vh->off, g_hash_table_size (vh->hooks), installed);
+  g_message ("fp state: off=%d hooks=%u installed=%u layout=%d cycle=%d back=%d overlay=%d", vh->off,
+             g_hash_table_size (vh->hooks), installed, vh->style.layout, vh->cycle, vh->back_art != NULL,
+             vh->overlay_art != NULL);
 }
 
 static gboolean
@@ -1287,11 +1409,14 @@ on_debug_signal (gpointer data)
           GtkWidget *hgrid = gtk_widget_get_ancestor (h->image, GTK_TYPE_GRID_VIEW);
           g_autoptr (NautilusFileInfo) f = cell_file (h->image);
           g_autofree char *name = f != NULL ? nautilus_file_info_get_name (f) : NULL;
-          g_message ("debug dump: img=%p parent=%s cell=%p grid=%p %dx%d size=%d file=%s frame=%p n_frames=%u watched=%d uri=%s",
+          g_autofree char *icon_uri = icon_file_uri (h->icon);
+          g_message ("debug dump: img=%p parent=%s cell=%p grid=%p %dx%d size=%d file=%s frame=%p n_frames=%u watched=%d uri=%s icon=%s:%s plain=%d",
                      (void *) h->image, G_OBJECT_TYPE_NAME (gtk_widget_get_parent (h->image)), (void *) cell,
                      (void *) hgrid, gtk_widget_get_width (h->image), gtk_widget_get_height (h->image), h->size,
                      name, h->paintable != NULL ? (void *) fp_folder_paintable_get_frame (h->paintable) : NULL,
-                     h->n_frames, h->monitor != NULL, h->uri != NULL ? strrchr (h->uri, '/') : "(null)");
+                     h->n_frames, h->monitor != NULL, h->uri != NULL ? strrchr (h->uri, '/') : "(null)",
+                     h->icon != NULL ? G_OBJECT_TYPE_NAME (h->icon) : "none", icon_uri != NULL ? icon_uri : "-",
+                     is_plain_folder_icon (h->icon));
         }
     }
   else if (g_str_equal (cmd, "state") && vh->hover != NULL)
@@ -1323,6 +1448,10 @@ fp_view_hook_init (FpCache *cache)
   vh = g_new0 (ViewHook, 1);
   vh->cache = fp_cache_ref (cache);
   vh->hooks = g_hash_table_new (g_direct_hash, g_direct_equal);
+  vh->style = *fp_cache_get_style (cache);
+  vh->position = FP_STACK_CENTRE;
+  vh->cycle = TRUE;
+  vh->theme_bodies = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
 
   /* Make sure GtkWidget's signals exist, then watch every map. */
   g_autoptr (GTypeClass) widget_class = g_type_class_ref (GTK_TYPE_WIDGET);
@@ -1367,6 +1496,11 @@ fp_view_hook_shutdown (void)
   detach_all ();
   g_clear_pointer (&vh->hooks, g_hash_table_unref);
   g_clear_pointer (&vh->cache, fp_cache_unref);
+  g_clear_pointer (&vh->back_art, fp_icon_art_free);
+  g_clear_pointer (&vh->overlay_art, fp_icon_art_free);
+  g_clear_pointer (&vh->back_path, g_free);
+  g_clear_pointer (&vh->overlay_path, g_free);
+  g_clear_pointer (&vh->theme_bodies, g_hash_table_unref);
   g_clear_pointer (&vh, g_free);
 }
 
@@ -1411,6 +1545,77 @@ fp_view_hook_set_enabled (gboolean enabled)
     {
       g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
       attach_mapped (window);
+    }
+}
+
+/* (Re)loads *art from @path if the path changed ("" or NULL = none). Returns TRUE if *art changed. */
+static gboolean
+reload_art (FpIconArt **art, char **loaded_path, const char *path)
+{
+  if (path == NULL)
+    path = "";
+  if (*loaded_path != NULL && g_str_equal (*loaded_path, path))
+    return FALSE;
+  gboolean had = *art != NULL;
+  g_clear_pointer (art, fp_icon_art_free);
+  g_free (*loaded_path);
+  *loaded_path = g_strdup (path);
+  if (*path != '\0')
+    {
+      g_autoptr (GError) error = NULL;
+      *art = fp_icon_art_new_from_file (path, &error);
+      if (*art == NULL)
+        g_debug ("custom folder icon not used: %s", error->message); /* = not set (§11.2 rule 3) */
+    }
+  return had || *art != NULL;
+}
+
+void
+fp_view_hook_set_look (const FpStyle   *style,
+                       FpStackPosition  position,
+                       int              offset,
+                       gboolean         cycle,
+                       const char      *folder_icon,
+                       const char      *overlay_icon)
+{
+  g_return_if_fail (style != NULL);
+  if (vh == NULL || vh->disabled)
+    return;
+  gboolean style_changed = fp_cache_set_style (vh->cache, style); /* forgets frames of the old look */
+  gboolean layout_changed = vh->style.layout != style->layout;
+  vh->style = *style;
+  gboolean cycle_changed = vh->cycle != cycle;
+  vh->cycle = cycle;
+  gboolean placement_changed = vh->position != position || vh->offset != offset;
+  vh->position = position;
+  vh->offset = offset;
+  gboolean icons_changed = reload_art (&vh->back_art, &vh->back_path, folder_icon);
+  icons_changed |= reload_art (&vh->overlay_art, &vh->overlay_path, overlay_icon);
+  if (!style_changed && !layout_changed && !cycle_changed && !icons_changed && !placement_changed)
+    return;
+  g_debug ("look: %s, cycle %d, folder icon %s, overlay %s", style->layout == FP_LAYOUT_STACKED ? "stacked" : "grid",
+           cycle, vh->back_art != NULL ? "custom" : "theme", vh->overlay_art != NULL ? "set" : "none");
+
+  hover_stop ();
+  GHashTableIter iter;
+  gpointer key;
+  g_hash_table_iter_init (&iter, vh->hooks);
+  while (g_hash_table_iter_next (&iter, &key, NULL))
+    {
+      ImageHook *hook = key;
+      if (style_changed)
+        {
+          /* Frames of the old look are gone: start over like a new folder (keeps uri/location). */
+          cancel_and_clear (&hook->request);
+          cancel_and_clear (&hook->hover_request);
+          hook->generation++;
+          hook->n_frames = 0;
+          hook->shown_frame = 0;
+          hook->known_empty = FALSE;
+          if (hook->paintable != NULL)
+            fp_folder_paintable_set_frame (hook->paintable, NULL, NULL);
+        }
+      schedule_sync (hook);
     }
 }
 

@@ -142,7 +142,7 @@ findings and the smoke test is clean.
 
 | # | Feature | Dir | Status |
 |---|---|---|---|
-| 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover | `src/folder-preview/` | **v1 done** (grid view) |
+| 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover; v2: stacked layout, custom folder SVGs, thumbnail style (§11) | `src/folder-preview/` | **v2 done** (2026-11-13), pending the owner's final check |
 | 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **v1 done** (2026-11-12), pending the owner's final check |
@@ -1306,3 +1306,198 @@ is Files' own view rebuild (the same as Ctrl+1/Ctrl+2), which the main thread ha
 skipped through Files' public behaviour. Folder changes with the same view type, or that only zoom, are as
 fast as stock (zoom ~10 ms).
 Smoke (ASan, 150 s + every round): `smoke-20261113-001117` **PASS** (57 tab checks, 9 named checks, 0 wrong; 26 off-dumps clean; 6 transitions). Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+
+---
+
+## 11. Feature 1 v2 — Folder preview: stacked layout, custom folder icons, thumbnail style
+
+Owner request (2026-11-13): a second **Stacked** layout beside the existing **Grid** (2×2) layout, the
+option to replace the folder icon with your own SVGs in that layout, style options for the thumbnails, and
+an on/off switch for hover cycling. Branch `folder-thumbnail-preview-extended`. Mock-ups: the owner's
+`Asset-1` (back of the folder), `Asset-2` (the card stack), `g1` (front overlay), `Asset-3` (result).
+
+### 11.1 Behaviour
+
+- **Which folders get previews (both layouts):** only folders whose icon is the theme's plain folder icon
+  (icon file `folder.*` or `inode-directory.*`, V6). Every `folder-*` icon (Pictures, Documents, Downloads, Music,
+  Videos, Templates, Public, remote, …) and any custom icon keeps its normal icon, with no preview.
+- **Layout** (setting): **Grid** = the v1 look (§6.1.2), **Stacked** = up to 3 rounded "cards" stacked
+  like the mock: the front card full width, each card behind it inset on both sides and raised by
+  4 % of the stack width and dimmed a little. The front card shows the first photo, the cards behind show
+  the next photos (only their top edges are visible). Each photo fills its card (cropped, not letterboxed).
+  A folder with 1 or 2 photos shows 1 or 2 cards.
+- **Thumbnail style (both layouts):** border on/off, border colour, shadow on/off, random rotation on/off.
+  Defaults = the v1 look (white border, shadow, rotation on). Stacked cards tilt at most ±4°.
+- **Cycle on hover** (both layouts, on/off). Stacked layout: **photos per step** = *One* (each step brings
+  the next photo to the front: 1-2-3, 2-3-4, …, every photo once, up to 16) or *Three* (fresh set of 3 per
+  step like Grid). The stack wraps around at the end so it never shrinks.
+- **Custom folder icon (Stacked only):** an SVG that replaces the folder icon (the back of the folder),
+  drawn centred in the icon square, aspect ratio kept. **Front overlay (Stacked only):** an SVG drawn on
+  top of the cards at the **same size and place** as the folder icon; the user positions the overlay inside
+  its SVG (same canvas as the folder SVG). Either one may be set alone.
+- Folders with nothing to preview (or not loaded yet) keep the **theme icon** (owner); the custom SVGs are
+  drawn only together with the cards.
+- Card stack placement (Stacked): measured from the folder's visible body (its opaque bounding box): stack
+  width 0.969 × body width, centred, top at 0.204 × body height below the body top (= the mock).
+
+### 11.2 Rules
+
+1. All §4 and §6.2 rules. Frames are still composited in workers; the frame cache (memory and disk) is
+   keyed by the style, so changing a style setting never shows a frame of the old style.
+2. Custom SVGs are rendered with GTK's own SVG renderer (`GtkSvg`, GTK ≥ 4.22; external resources and
+   animations off) into textures at the exact device size, once per zoom level (decision V3).
+3. A missing or invalid SVG = not set (logged at debug level); Files keeps working.
+
+### 11.3 Settings keys (added to `io.github.zyrotec.NautilusUtils`)
+
+| Key | Type | Default |
+|---|---|---|
+| `folder-preview-layout` | enum grid / stacked | grid |
+| `folder-preview-cycle` | b | true |
+| `folder-preview-stack-step` | enum one / three | one |
+| `folder-preview-border` | b | true |
+| `folder-preview-border-colour` | s `#rrggbb` | `#ffffff` |
+| `folder-preview-border-width` | d 0.5–6 (px at 64 × 64) | 1.0 |
+| `folder-preview-shadow` | b | true |
+| `folder-preview-rotation` | b | true |
+| `folder-preview-keep-aspect` | b | true |
+| `folder-preview-depth-effect` | enum none / blur / transparency / darken | blur (stacked only) |
+| `folder-preview-corner-radius` | i 0–16 (px at 64 × 64) | 2 |
+| `folder-preview-fade` | i 0–100 (% of the stack height) | 0 (stacked only) |
+| `folder-preview-view-top-radius` | i 0–16 (px at 64 × 64) | 0 (stacked only) |
+| `folder-preview-view-bottom-radius` | i 0–16 (px at 64 × 64) | 0 (stacked only) |
+| `folder-preview-stack-padding` | i 0–20 (px at 64 × 64) | 8 (stacked only) |
+| `folder-preview-stack-position` | enum top / centre / bottom | centre (stacked only) |
+| `folder-preview-stack-offset` | i −16–16 (px at 64 × 64) | 0 (stacked only) |
+| `folder-preview-folder-icon` | s (path, empty = theme) | '' |
+| `folder-preview-overlay-icon` | s (path, empty = none) | '' |
+
+Settings tab "Folder Preview": group *Layout* (layout, cycle on hover, photos per step — Stacked only),
+group *Thumbnails* (border, border colour, shadow, random rotation), group *Folder Icon* (Stacked only:
+folder icon and front overlay, each with Choose…/Clear). Everything waits for **Apply** (N5).
+
+### 11.4 Decisions (owner, 2026-11-13)
+
+| # | Decision |
+|---|---|
+| V1 | Style options apply to **both** layouts. |
+| V2 | Stacked cycling step is a **user option** (one / three photos per step). |
+| V3 | Folders without previews keep the **theme icon**, even with custom SVGs set. |
+| V4 | ~~Same scale, anchored at the body's bottom centre~~ → (owner, 2026-11-13 follow-up) the overlay SVG is drawn at **the same size and place as the folder SVG** (the whole icon square); the SVG itself positions the overlay. |
+| V5 | SVG rasterising runs on the main thread (GtkSvg is not thread-safe), once per (zoom, scale) per settings change; textures are cached and shared by all icons. |
+| V6 | Nautilus 51.1 looks a plain folder's icon up as `inode-directory` before `folder` (verified: Adwaita and the owner's Hatter-Orange both resolve to `mimetypes/inode-directory.svg`), so both icon file names count as "the plain folder icon". |
+| V7 | The disk cache keeps one directory per folder **per look** (style key in the hashed name, `CACHE_DISK_VERSION` v4), so switching back to a look is a disk hit. Directories of older versions (v3) are deleted by a low-priority worker job at start-up. |
+
+### 11.5 Phases
+
+| Phase | Work | Acceptance |
+|---|---|---|
+| 1 Core | Schema keys + `nu_settings`; `FpStyle` in `composite.c` (stacked cards, border/shadow/rotation); cache keyed by style (memory generation + disk path); stacked frame stepping; tests. | Tests + `check-safety.sh` pass. |
+| 2 Icons & hook | `icon_art.c` (GtkSvg → textures, opaque bounds); paintable decor (back, frame, overlay); view hook: plain-`folder` filter, decor, live restyle, cycle off; tests. | Isolated Nautilus shows both layouts and the custom SVGs; `folder-*` folders untouched. |
+| 3 Settings tab | Groups and rows of §11.3. | Every option applies live on Apply. |
+| 4 Hardening & docs | Smoke rounds switching layouts/styles, `check-safety.sh`, README. | All PASS. |
+
+### 11.5a Follow-up (owner, 2026-11-13)
+
+1. Folder SVG and overlay SVG are drawn at the same size (V4 updated).
+2. **Depth effect** (stacked, `folder-preview-depth`, default on): card *n* behind the front is darkened by
+   `n·STACK_DEPTH_DIM` (0.16) and blurred with radius `n·STACK_DEPTH_BLUR` (0.6 % of the card width).
+3. **Drop shadow** instead of a box shadow (both layouts): each photo/card is drawn into its own surface; its
+   shadow is that surface's alpha, blurred (3 × box blur ≈ Gaussian) and offset down, so a transparent
+   picture (an SVG logo) casts the shadow of its shape. Dimming uses `ATOP`, so transparent parts stay
+   transparent.
+4. **Keep Aspect Ratio** (`folder-preview-keep-aspect`, default on, both layouts): grid on = v1 fit, off =
+   fill the section (cropped); stacked on = the card takes the picture's shape (fitted in the card rectangle,
+   centred, top-aligned so the stack's top edges stay in order), off = the picture fills the card (cropped).
+
+`CACHE_DISK_VERSION` v5 (v4 is purged at start-up). Tests: keep-aspect (grid fill, stacked card shape),
+depth (darker, soft edge, sharp front), drop-shadow shape (no shadow under a transparent half).
+
+### 11.5b Second follow-up (owner, 2026-11-13)
+
+Sizes the owner gives "at 64 × 64" are fractions of the icon (`REF_ICON_PX` 64), so they scale with every
+zoom level; the compositor converts them with `fp_composite_icon_px` (each layout's frame covers a fixed
+part of the icon).
+
+1. **Depth presets** (replace the depth switch): *None* (STACK_DIM per card), *Blur* (the previous effect),
+   *Transparency* (opacity −30 % per card further back, at least 10 %), *Darken* (−22 % brightness per
+   card, no blur). The front card is always fully visible.
+2. **Bottom fade** (0–100 % of the stack height): the stack's cards are drawn into a group and painted
+   through a linear alpha mask (opaque above the fade, transparent at the stack's bottom edge), like the
+   sliding eject button's fade.
+3. **Stack 8 px from the sides** at 64 × 64 (`STACK_SIDE`): the stack width is now 0.75 of the icon, no
+   longer measured from the folder body.
+4. **Position** *Top* / *Bottom* (8 px from the icon's top / bottom edge) / *Centre* (the previous
+   placement inside the folder body), plus a **vertical offset** slider (±16 px). Placement only moves the
+   frame (its size is the same everywhere), so it never rebuilds pictures (the "icons" settings group).
+5. **Corner radius** of each picture (both layouts, default 2 px ≈ the previous stacked rounding; the grid's
+   photos were square before).
+6. **View top / bottom radius:** the stack area (the cards' untilted bounding box) clips all pictures, with
+   separate top and bottom corner radii; both 0 = no clipping (tilted corners and shadows may then poke out).
+
+`CACHE_DISK_VERSION` v6. Tests: depth presets, fade profile, clipping (nothing outside the area, rounded vs
+square bottom corners), corner radius, 8 px sides, placement (top / bottom / offset, frame size unchanged).
+
+### 11.5c Third follow-up (owner, 2026-11-14)
+
+1. The 8 px side padding is a setting (**Side Padding** slider, 0–20 px at 64 × 64, default 8): stack width =
+   1 − 2 × padding / 64 of the icon (`fp_style_stack_width`). It changes the frame's shape relative to the
+   icon, so it is part of the style (cache key). Top / bottom positions stay 8 px from the icon's edge.
+2. The front card is never tilted; with Random Rotation the cards behind it still are.
+
+`CACHE_DISK_VERSION` v7. Tests: upright front card (identical with rotation on/off), the card behind tilts,
+padding widths and clamping, placement with padding 0 / 16.
+
+### 11.5d Border width (owner, 2026-11-14)
+
+**Border Width** slider (both layouts, active while Border is on): 0.5–6 px at 64 × 64 in 0.5 steps (a whole
+pixel at 64 × 64 is 4 px at the largest zoom, too coarse), default 1. Drawn in whole device pixels, at least
+1; it replaces the previous widths (4.5 % of a grid section, 2.2 % of a card), which were about 1 px at
+64 × 64. Stored in `FpStyle.border_width` as tenths (integer key/equality). `CACHE_DISK_VERSION` v8.
+
+### 11.6 Phase results (2026-11-13)
+
+- **Phase 1:** schema keys + `nu_settings` (two new change groups: style, icons/cycle); `FpStyle` in
+  `composite.c` (stacked cards measured from the mock, border/colour/shadow/rotation for both layouts);
+  cache keyed by style (memory generation drops results of older looks; disk directory per look, v4);
+  stacked stepping with wrap-around. Tests: style helpers, grid options, stacked cards (order, insets,
+  dimming, blank cards, determinism), cache styles and few-photo stacks.
+- **Phase 2:** `icon_art.c` (GtkSvg, parse errors rejected — GtkSvg reports "not XML" as
+  `GTK_SVG_ERROR_INVALID_SYNTAX`; Illustrator's `data-name` attributes are harmless notices); paintable
+  decor (back → frame → overlay, custom SVGs only with a frame); view hook: plain-folder filter (V6), decor,
+  live restyle, cycle off. Verified in an isolated Nautilus with the owner's SVGs: result matches
+  `Asset-3`; Pictures (`folder-pictures`) and folders without media keep their icons.
+- **Phase 3:** settings tab groups Layout / Thumbnails / Folder Icon (stacked only), Choose…/Clear rows with
+  a GtkFileDialog (SVG filter); everything pending until Apply.
+- **Phase 4:** smoke `look_round` (every option while browsing, an invalid SVG, off/on, reset) plus random
+  layout switches. Smoke harness fixes: the isolated `XDG_DATA_HOME` hid the user's icon themes (GTK then
+  used its built-in `folder-symbolic`, which gets no previews), so `~/.local/share/icons` is linked in; the
+  smoke now fails if no self-check ever sees a drawn preview; `SMOKE_XDG_CACHE` is quoted (paths with
+  spaces). New thumbnails can't be generated under the ASan preload (thumbnailer children inherit it), so
+  the smoke tree's thumbnails are made first by a normal build and passed with `SMOKE_XDG_CACHE`.
+  Old v3 disk cache directories are removed by a start-up worker job (V7).
+- Smoke (ASan, 150 s + every round, 46 photo folders): `smoke-20261113-211922` **PASS** — previews drawn in 53/54
+  self-checks, 0 wrong, 27 off/on toggles, 8 hovers.
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+
+Follow-up (§11.5a) results: smoke `smoke-20261113-223428` **PASS** — previews drawn in 58/58 self-checks, 0 wrong (look round
+now also switches keep-aspect and depth). scan-build flagged reading the blur line buffer as possibly
+uninitialised (a false positive: every read index is below the filled length); fixed by zero-initialising
+the buffer, not suppressed. Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+
+Second follow-up (§11.5b) results: smoke `smoke-20261113-234528` **PASS** — previews drawn in 66/66 self-checks, 0 wrong
+(look round now also cycles the depth presets, fade, view radii, corner radius, positions and offsets).
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+
+Third follow-up (§11.5c) results: smoke `smoke-20261114-001626` **PASS** — previews drawn in 68/68 self-checks, 0 wrong.
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+
+Border width (§11.5d) results: smoke `smoke-20261114-005830` **PASS** — previews drawn in 70/70 self-checks, 0 wrong.
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+
+Smoke harness (2026-11-14): the test session now gets a private `XDG_RUNTIME_DIR` (a temp dir under the real
+one, Wayland reached by its absolute socket path). With the shared runtime dir, the private session's
+xdg-document-portal unmounted the user's `/run/user/1000/doc` on exit, and every Flatpak app then failed to
+start ("bwrap: Can't find source path /run/user/1000/doc/by-app/…"; fixed for the user by restarting
+`xdg-document-portal.service`). Verified: after a smoke run the user's portal mount is intact and Flatpak
+apps start.

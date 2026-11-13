@@ -152,6 +152,124 @@ test_frame_px (void)
   g_assert_cmpuint (fp_folder_paintable_frame_px (96, 0), ==, 0);
 }
 
+/* The default look (borrowed, static). */
+static const FpStyle *
+default_style (void)
+{
+  static FpStyle style;
+  fp_style_init_default (&style);
+  return &style;
+}
+
+static void
+assert_near_rect (const graphene_rect_t *r, double x, double y, double w, double h)
+{
+  g_assert_cmpfloat_with_epsilon (r->origin.x, x, 1e-4);
+  g_assert_cmpfloat_with_epsilon (r->origin.y, y, 1e-4);
+  g_assert_cmpfloat_with_epsilon (r->size.width, w, 1e-4);
+  g_assert_cmpfloat_with_epsilon (r->size.height, h, 1e-4);
+}
+
+/* PLAN.md §11.1: stack placement from the folder body. */
+static void
+test_decor_geometry (void)
+{
+  FpDecor grid;
+  fp_decor_init_grid (&grid);
+  graphene_rect_t want;
+  fp_folder_paintable_frame_rect (1, 1, &want);
+  g_assert_true (graphene_rect_equal (&grid.frame_rect, &want));
+  g_assert_cmpuint (fp_decor_frame_px (&grid, 96, 1), ==, fp_folder_paintable_frame_px (96, 1));
+  g_assert_null (grid.back);
+  g_assert_null (grid.overlay);
+
+  graphene_rect_t body = GRAPHENE_RECT_INIT (0.1f, 0.2f, 0.8f, 0.6f);
+  FpDecor st;
+  fp_decor_init_stacked (&st, default_style (), &body, FP_STACK_CENTRE, 0);
+  g_assert_cmpint (st.layout, ==, FP_LAYOUT_STACKED);
+  /* 8 px from both sides at 64 × 64: 48 px wide; centre = inside the folder body. */
+  double sw = 48.0 / 64, pad = STACK_PAD * sw, sh = STACK_H * sw;
+  assert_near_rect (&st.frame_rect, 8.0 / 64 - pad, 0.2 + STACK_BODY_TOP * 0.6 - pad, sw + 2 * pad, sh + 2 * pad);
+  /* Top / bottom: 8 px from the icon's edge; the offset moves it (px at 64 × 64). */
+  FpDecor top, bottom, moved;
+  fp_decor_init_stacked (&top, default_style (), &body, FP_STACK_TOP, 0);
+  assert_near_rect (&top.frame_rect, 8.0 / 64 - pad, 8.0 / 64 - pad, sw + 2 * pad, sh + 2 * pad);
+  fp_decor_init_stacked (&bottom, default_style (), &body, FP_STACK_BOTTOM, 0);
+  g_assert_cmpfloat_with_epsilon (bottom.frame_rect.origin.y + bottom.frame_rect.size.height - pad, 56.0 / 64, 1e-4);
+  fp_decor_init_stacked (&moved, default_style (), &body, FP_STACK_TOP, -4);
+  g_assert_cmpfloat_with_epsilon (moved.frame_rect.origin.y, top.frame_rect.origin.y - 4.0 / 64, 1e-4);
+  /* Side padding (px at 64 × 64): 0 = the stack spans the icon, 16 = 32 px wide, centred. */
+  FpStyle padded = *default_style ();
+  padded.stack_padding = 0;
+  FpDecor wide;
+  fp_decor_init_stacked (&wide, &padded, &body, FP_STACK_TOP, 0);
+  double ww = 1.0, wpad = STACK_PAD * ww;
+  assert_near_rect (&wide.frame_rect, -wpad, 8.0 / 64 - wpad, ww + 2 * wpad, STACK_H * ww + 2 * wpad);
+  padded.stack_padding = 16;
+  fp_decor_init_stacked (&wide, &padded, &body, FP_STACK_TOP, 0);
+  g_assert_cmpfloat_with_epsilon (wide.frame_rect.origin.x + STACK_PAD * 0.5, 16.0 / 64, 1e-4);
+  g_assert_cmpfloat_with_epsilon (wide.frame_rect.size.width, 0.5 * (1 + 2 * STACK_PAD), 1e-4);
+  /* The frame's size doesn't depend on the position: moving the stack needs no new frames. */
+  g_assert_cmpuint (fp_decor_frame_px (&top, 96, 2), ==, fp_decor_frame_px (&st, 96, 2));
+  /* The frame texture's aspect ratio matches the rectangle it is drawn in. */
+  FpStyle style;
+  fp_style_init_default (&style);
+  style.layout = FP_LAYOUT_STACKED;
+  guint px = fp_decor_frame_px (&st, 256, 1);
+  g_assert_cmpfloat_with_epsilon ((double) fp_composite_frame_height (&style, px) / px,
+                                  st.frame_rect.size.height / st.frame_rect.size.width, 0.01);
+}
+
+/* Stacked decor: custom back and overlay are drawn only together with a frame (V3), in order
+ * back → frame → overlay; the paintable keeps its own refs. */
+static void
+test_decor_drawing (void)
+{
+  g_autoptr (GdkTexture) icon = solid (96, 96, 10);
+  g_autoptr (GdkTexture) frame = solid (60, 40, 200);
+  GdkTexture *back = solid (96, 96, 50);     /* owned until handed over below */
+  GdkTexture *overlay = solid (96, 96, 90);  /* owned until handed over below */
+  g_autoptr (FpFolderPaintable) p = fp_folder_paintable_new (GDK_PAINTABLE (icon), 96);
+  guint contents = 0;
+  g_signal_connect (p, "invalidate-contents", G_CALLBACK (count), &contents);
+
+  graphene_rect_t body = GRAPHENE_RECT_INIT (0.1f, 0.2f, 0.8f, 0.6f);
+  FpDecor d;
+  fp_decor_init_stacked (&d, default_style (), &body, FP_STACK_CENTRE, 0);
+  d.back = back;
+  d.overlay = overlay;
+  fp_folder_paintable_set_decor (p, &d);
+  g_assert_cmpuint (contents, ==, 1);
+  fp_folder_paintable_set_decor (p, &d); /* unchanged: no redraw */
+  g_assert_cmpuint (contents, ==, 1);
+  g_object_unref (back);    /* the paintable holds its own refs now */
+  g_object_unref (overlay);
+
+  g_autoptr (GArray) a = draw (GDK_PAINTABLE (p), 96, 96);
+  g_assert_cmpuint (a->len, ==, 1); /* no frame: the theme icon only */
+  g_assert_true (g_array_index (a, Drawn, 0).texture == icon);
+
+  fp_folder_paintable_set_frame (p, frame, "file:///photos");
+  g_autoptr (GArray) b = draw (GDK_PAINTABLE (p), 96, 96);
+  g_assert_cmpuint (b->len, ==, 3);
+  g_assert_true (g_array_index (b, Drawn, 0).texture == back);
+  graphene_rect_t full = GRAPHENE_RECT_INIT (0, 0, 96, 96);
+  g_assert_true (graphene_rect_equal (&g_array_index (b, Drawn, 0).bounds, &full));
+  g_assert_true (g_array_index (b, Drawn, 1).texture == frame);
+  Drawn o = g_array_index (b, Drawn, 2);
+  g_assert_true (o.texture == overlay);
+  g_assert_true (graphene_rect_equal (&o.bounds, &full)); /* same size and place as the back (V4) */
+
+  /* Back to the grid look: icon + frame on the front face. */
+  fp_folder_paintable_set_decor (p, NULL);
+  g_autoptr (GArray) c = draw (GDK_PAINTABLE (p), 96, 96);
+  g_assert_cmpuint (c->len, ==, 2);
+  g_assert_true (g_array_index (c, Drawn, 0).texture == icon);
+  graphene_rect_t want;
+  fp_folder_paintable_frame_rect (96, 96, &want);
+  g_assert_true (graphene_rect_equal (&g_array_index (c, Drawn, 1).bounds, &want));
+}
+
 /* Leak hunting under ASan/valgrind: many create/draw/destroy cycles with ref juggling. */
 static void
 test_stress (void)
@@ -162,6 +280,15 @@ test_stress (void)
       g_autoptr (GdkTexture) frame = solid (16, 16, (guint8) i);
       g_autoptr (FpFolderPaintable) p = fp_folder_paintable_new (GDK_PAINTABLE (icon), 32);
       fp_folder_paintable_set_frame (p, frame, "file:///s");
+      if (i % 2 == 0)
+        {
+          graphene_rect_t body = GRAPHENE_RECT_INIT (0, 0, 1, 1);
+          FpDecor d;
+          fp_decor_init_stacked (&d, default_style (), &body, FP_STACK_CENTRE, 0);
+          d.back = icon;
+          d.overlay = i % 4 == 0 ? frame : NULL;
+          fp_folder_paintable_set_decor (p, &d);
+        }
       if (i % 3 == 0)
         fp_folder_paintable_set_frame (p, NULL, NULL);
       g_autoptr (GArray) a = draw (GDK_PAINTABLE (p), 32, 32);
@@ -176,6 +303,8 @@ main (int argc, char **argv)
   g_test_add_func ("/folder-paintable/draws-icon-then-frame", test_draws_icon_then_frame);
   g_test_add_func ("/folder-paintable/invalidation", test_invalidation);
   g_test_add_func ("/folder-paintable/frame-px", test_frame_px);
+  g_test_add_func ("/folder-paintable/decor-geometry", test_decor_geometry);
+  g_test_add_func ("/folder-paintable/decor-drawing", test_decor_drawing);
   g_test_add_func ("/folder-paintable/stress", test_stress);
   return g_test_run ();
 }

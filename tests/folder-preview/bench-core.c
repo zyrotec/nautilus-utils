@@ -10,6 +10,8 @@
 #include "scanner.h"
 #include "thumbs.h"
 
+static FpStyle grid_style; /* The v1 look, set in main. */
+
 static int
 cmp_double (gconstpointer a, gconstpointer b)
 {
@@ -32,6 +34,7 @@ report (const char *name, GArray *ms)
 int
 main (int argc, char **argv)
 {
+  fp_style_init_default (&grid_style);
   setlocale (LC_ALL, "");
   if (argc < 2)
     {
@@ -73,7 +76,7 @@ main (int argc, char **argv)
           items[j].path = t->thumbnail_path;
           items[j].seed = j;
         }
-      g_autoptr (GdkTexture) tex = fp_composite_frame (items, k, width, NULL);
+      g_autoptr (GdkTexture) tex = fp_composite_frame (&grid_style, items, k, width, NULL);
       gint64 t3 = g_get_monotonic_time ();
       g_autoptr (GBytes) png = tex != NULL ? gdk_texture_save_to_png_bytes (tex) : NULL;
       gint64 t4 = g_get_monotonic_time ();

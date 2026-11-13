@@ -45,6 +45,8 @@ struct _FpCache
   gsize       max_bytes;
 
   /* Main thread only. */
+  FpStyle     style;       /* Look of new frames (copied into each job). */
+  guint       style_gen;   /* Bumped by every style change: results of older requests are dropped. */
   GHashTable *entries;     /* Owned. uri (borrowed from Entry) → Entry* (owned; entry_free). */
   GQueue      lru;         /* Head = most recently used. Data borrowed from @entries. */
   gsize       n_bytes;
@@ -124,6 +126,7 @@ fp_cache_new (FpWorkers  *workers,
   cache->max_bytes = max_bytes;
   cache->entries = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, entry_free);
   g_queue_init (&cache->lru);
+  fp_style_init_default (&cache->style);
   return cache;
 }
 
@@ -266,6 +269,27 @@ fp_cache_invalidate (FpCache    *cache,
   return TRUE;
 }
 
+gboolean
+fp_cache_set_style (FpCache *cache, const FpStyle *style)
+{
+  g_return_val_if_fail (cache != NULL, FALSE);
+  g_return_val_if_fail (style != NULL, FALSE);
+  if (fp_style_equal (&cache->style, style))
+    return FALSE;
+  cache->style = *style;
+  cache->style_gen++;
+  while (cache->lru.length > 0)
+    remove_entry (cache, g_queue_peek_head (&cache->lru));
+  return TRUE;
+}
+
+const FpStyle *
+fp_cache_get_style (FpCache *cache)
+{
+  g_return_val_if_fail (cache != NULL, NULL);
+  return &cache->style;
+}
+
 guint
 fp_cache_get_n_folders (FpCache *cache)
 {
@@ -283,11 +307,13 @@ fp_cache_get_n_bytes (FpCache *cache)
 /* ================================================================================================ */
 /* Disk cache (worker threads only; touches only files under disk_dir)                              */
 
-/* New string: the per-folder cache directory. */
+/* New string: the per-folder cache directory for one look (@style). */
 static char *
-disk_folder_dir (const char *disk_dir, const char *uri)
+disk_folder_dir (const char *disk_dir, const char *uri, const FpStyle *style)
 {
-  g_autofree char *hash = g_compute_checksum_for_string (G_CHECKSUM_SHA1, uri, -1);
+  g_autofree char *key = fp_style_key (style);
+  g_autofree char *name = g_strconcat (key, "|", uri, NULL);
+  g_autofree char *hash = g_compute_checksum_for_string (G_CHECKSUM_SHA1, name, -1);
   return g_build_filename (disk_dir, CACHE_DISK_VERSION, hash, NULL);
 }
 
@@ -322,10 +348,10 @@ typedef enum
 
 /* Looks for frame 0 of @uri at this mtime and size. On DISK_FRAME, *path_out is a new string. */
 static DiskHit
-disk_lookup (const char *disk_dir, const char *uri, guint64 sec, guint32 usec, guint px,
+disk_lookup (const char *disk_dir, const char *uri, const FpStyle *style, guint64 sec, guint32 usec, guint px,
              char **path_out, guint *hint_out)
 {
-  g_autofree char *dir = disk_folder_dir (disk_dir, uri);
+  g_autofree char *dir = disk_folder_dir (disk_dir, uri, style);
   g_autoptr (GDir) gdir = g_dir_open (dir, 0, NULL);
   if (gdir == NULL)
     return DISK_MISS;
@@ -361,10 +387,10 @@ disk_lookup (const char *disk_dir, const char *uri, guint64 sec, guint32 usec, g
 /* Writes frame 0 (or the "none" marker if @texture is NULL) and deletes files for other mtimes.
  * Failures only cost a future cache miss, so they're logged and ignored. */
 static void
-disk_store (const char *disk_dir, const char *uri, guint64 sec, guint32 usec, guint px, guint hint,
-            GdkTexture *texture)
+disk_store (const char *disk_dir, const char *uri, const FpStyle *style, guint64 sec, guint32 usec, guint px,
+            guint hint, GdkTexture *texture)
 {
-  g_autofree char *dir = disk_folder_dir (disk_dir, uri);
+  g_autofree char *dir = disk_folder_dir (disk_dir, uri, style);
   if (g_mkdir_with_parents (dir, 0700) != 0)
     {
       g_debug ("disk cache: cannot create %s", dir);
@@ -412,6 +438,55 @@ disk_store (const char *disk_dir, const char *uri, guint64 sec, guint32 usec, gu
     }
 }
 
+/* Deletes @path and everything below it (no symlinks are followed). Errors are ignored. */
+static void
+rm_tree (const char *path)
+{
+  if (!g_file_test (path, G_FILE_TEST_IS_SYMLINK) && g_file_test (path, G_FILE_TEST_IS_DIR))
+    {
+      g_autoptr (GDir) dir = g_dir_open (path, 0, NULL);
+      const char *name;
+      while (dir != NULL && (name = g_dir_read_name (dir)) != NULL) /* borrowed from @dir */
+        {
+          g_autofree char *child = g_build_filename (path, name, NULL);
+          rm_tree (child);
+        }
+      g_rmdir (path);
+    }
+  else
+    g_unlink (path);
+}
+
+/* FpWorkFunc: removes every version directory but the current one. @task_data is the disk dir (borrowed). */
+static void
+purge_work (GTask *task, gpointer task_data, GCancellable *cancellable)
+{
+  (void) cancellable;
+  const char *disk_dir = task_data;
+  g_autoptr (GDir) dir = g_dir_open (disk_dir, 0, NULL);
+  const char *name;
+  while (dir != NULL && (name = g_dir_read_name (dir)) != NULL)
+    {
+      /* Only our own "v<N>" directories: never anything else someone put there. */
+      if (name[0] != 'v' || !g_ascii_isdigit (name[1]) || g_str_equal (name, CACHE_DISK_VERSION))
+        continue;
+      g_autofree char *old = g_build_filename (disk_dir, name, NULL);
+      g_debug ("disk cache: removing old version %s", old);
+      rm_tree (old);
+    }
+  g_task_return_boolean (task, TRUE);
+}
+
+void
+fp_cache_purge_old_versions (FpCache *cache)
+{
+  g_return_if_fail (cache != NULL);
+  g_autoptr (GTask) task = g_task_new (NULL, NULL, NULL, NULL);
+  g_task_set_source_tag (task, fp_cache_purge_old_versions);
+  g_task_set_task_data (task, g_strdup (cache->disk_dir), g_free);
+  fp_workers_push (cache->workers, task, G_PRIORITY_LOW, purge_work);
+}
+
 /* ================================================================================================ */
 /* Request pipeline                                                                                 */
 
@@ -422,6 +497,7 @@ typedef struct
   char         *uri;         /* Owned. */
   guint         frame;
   guint         px;
+  FpStyle       style;       /* The look at request time. */
   FpScanResult *known_scan;  /* Owned ref or NULL: the scan the memory cache already had. */
 } JobArgs;
 
@@ -458,19 +534,26 @@ div_ceil (guint a, guint b)
 }
 
 /* Resolves enough thumbnails for @frame from @scan (rescanning once if failures exhausted the window)
- * and composites it. Returns a JobResult (caller owns) or NULL with @error set (cancelled). */
+ * and composites it in @style. Returns a JobResult (caller owns) or NULL with @error set (cancelled).
+ * Grid: frame k shows files 4k … 4k+3. Stacked: frame k starts at file k·step (step 1 or 3) and shows
+ * up to STACK_CARDS files, wrapping around to the first files at the end so the stack never shrinks. */
+G_STATIC_ASSERT (STACK_CARDS <= PREVIEW_SLOTS);
+
 static JobResult *
 build_frame (FpCache       *cache,
              GFile         *folder,
              FpScanResult  *scan_in,
+             const FpStyle *style,
              guint          frame,
              guint          px,
              GCancellable  *cancellable,
              GError       **error)
 {
   g_autoptr (FpScanResult) scan = fp_scan_result_ref (scan_in);
-  guint first = frame * PREVIEW_SLOTS;
-  guint wanted = MIN (first + PREVIEW_SLOTS, MAX_PREVIEW_FILES);
+  gboolean stacked = style->layout == FP_LAYOUT_STACKED;
+  guint slots = fp_style_slots (style), step = fp_style_step (style);
+  guint first = frame * step;
+  guint wanted = MIN (first + slots, MAX_PREVIEW_FILES);
 
   g_autoptr (FpResolved) resolved = NULL;
   if (first < MAX_PREVIEW_FILES)
@@ -504,21 +587,26 @@ build_frame (FpCache       *cache,
 
   /* Fewer than asked for means every candidate was tried: the count is exact. Otherwise the candidate
    * count is an upper bound. */
+  gboolean exact = n_thumbs < wanted || wanted == MAX_PREVIEW_FILES;
   guint known = n_thumbs < wanted ? n_thumbs : MIN (r->scan->candidates->len, (guint) MAX_PREVIEW_FILES);
-  r->frame->n_frames_hint = div_ceil (known, PREVIEW_SLOTS);
+  r->frame->n_frames_hint = div_ceil (known, step);
 
   if (n_thumbs > first)
     {
       FpCompositeItem items[PREVIEW_SLOTS] = { { NULL, 0 } }; /* paths borrowed from @resolved */
-      guint n = MIN (n_thumbs - first, (guint) PREVIEW_SLOTS);
+      guint n;
+      if (stacked)
+        n = exact ? MIN (slots, n_thumbs) : slots; /* when not exact, n_thumbs >= first + slots */
+      else
+        n = MIN (n_thumbs - first, slots);
       for (guint i = 0; i < n; i++)
         {
-          FpThumb *t = g_ptr_array_index (resolved->thumbs, first + i);
+          FpThumb *t = g_ptr_array_index (resolved->thumbs, stacked ? (first + i) % n_thumbs : first + i);
           g_autofree char *file_uri = g_file_get_uri (t->file);
           items[i].path = t->thumbnail_path;
           items[i].seed = g_str_hash (file_uri); /* stable tilt per file (djb2, same every session) */
         }
-      r->frame->texture = fp_composite_frame (items, n, px, NULL);
+      r->frame->texture = fp_composite_frame (style, items, n, px, NULL);
     }
   return r;
 }
@@ -556,10 +644,10 @@ job_work (GTask *task, gpointer task_data, GCancellable *cancellable)
     {
       g_autofree char *path = NULL;
       guint hint = 0;
-      DiskHit hit = disk_lookup (a->cache->disk_dir, a->uri, sec, usec, a->px, &path, &hint);
+      DiskHit hit = disk_lookup (a->cache->disk_dir, a->uri, &a->style, sec, usec, a->px, &path, &hint);
       g_autoptr (GdkTexture) texture = hit == DISK_FRAME ? gdk_texture_new_from_filename (path, NULL) : NULL;
       if (hit == DISK_FRAME && (texture == NULL || gdk_texture_get_width (texture) != (int) a->px ||
-                                gdk_texture_get_height (texture) != (int) fp_composite_frame_height (a->px)))
+                                gdk_texture_get_height (texture) != (int) fp_composite_frame_height (&a->style, a->px)))
         {
           g_debug ("disk cache: dropping unreadable %s", path);
           g_unlink (path);
@@ -592,15 +680,15 @@ job_work (GTask *task, gpointer task_data, GCancellable *cancellable)
       return;
     }
 
-  JobResult *r = build_frame (a->cache, a->folder, scan, a->frame, a->px, cancellable, &error);
+  JobResult *r = build_frame (a->cache, a->folder, scan, &a->style, a->frame, a->px, cancellable, &error);
   if (r == NULL)
     {
       g_task_return_error (task, g_steal_pointer (&error));
       return;
     }
   if (a->frame == 0)
-    disk_store (a->cache->disk_dir, a->uri, r->mtime_sec, r->mtime_usec, a->px, r->frame->n_frames_hint,
-                r->frame->texture);
+    disk_store (a->cache->disk_dir, a->uri, &a->style, r->mtime_sec, r->mtime_usec, a->px,
+                r->frame->n_frames_hint, r->frame->texture);
   g_task_return_pointer (task, r, (GDestroyNotify) job_result_free);
 }
 
@@ -611,6 +699,7 @@ typedef struct
   char    *uri;   /* Owned. */
   guint    frame;
   guint    px;
+  guint    style_gen; /* cache->style_gen when the request started */
 } OuterData;
 
 static void
@@ -639,6 +728,13 @@ on_job_done (GObject *source, GAsyncResult *res, gpointer user_data)
     }
 
   FpCache *cache = d->cache;
+  if (d->style_gen != cache->style_gen)
+    {
+      /* Built in a look that is no longer current: never cache or show it. */
+      job_result_free (r);
+      g_task_return_new_error_literal (outer, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Preview style changed");
+      return;
+    }
   Entry *e = g_hash_table_lookup (cache->entries, d->uri);
   int cmp = e != NULL ? mtime_cmp (r->mtime_sec, r->mtime_usec, e->mtime_sec, e->mtime_usec) : 1;
   if (cmp < 0)
@@ -697,6 +793,7 @@ fp_cache_get_frame_async (FpCache             *cache,
   d->uri = g_strdup (uri);
   d->frame = frame;
   d->px = frame_px;
+  d->style_gen = cache->style_gen;
   g_task_set_task_data (outer, d, (GDestroyNotify) outer_data_free);
 
   JobArgs *a = g_new0 (JobArgs, 1);
@@ -705,6 +802,7 @@ fp_cache_get_frame_async (FpCache             *cache,
   a->uri = g_steal_pointer (&uri);
   a->frame = frame;
   a->px = frame_px;
+  a->style = cache->style;
   Entry *e = g_hash_table_lookup (cache->entries, a->uri);
   if (e != NULL && e->scan != NULL)
     a->known_scan = fp_scan_result_ref (e->scan);

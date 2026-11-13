@@ -69,11 +69,19 @@ test('cache', test_cache, env: test_env, protocol: 'tap', args: ['--tap'], timeo
      suite: 'thumbnailers')
 
 test_folder_paintable = executable('test-folder-paintable', 'test-folder-paintable.c',
-  link_with: fp_ui_lib,
+  link_with: [fp_ui_lib, fp_core_lib], # fp_composite_frame_height: frame/rectangle aspect check
   dependencies: core_deps,
   include_directories: conf_inc,
 )
 test('folder-paintable', test_folder_paintable, env: test_env, protocol: 'tap', args: ['--tap'])
+
+test_icon_art = executable('test-icon-art', 'test-icon-art.c',
+  link_with: fp_ui_lib,
+  dependencies: core_deps,
+  include_directories: conf_inc,
+)
+# GtkSvg needs an initialised GTK (a display); the test skips itself without one.
+test('icon-art', test_icon_art, env: test_env, protocol: 'tap', args: ['--tap'])
 
 # Phase 6 profiling tool (not a test): build/tests/bench-core PARENT_DIR [frame-width]
 executable('bench-core', 'bench-core.c',

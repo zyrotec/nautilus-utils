@@ -32,5 +32,32 @@
  * side, so large tilted photos can poke slightly past the face (like Dolphin) instead of being clipped. */
 #define FRAME_PAD           0.10
 
-/* Disk cache layout version: bump when the look of frames changes, so old frames are never shown. */
-#define CACHE_DISK_VERSION  "v3"
+/* Stacked layout (PLAN.md §11.1), measured on the owner's mock-up (Asset-2, 434 × 294 units). All values
+ * are fractions of the stack width. Card i (0 = front) is inset by i·STACK_STEP on both sides and raised by
+ * i·STACK_STEP; every card is STACK_CARD_H tall, so the front card ends at STACK_H. */
+#define STACK_CARDS         3
+#define STACK_STEP          0.0405
+#define STACK_CARD_H        0.5975
+#define STACK_H             (STACK_CARD_H + (STACK_CARDS - 1) * STACK_STEP)
+#define STACK_PAD           0.06   /* transparent margin around the stack in the frame texture */
+#define STACK_MAX_TILT_DEG  4.0
+#define STACK_DIM           0.10   /* each card further back is darkened by this much more */
+#define STACK_DEPTH_DIM     0.16   /* depth "blur": darkening per card further back */
+#define STACK_DEPTH_BLUR    0.006  /* depth "blur": blur radius per card further back (fraction of card width) */
+#define STACK_DEPTH_ALPHA   0.30   /* depth "transparency": opacity lost per card further back */
+#define STACK_DEPTH_DARKEN  0.22   /* depth "darken": darkening per card further back */
+
+/* Sizes the owner gives "at the 64 × 64 icon size" scale with the icon (PLAN.md §11.5b). */
+#define REF_ICON_PX         64.0
+#define STACK_EDGE          (8.0 / REF_ICON_PX) /* top / bottom position: 8 px from the icon's edge */
+/* Centre position: the stack's top is this far below the top of the folder's visible body (its opaque
+ * bounding box), as a fraction of the body height (the owner's mock-up). */
+#define STACK_BODY_TOP      0.204
+
+/* Disk cache layout version: bump when the look of frames changes, so old frames are never shown.
+ * v4: the style (layout, border, shadow, rotation) is part of each folder's cache directory name.
+ * v5: drop shadows following the picture's shape, keep-aspect and depth options.
+ * v6: stack 8 px from the sides, depth presets, corner radius, fade and view clipping.
+ * v7: side padding setting, the front card is never tilted.
+ * v8: border width setting. */
+#define CACHE_DISK_VERSION  "v8"

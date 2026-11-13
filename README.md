@@ -10,8 +10,25 @@ Tested on Fedora 45, Nautilus 51.1, GTK 4.24.
 ### Folder preview
 
 Dolphin-style folder thumbnails: each folder icon in the grid view shows its first images, videos and album
-covers as tilted photos (1 → one large photo, 2 → side by side, 3 → two on top and one below, 4+ →
-quarters), and cycles through the next ones while the pointer hovers over it.
+covers, and cycles through the next ones while the pointer hovers over it. Two layouts:
+
+- **Grid**: tilted photos on the folder's front (1 → one large photo, 2 → side by side, 3 → two on top and
+  one below, 4+ → quarters).
+- **Stacked**: up to three rounded cards stacked inside the folder, the first picture in front. Hovering
+  brings the next picture to the front (or the next three, see *Pictures per Step*). Optionally with your
+  own **folder icon** SVG and a **front overlay** SVG drawn over the cards, so the pictures look like they
+  sit inside the folder. Both SVGs are drawn at the size of the icon: give them the same canvas and place
+  the overlay where it belongs inside its SVG. A **depth effect** (Blur, Transparency or Darken) makes the
+  cards further back look further away; the front card always stays upright. The stack's side padding
+  (8 px by default, at the 64 × 64 size, scaled with the zoom), its position (Top, Centre, Bottom, plus a fine-tuning slider), a bottom fade and
+  rounded top/bottom corners that clip all pictures can be set too.
+  Folders without previews keep the theme's folder icon.
+
+Border (on/off, colour and width), drop shadow (it follows the picture's shape, so transparent logos get a soft
+outline shadow, not a box), keep aspect ratio (off = pictures fill their space, cropped), corner radius,
+random rotation and cycling on hover can be changed for both layouts.
+Only folders with the theme's plain folder icon get previews: special folders (Pictures, Downloads, …,
+`folder-*` icons) and folders with a custom icon keep their own icon.
 
 Known limitations:
 
@@ -23,6 +40,8 @@ Known limitations:
 - A preview is keyed by the folder's modification time. Changes *inside* a folder you are looking at are
   picked up live; editing a file in place (which doesn't change the folder's time) shows up after the
   folder itself changes or the cache is cleared.
+- Custom folder SVGs need GTK 4.22 or newer (GTK's own SVG renderer; animations and external files are
+  ignored). An unreadable file counts as not set.
 - Audio cover art needs `gst-thumbnailers`; audio without cover art is skipped.
 - With **nautilus-python** extensions installed, Nautilus can stall for up to ~0.5 s while scrolling large
   folders whether or not this extension is installed (Python's global interpreter lock).
@@ -109,7 +128,11 @@ Files' main menu (☰) gets a **Nautilus Utils Settings** entry above *Preferenc
 one tab per feature; every tab can switch its feature on or off. Changes only take effect when you press
 **Apply**; closing the dialog without Apply discards them.
 
-- **Folder Preview**: show previews on folder icons (on/off).
+- **Folder Preview**: show previews on folder icons (on/off), layout (Grid or Stacked), cycle on hover,
+  pictures per step and depth effect (Stacked), border, border colour, border width, shadow, keep aspect ratio, corner
+  radius and random rotation; for the Stacked layout the stack's position, vertical offset, bottom fade and
+  top/bottom corner radius, and
+  a custom folder icon and front overlay (SVG files; the path is stored, so keep the files where they are).
 - **Sidebar Drives**: enhanced drive rows (on/off), bar colour (accent colour, a custom colour, or a
   two-colour gradient), show/hide the usage bars and the size labels, and slide the eject button in only
   on hover.
@@ -234,9 +257,10 @@ build/tests/folder-preview/bench-core DIR  # per-stage timings of the pipeline o
 | `src/folder-preview/workers.c` | Shared prioritised worker pool (max 2 threads) for all blocking work |
 | `src/folder-preview/scanner.c` | Finds the first eligible images/videos/audio in a folder |
 | `src/folder-preview/thumbs.c` | Finds or generates their thumbnails in the shared cache |
-| `src/folder-preview/composite.c` | Builds the 2×2 frames |
+| `src/folder-preview/composite.c` | Builds the frames (grid or stacked cards, style options) |
 | `src/folder-preview/cache.c` | Memory + disk cache of frames; the request pipeline |
-| `src/folder-preview/folder_paintable.c` | Draws the theme folder icon with a frame on its front face |
+| `src/folder-preview/folder_paintable.c` | Draws the folder icon (or custom SVG), the frame and the overlay |
+| `src/folder-preview/icon_art.c` | Custom folder SVGs → textures at exact sizes; the folder's opaque body |
 | `src/folder-preview/view_hook.c` | **Unsupported**: hooks into Nautilus' private grid widgets |
 | `src/folder-preview/config.h` | Tunable constants |
 | `src/sidebar-drives/sidebar_drives.c` | Feature set-up / tear-down |

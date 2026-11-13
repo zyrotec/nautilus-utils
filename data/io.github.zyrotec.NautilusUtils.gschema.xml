@@ -26,10 +26,141 @@
     <value nick="large" value="2"/>
   </enum>
 
+  <!-- Folder preview v2 (PLAN.md §11.3). -->
+  <enum id="io.github.zyrotec.NautilusUtils.PreviewLayout">
+    <value nick="grid" value="0"/>
+    <value nick="stacked" value="1"/>
+  </enum>
+  <enum id="io.github.zyrotec.NautilusUtils.DepthEffect">
+    <value nick="none" value="0"/>
+    <value nick="blur" value="1"/>
+    <value nick="transparency" value="2"/>
+    <value nick="darken" value="3"/>
+  </enum>
+  <enum id="io.github.zyrotec.NautilusUtils.StackPosition">
+    <value nick="top" value="0"/>
+    <value nick="centre" value="1"/>
+    <value nick="bottom" value="2"/>
+  </enum>
+  <enum id="io.github.zyrotec.NautilusUtils.StackStep">
+    <value nick="one" value="0"/>
+    <value nick="three" value="1"/>
+  </enum>
+
   <schema id="io.github.zyrotec.NautilusUtils" path="/io/github/zyrotec/NautilusUtils/">
     <key name="folder-preview-enabled" type="b">
       <default>true</default>
       <summary>Show previews on folder icons</summary>
+    </key>
+
+    <key name="folder-preview-layout" enum="io.github.zyrotec.NautilusUtils.PreviewLayout">
+      <default>'grid'</default>
+      <summary>Preview layout</summary>
+      <description>grid = up to 4 photos on the folder's front face; stacked = a stack of up to 3 cards.</description>
+    </key>
+
+    <key name="folder-preview-cycle" type="b">
+      <default>true</default>
+      <summary>Cycle through more photos while hovering</summary>
+    </key>
+
+    <key name="folder-preview-stack-step" enum="io.github.zyrotec.NautilusUtils.StackStep">
+      <default>'one'</default>
+      <summary>Photos per hover step in the stacked layout</summary>
+    </key>
+
+    <key name="folder-preview-border" type="b">
+      <default>true</default>
+      <summary>Draw a border around each photo</summary>
+    </key>
+
+    <key name="folder-preview-border-colour" type="s">
+      <default>'#ffffff'</default>
+      <summary>Photo border colour (#rrggbb)</summary>
+    </key>
+
+    <key name="folder-preview-border-width" type="d">
+      <range min="0.5" max="6.0"/>
+      <default>1.0</default>
+      <summary>Photo border width, in pixels at the 64 × 64 icon size (scaled with the icon)</summary>
+    </key>
+
+    <key name="folder-preview-shadow" type="b">
+      <default>true</default>
+      <summary>Draw a soft shadow under each photo</summary>
+    </key>
+
+    <key name="folder-preview-rotation" type="b">
+      <default>true</default>
+      <summary>Tilt each photo by a random (but stable) angle</summary>
+    </key>
+
+    <key name="folder-preview-keep-aspect" type="b">
+      <default>true</default>
+      <summary>Keep each picture's aspect ratio</summary>
+      <description>false = pictures fill their section (grid) or card (stacked), cropped.</description>
+    </key>
+
+    <key name="folder-preview-depth-effect" enum="io.github.zyrotec.NautilusUtils.DepthEffect">
+      <default>'blur'</default>
+      <summary>Depth effect in the stacked layout</summary>
+      <description>How cards further back look: blur = blurred and darkened; transparency = more transparent;
+        darken = darker; none = only slightly darker. The front card is always fully visible.</description>
+    </key>
+
+    <key name="folder-preview-corner-radius" type="i">
+      <range min="0" max="16"/>
+      <default>2</default>
+      <summary>Corner radius of each picture, in pixels at the 64 × 64 icon size (scaled with the icon)</summary>
+    </key>
+
+    <key name="folder-preview-fade" type="i">
+      <range min="0" max="100"/>
+      <default>0</default>
+      <summary>Stacked: fade out the bottom of the stack over this percentage of its height (0 = off)</summary>
+    </key>
+
+    <key name="folder-preview-view-top-radius" type="i">
+      <range min="0" max="16"/>
+      <default>0</default>
+      <summary>Stacked: top corner radius of the area that clips all pictures (px at 64 × 64)</summary>
+      <description>With both view radii 0 nothing is clipped.</description>
+    </key>
+
+    <key name="folder-preview-view-bottom-radius" type="i">
+      <range min="0" max="16"/>
+      <default>0</default>
+      <summary>Stacked: bottom corner radius of the area that clips all pictures (px at 64 × 64)</summary>
+    </key>
+
+    <key name="folder-preview-stack-position" enum="io.github.zyrotec.NautilusUtils.StackPosition">
+      <default>'centre'</default>
+      <summary>Stacked: vertical position of the stack</summary>
+      <description>top / bottom = 8 px from the icon's top / bottom at 64 × 64; centre = inside the folder.</description>
+    </key>
+
+    <key name="folder-preview-stack-padding" type="i">
+      <range min="0" max="20"/>
+      <default>8</default>
+      <summary>Stacked: space between the stack and the icon's left and right edges (px at 64 × 64)</summary>
+    </key>
+
+    <key name="folder-preview-stack-offset" type="i">
+      <range min="-16" max="16"/>
+      <default>0</default>
+      <summary>Stacked: vertical fine-tuning in pixels at 64 × 64 (positive = down)</summary>
+    </key>
+
+    <key name="folder-preview-folder-icon" type="s">
+      <default>''</default>
+      <summary>Custom folder icon (SVG path) for the stacked layout</summary>
+      <description>Empty = the theme's folder icon.</description>
+    </key>
+
+    <key name="folder-preview-overlay-icon" type="s">
+      <default>''</default>
+      <summary>Front overlay (SVG path) drawn over the stack in the stacked layout</summary>
+      <description>Empty = none. Drawn at the same size and position as the folder icon (the whole icon square).</description>
     </key>
 
     <key name="sidebar-drives-enabled" type="b">

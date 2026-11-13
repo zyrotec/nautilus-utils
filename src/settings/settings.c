@@ -14,6 +14,7 @@
  * $FP_DEBUG_DIR/cmd + SIGUSR2 with the other features' drivers and ignores commands that aren't "st-…":
  *   st-set <key> <GVariant text>   change a setting as the dialog's Apply would (e.g. st-set eject-slide true,
  *                                  st-set bar-colour "'#ff0000'")
+ *   st-reset <key>                 back to the schema default
  *   st-open / st-close             open / close the settings dialog on the first window
  *   st-dump                        log the current settings */
 static guint debug_signal_id;
@@ -41,6 +42,24 @@ debug_set (const char *key, const char *text)
     }
   g_settings_apply (pending);
   g_message ("st: set %s = %s", key, text);
+}
+
+static void
+debug_reset (const char *key)
+{
+  g_autoptr (GSettings) pending = nu_settings_new_delayed ();
+  if (pending == NULL)
+    return;
+  g_autoptr (GSettingsSchema) schema = NULL;
+  g_object_get (pending, "settings-schema", &schema, NULL);
+  if (!g_settings_schema_has_key (schema, key))
+    {
+      g_message ("st: unknown key %s", key);
+      return;
+    }
+  g_settings_reset (pending, key);
+  g_settings_apply (pending);
+  g_message ("st: reset %s", key);
 }
 
 static void
@@ -72,6 +91,8 @@ on_debug_signal (gpointer data)
       if (g_strv_length (parts) == 3)
         debug_set (parts[1], parts[2]);
     }
+  else if (g_str_has_prefix (cmd, "st-reset "))
+    debug_reset (cmd + 9);
   else if (g_str_equal (cmd, "st-open"))
     g_message ("st: open %s", st_menu_hook_open_settings () ? "ok" : "FAILED (no menu action)");
   else if (g_str_equal (cmd, "st-close"))

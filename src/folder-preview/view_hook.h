@@ -9,6 +9,8 @@
 #pragma once
 
 #include "cache.h"
+#include "composite.h"
+#include "folder_paintable.h"
 
 G_BEGIN_DECLS
 
@@ -26,6 +28,17 @@ void fp_view_hook_set_enabled (gboolean enabled);
 
 /* TRUE while previews are being drawn (initialised, not disabled, not switched off). */
 gboolean fp_view_hook_get_enabled (void);
+
+/* Sets the look (PLAN.md §11): frame style (also set on the cache), stack placement (@position, @offset px
+ * at 64 × 64; moving the stack needs no new frames), hover cycling, and the custom folder /
+ * overlay SVG paths for the stacked layout ("" or NULL = none; an unreadable file counts as none). Visible
+ * icons are redrawn in the new look; nothing happens if nothing changed. */
+void fp_view_hook_set_look (const FpStyle   *style,
+                            FpStackPosition  position,
+                            int              offset,
+                            gboolean         cycle,
+                            const char      *folder_icon,
+                            const char      *overlay_icon);
 
 /* Nautilus reported that the folder @uri changed: forget its cached frames and refresh visible icons. */
 void fp_view_hook_folder_changed (const char *uri);
