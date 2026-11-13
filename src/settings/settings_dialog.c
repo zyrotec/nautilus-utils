@@ -470,10 +470,13 @@ folder_preview_page (GSettings *settings)
 
   /* Stack placement and the area all pictures are clipped to: stacked layout only (PLAN.md §11.5b). */
   GtkWidget *stack_group = group ("Stack", "Sizes are in pixels at the smallest (64 × 64) icon size and "
-                                           "scale with the icons. The stack is 8 px from the sides.");
+                                           "scale with the icons.");
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
                              enum_row (settings, "folder-preview-stack-position", "Position",
                                        (const char *[]) { "Top", "Centre", "Bottom", NULL }, position_nicks));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             slider_row (settings, "folder-preview-stack-padding", "Side Padding",
+                                         "Space between the pictures and the icon’s sides", 0, 20, "px"));
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
                              slider_row (settings, "folder-preview-stack-offset", "Vertical Offset",
                                          "Fine-tune the position", -16, 16, "px"));

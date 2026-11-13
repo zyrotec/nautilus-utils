@@ -31,6 +31,7 @@ static const NuConfig defaults = {
   .preview_fade = 0,
   .preview_view_top_radius = 0,
   .preview_view_bottom_radius = 0,
+  .preview_stack_padding = 8,
   .preview_stack_position = NU_STACK_CENTRE,
   .preview_stack_offset = 0,
   .preview_folder_icon = "",
@@ -70,6 +71,7 @@ static const struct
   { "folder-preview-fade", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-view-top-radius", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-view-bottom-radius", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-stack-padding", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-stack-position", NU_CHANGED_PREVIEW_ICONS },
   { "folder-preview-stack-offset", NU_CHANGED_PREVIEW_ICONS },
   { "folder-preview-cycle", NU_CHANGED_PREVIEW_ICONS },
@@ -208,6 +210,7 @@ read_all (void)
   c->preview_view_top_radius = g_settings_get_int (s, "folder-preview-view-top-radius");
   c->preview_view_bottom_radius = g_settings_get_int (s, "folder-preview-view-bottom-radius");
   c->preview_stack_offset = g_settings_get_int (s, "folder-preview-stack-offset");
+  c->preview_stack_padding = g_settings_get_int (s, "folder-preview-stack-padding");
   /* Replace the owned strings; the config borrows them. */
   g_free (ns->folder_icon);
   ns->folder_icon = g_settings_get_string (s, "folder-preview-folder-icon");

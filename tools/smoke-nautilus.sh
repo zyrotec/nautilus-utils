@@ -172,6 +172,7 @@ look_round() {
   cmd "st-set folder-preview-fade 60" 0.8; cmd "st-set folder-preview-view-top-radius 6" 0.8
   cmd "st-set folder-preview-view-bottom-radius 10" 0.8; cmd "st-set folder-preview-corner-radius 9" 0.8
   for p in top bottom centre; do cmd "st-set folder-preview-stack-position '$p'" 0.6; cmd verify 0.3; done
+  cmd "st-set folder-preview-stack-padding 0" 0.8; cmd "st-set folder-preview-stack-padding 20" 0.8; cmd verify 0.3
   cmd "st-set folder-preview-stack-offset -12" 0.6; cmd "st-set folder-preview-stack-offset 16" 0.6; cmd verify 0.3
   cmd "st-set folder-preview-layout 'grid'" 1.2; cmd verify 0.3; cmd "st-set folder-preview-layout 'stacked'" 1.2
   cmd "st-set folder-preview-folder-icon '$FP_SVG_DIR/notes.txt'" 1; cmd verify 0.3   # not an SVG: theme icon
@@ -183,7 +184,7 @@ look_round() {
            folder-preview-border-colour folder-preview-shadow folder-preview-rotation \
            folder-preview-keep-aspect folder-preview-depth-effect folder-preview-corner-radius folder-preview-fade \
            folder-preview-view-top-radius folder-preview-view-bottom-radius folder-preview-stack-position \
-           folder-preview-stack-offset folder-preview-folder-icon folder-preview-overlay-icon; do
+           folder-preview-stack-offset folder-preview-stack-padding folder-preview-folder-icon folder-preview-overlay-icon; do
     cmd "st-reset $k" 0.4
   done
   cmd verify 0.5

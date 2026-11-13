@@ -152,6 +152,15 @@ test_frame_px (void)
   g_assert_cmpuint (fp_folder_paintable_frame_px (96, 0), ==, 0);
 }
 
+/* The default look (borrowed, static). */
+static const FpStyle *
+default_style (void)
+{
+  static FpStyle style;
+  fp_style_init_default (&style);
+  return &style;
+}
+
 static void
 assert_near_rect (const graphene_rect_t *r, double x, double y, double w, double h)
 {
@@ -176,19 +185,30 @@ test_decor_geometry (void)
 
   graphene_rect_t body = GRAPHENE_RECT_INIT (0.1f, 0.2f, 0.8f, 0.6f);
   FpDecor st;
-  fp_decor_init_stacked (&st, &body, FP_STACK_CENTRE, 0);
+  fp_decor_init_stacked (&st, default_style (), &body, FP_STACK_CENTRE, 0);
   g_assert_cmpint (st.layout, ==, FP_LAYOUT_STACKED);
   /* 8 px from both sides at 64 × 64: 48 px wide; centre = inside the folder body. */
   double sw = 48.0 / 64, pad = STACK_PAD * sw, sh = STACK_H * sw;
   assert_near_rect (&st.frame_rect, 8.0 / 64 - pad, 0.2 + STACK_BODY_TOP * 0.6 - pad, sw + 2 * pad, sh + 2 * pad);
   /* Top / bottom: 8 px from the icon's edge; the offset moves it (px at 64 × 64). */
   FpDecor top, bottom, moved;
-  fp_decor_init_stacked (&top, &body, FP_STACK_TOP, 0);
+  fp_decor_init_stacked (&top, default_style (), &body, FP_STACK_TOP, 0);
   assert_near_rect (&top.frame_rect, 8.0 / 64 - pad, 8.0 / 64 - pad, sw + 2 * pad, sh + 2 * pad);
-  fp_decor_init_stacked (&bottom, &body, FP_STACK_BOTTOM, 0);
+  fp_decor_init_stacked (&bottom, default_style (), &body, FP_STACK_BOTTOM, 0);
   g_assert_cmpfloat_with_epsilon (bottom.frame_rect.origin.y + bottom.frame_rect.size.height - pad, 56.0 / 64, 1e-4);
-  fp_decor_init_stacked (&moved, &body, FP_STACK_TOP, -4);
+  fp_decor_init_stacked (&moved, default_style (), &body, FP_STACK_TOP, -4);
   g_assert_cmpfloat_with_epsilon (moved.frame_rect.origin.y, top.frame_rect.origin.y - 4.0 / 64, 1e-4);
+  /* Side padding (px at 64 × 64): 0 = the stack spans the icon, 16 = 32 px wide, centred. */
+  FpStyle padded = *default_style ();
+  padded.stack_padding = 0;
+  FpDecor wide;
+  fp_decor_init_stacked (&wide, &padded, &body, FP_STACK_TOP, 0);
+  double ww = 1.0, wpad = STACK_PAD * ww;
+  assert_near_rect (&wide.frame_rect, -wpad, 8.0 / 64 - wpad, ww + 2 * wpad, STACK_H * ww + 2 * wpad);
+  padded.stack_padding = 16;
+  fp_decor_init_stacked (&wide, &padded, &body, FP_STACK_TOP, 0);
+  g_assert_cmpfloat_with_epsilon (wide.frame_rect.origin.x + STACK_PAD * 0.5, 16.0 / 64, 1e-4);
+  g_assert_cmpfloat_with_epsilon (wide.frame_rect.size.width, 0.5 * (1 + 2 * STACK_PAD), 1e-4);
   /* The frame's size doesn't depend on the position: moving the stack needs no new frames. */
   g_assert_cmpuint (fp_decor_frame_px (&top, 96, 2), ==, fp_decor_frame_px (&st, 96, 2));
   /* The frame texture's aspect ratio matches the rectangle it is drawn in. */
@@ -215,7 +235,7 @@ test_decor_drawing (void)
 
   graphene_rect_t body = GRAPHENE_RECT_INIT (0.1f, 0.2f, 0.8f, 0.6f);
   FpDecor d;
-  fp_decor_init_stacked (&d, &body, FP_STACK_CENTRE, 0);
+  fp_decor_init_stacked (&d, default_style (), &body, FP_STACK_CENTRE, 0);
   d.back = back;
   d.overlay = overlay;
   fp_folder_paintable_set_decor (p, &d);
@@ -264,7 +284,7 @@ test_stress (void)
         {
           graphene_rect_t body = GRAPHENE_RECT_INIT (0, 0, 1, 1);
           FpDecor d;
-          fp_decor_init_stacked (&d, &body, FP_STACK_CENTRE, 0);
+          fp_decor_init_stacked (&d, default_style (), &body, FP_STACK_CENTRE, 0);
           d.back = icon;
           d.overlay = i % 4 == 0 ? frame : NULL;
           fp_folder_paintable_set_decor (p, &d);

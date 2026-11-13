@@ -30,10 +30,11 @@ fp_decor_init_grid (FpDecor *decor)
 }
 
 void
-fp_decor_init_stacked (FpDecor *decor, const graphene_rect_t *body, FpStackPosition position, int offset)
+fp_decor_init_stacked (FpDecor *decor, const FpStyle *style, const graphene_rect_t *body, FpStackPosition position,
+                       int offset)
 {
   *decor = (FpDecor) { .layout = FP_LAYOUT_STACKED };
-  double w = STACK_ICON_W, x = STACK_SIDE; /* stack width and left edge */
+  double w = fp_style_stack_width (style), x = (1.0 - w) / 2; /* stack width and left edge */
   double y;
   switch (position)
     {

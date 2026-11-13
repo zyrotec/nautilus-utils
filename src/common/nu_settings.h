@@ -81,7 +81,8 @@ typedef enum
   NU_CHANGED_FV_GENERATION  = 1 << 6, /* folder-views-generation (Reset All) */
   NU_CHANGED_FV_DEFAULT     = 1 << 7, /* folder-views-default-*, folder-views-defaults-captured */
   NU_CHANGED_PREVIEW_STYLE  = 1 << 8, /* folder-preview-layout, -stack-step, -border*, -shadow, -rotation,
-                                       * -keep-aspect, -depth-effect, -corner-radius, -fade, -view-*-radius */
+                                       * -keep-aspect, -depth-effect, -corner-radius, -fade, -view-*-radius,
+                                       * -stack-padding */
   NU_CHANGED_PREVIEW_ICONS  = 1 << 9, /* folder-preview-cycle, -folder-icon, -overlay-icon, -stack-position,
                                        * -stack-offset (nothing that changes the pictures themselves) */
 } NuChanged;
@@ -114,6 +115,7 @@ typedef struct
   int             preview_fade;            /* % of the stack height, 0 = off */
   int             preview_view_top_radius; /* px at 64 × 64 */
   int             preview_view_bottom_radius;
+  int             preview_stack_padding;   /* px at 64 × 64 */
   NuStackPosition preview_stack_position;
   int             preview_stack_offset;    /* px at 64 × 64, positive = down */
   const char     *preview_folder_icon;  /* Never NULL ("" = theme icon); owned by the service, valid until

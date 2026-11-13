@@ -133,6 +133,12 @@
       <description>top / bottom = 8 px from the icon's top / bottom at 64 × 64; centre = inside the folder.</description>
     </key>
 
+    <key name="folder-preview-stack-padding" type="i">
+      <range min="0" max="20"/>
+      <default>8</default>
+      <summary>Stacked: space between the stack and the icon's left and right edges (px at 64 × 64)</summary>
+    </key>
+
     <key name="folder-preview-stack-offset" type="i">
       <range min="-16" max="16"/>
       <default>0</default>

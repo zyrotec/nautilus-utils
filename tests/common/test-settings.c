@@ -48,6 +48,7 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_cmpint (a->preview_view_bottom_radius, ==, b->preview_view_bottom_radius);
   g_assert_cmpint (a->preview_stack_position, ==, b->preview_stack_position);
   g_assert_cmpint (a->preview_stack_offset, ==, b->preview_stack_offset);
+  g_assert_cmpint (a->preview_stack_padding, ==, b->preview_stack_padding);
   g_assert_cmpstr (a->preview_folder_icon, ==, b->preview_folder_icon);
   g_assert_cmpstr (a->preview_overlay_icon, ==, b->preview_overlay_icon);
 }
@@ -323,6 +324,7 @@ test_each_group (void)
     { "folder-preview-view-top-radius", 5, NU_CHANGED_PREVIEW_STYLE },
     { "folder-preview-view-bottom-radius", 9, NU_CHANGED_PREVIEW_STYLE },
     { "folder-preview-stack-offset", -6, NU_CHANGED_PREVIEW_ICONS },
+    { "folder-preview-stack-padding", 3, NU_CHANGED_PREVIEW_STYLE },
   };
   for (gsize i = 0; i < G_N_ELEMENTS (ints); i++)
     {
@@ -338,6 +340,7 @@ test_each_group (void)
   g_assert_cmpint (pc->preview_view_top_radius, ==, 5);
   g_assert_cmpint (pc->preview_view_bottom_radius, ==, 9);
   g_assert_cmpint (pc->preview_stack_offset, ==, -6);
+  g_assert_cmpint (pc->preview_stack_padding, ==, 3);
   counter.calls = 0;
   g_settings_set_enum (s, "folder-preview-stack-position", NU_STACK_BOTTOM);
   drain ();

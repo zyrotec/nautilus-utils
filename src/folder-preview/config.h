@@ -49,8 +49,6 @@
 
 /* Sizes the owner gives "at the 64 × 64 icon size" scale with the icon (PLAN.md §11.5b). */
 #define REF_ICON_PX         64.0
-#define STACK_SIDE          (8.0 / REF_ICON_PX) /* stack 8 px from the icon's left and right edges */
-#define STACK_ICON_W        (1.0 - 2 * STACK_SIDE) /* stack width as a fraction of the icon */
 #define STACK_EDGE          (8.0 / REF_ICON_PX) /* top / bottom position: 8 px from the icon's edge */
 /* Centre position: the stack's top is this far below the top of the folder's visible body (its opaque
  * bounding box), as a fraction of the body height (the owner's mock-up). */
@@ -59,5 +57,6 @@
 /* Disk cache layout version: bump when the look of frames changes, so old frames are never shown.
  * v4: the style (layout, border, shadow, rotation) is part of each folder's cache directory name.
  * v5: drop shadows following the picture's shape, keep-aspect and depth options.
- * v6: stack 8 px from the sides, depth presets, corner radius, fade and view clipping. */
-#define CACHE_DISK_VERSION  "v6"
+ * v6: stack 8 px from the sides, depth presets, corner radius, fade and view clipping.
+ * v7: side padding setting, the front card is never tilted. */
+#define CACHE_DISK_VERSION  "v7"

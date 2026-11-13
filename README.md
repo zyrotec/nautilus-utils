@@ -19,8 +19,8 @@ covers, and cycles through the next ones while the pointer hovers over it. Two l
   own **folder icon** SVG and a **front overlay** SVG drawn over the cards, so the pictures look like they
   sit inside the folder. Both SVGs are drawn at the size of the icon: give them the same canvas and place
   the overlay where it belongs inside its SVG. A **depth effect** (Blur, Transparency or Darken) makes the
-  cards further back look further away. The stack sits 8 px from the icon's sides (at the 64 × 64 size,
-  scaled with the zoom); its position (Top, Centre, Bottom, plus a fine-tuning slider), a bottom fade and
+  cards further back look further away; the front card always stays upright. The stack's side padding
+  (8 px by default, at the 64 × 64 size, scaled with the zoom), its position (Top, Centre, Bottom, plus a fine-tuning slider), a bottom fade and
   rounded top/bottom corners that clip all pictures can be set too.
   Folders without previews keep the theme's folder icon.
 

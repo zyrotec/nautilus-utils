@@ -58,6 +58,7 @@ typedef struct
   guint    fade;             /* Stacked: bottom fade over this % of the stack height (0 = off, max 100). */
   guint    view_top_radius;  /* Stacked: the stack area clips all pictures with these corner radii (px at */
   guint    view_bottom_radius; /* 64 × 64); both 0 = no clipping. */
+  guint    stack_padding;    /* Stacked: space to the icon's left and right edges, px at 64 × 64 (max 20). */
 } FpStyle;
 
 /* The default look: grid, white border, shadow, rotation, aspect ratio kept, 2 px corners; stacked: blur
@@ -98,6 +99,9 @@ void fp_composite_slot_rect (guint   n_items,
                              double *y,
                              double *w,
                              double *h);
+
+/* Stacked: the stack's width as a fraction of the icon (1 − 2 × padding / 64, at least 0.25). */
+double fp_style_stack_width (const FpStyle *style);
 
 /* Icon size in pixels that a frame @width pixels wide belongs to (the frame covers a fixed part of the icon
  * in each layout); used to scale the "px at 64 × 64" options. */

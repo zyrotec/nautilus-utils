@@ -38,10 +38,11 @@ typedef struct
 /* The v1 grid: frame on the front face (FRAME_FACE_*), no back or overlay. */
 void fp_decor_init_grid (FpDecor *decor);
 
-/* Stacked: the card stack, STACK_SIDE from the icon's left and right edges, at @position on a folder whose
- * opaque body is @body (fractions of the icon; used by FP_STACK_CENTRE), moved down by @offset px at the
- * 64 × 64 size (negative = up). No back or overlay yet. */
+/* Stacked: the card stack, @style's padding from the icon's left and right edges (fp_style_stack_width), at
+ * @position on a folder whose opaque body is @body (fractions of the icon; used by FP_STACK_CENTRE), moved
+ * down by @offset px at the 64 × 64 size (negative = up). No back or overlay yet. */
 void fp_decor_init_stacked (FpDecor               *decor,
+                            const FpStyle         *style,
                             const graphene_rect_t *body,
                             FpStackPosition        position,
                             int                    offset);

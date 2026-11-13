@@ -261,7 +261,7 @@ hook_geometry (ImageHook *hook, FpDecor *decor, graphene_rect_t *body, gboolean 
   *custom_back = vh->back_art != NULL && fp_icon_art_get_body (vh->back_art, body);
   if (!*custom_back)
     theme_body (hook->icon, body);
-  fp_decor_init_stacked (decor, body, vh->position, vh->offset);
+  fp_decor_init_stacked (decor, &vh->style, body, vh->position, vh->offset);
 }
 
 /* The full decor for @hook at its current size and scale; *decor gets owned texture refs (release with

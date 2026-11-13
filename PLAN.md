@@ -1365,6 +1365,7 @@ an on/off switch for hover cycling. Branch `folder-thumbnail-preview-extended`. 
 | `folder-preview-fade` | i 0–100 (% of the stack height) | 0 (stacked only) |
 | `folder-preview-view-top-radius` | i 0–16 (px at 64 × 64) | 0 (stacked only) |
 | `folder-preview-view-bottom-radius` | i 0–16 (px at 64 × 64) | 0 (stacked only) |
+| `folder-preview-stack-padding` | i 0–20 (px at 64 × 64) | 8 (stacked only) |
 | `folder-preview-stack-position` | enum top / centre / bottom | centre (stacked only) |
 | `folder-preview-stack-offset` | i −16–16 (px at 64 × 64) | 0 (stacked only) |
 | `folder-preview-folder-icon` | s (path, empty = theme) | '' |
@@ -1436,6 +1437,16 @@ part of the icon).
 `CACHE_DISK_VERSION` v6. Tests: depth presets, fade profile, clipping (nothing outside the area, rounded vs
 square bottom corners), corner radius, 8 px sides, placement (top / bottom / offset, frame size unchanged).
 
+### 11.5c Third follow-up (owner, 2026-11-14)
+
+1. The 8 px side padding is a setting (**Side Padding** slider, 0–20 px at 64 × 64, default 8): stack width =
+   1 − 2 × padding / 64 of the icon (`fp_style_stack_width`). It changes the frame's shape relative to the
+   icon, so it is part of the style (cache key). Top / bottom positions stay 8 px from the icon's edge.
+2. The front card is never tilted; with Random Rotation the cards behind it still are.
+
+`CACHE_DISK_VERSION` v7. Tests: upright front card (identical with rotation on/off), the card behind tilts,
+padding widths and clamping, placement with padding 0 / 16.
+
 ### 11.6 Phase results (2026-11-13)
 
 - **Phase 1:** schema keys + `nu_settings` (two new change groups: style, icons/cycle); `FpStyle` in
@@ -1468,4 +1479,7 @@ the buffer, not suppressed. Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan
 
 Second follow-up (§11.5b) results: smoke `smoke-20261113-234528` **PASS** — previews drawn in 66/66 self-checks, 0 wrong
 (look round now also cycles the depth presets, fade, view radii, corner radius, positions and offsets).
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+
+Third follow-up (§11.5c) results: smoke `smoke-20261114-001626` **PASS** — previews drawn in 68/68 self-checks, 0 wrong.
 Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.

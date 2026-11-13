@@ -632,6 +632,49 @@ test_fade_clip_radius (void)
   assert_colour (r, cx0 + 8 * s64, cy0 + ch0 / 2, RED, "card body");
 }
 
+/* The front card never tilts (owner), the cards behind still do; the padding sets the stack width. */
+static void
+test_front_upright_and_padding (void)
+{
+  FpStyle st = grid_style;
+  st.layout = FP_LAYOUT_STACKED;
+  st.border = FALSE;
+  st.shadow = FALSE;
+  st.keep_aspect = FALSE;
+  guint w = 300;
+  FpCompositeItem one[] = { { red_png, 12345 } };
+  st.rotation = TRUE;
+  g_autoptr (GdkTexture) tilted = fp_composite_frame (&st, one, 1, w, NULL);
+  st.rotation = FALSE;
+  g_autoptr (GdkTexture) flat = fp_composite_frame (&st, one, 1, w, NULL);
+  guint h = fp_composite_frame_height (&st, w);
+  g_autofree guint8 *a = pixels (tilted);
+  g_autofree guint8 *b = pixels (flat);
+  g_assert_cmpint (memcmp (a, b, (gsize) w * 4 * h), ==, 0); /* front card alone: identical */
+  FpCompositeItem two[] = { { red_png, 12345 }, { green_png, 777 } };
+  st.rotation = TRUE;
+  g_autoptr (GdkTexture) t2 = fp_composite_frame (&st, two, 2, w, NULL);
+  st.rotation = FALSE;
+  g_autoptr (GdkTexture) f2 = fp_composite_frame (&st, two, 2, w, NULL);
+  g_autofree guint8 *c = pixels (t2);
+  g_autofree guint8 *d = pixels (f2);
+  g_assert_cmpint (memcmp (c, d, (gsize) w * 4 * h), !=, 0); /* the card behind tilts */
+
+  /* Padding: the frame's icon size follows the stack width (radii etc. stay in icon pixels). */
+  st.stack_padding = 0;
+  g_assert_cmpfloat_with_epsilon (fp_style_stack_width (&st), 1.0, 1e-9);
+  g_assert_cmpfloat_with_epsilon (fp_composite_icon_px (&st, w), w / (1 + 2 * STACK_PAD), 1e-6);
+  st.stack_padding = 16;
+  g_assert_cmpfloat_with_epsilon (fp_style_stack_width (&st), 0.5, 1e-9);
+  st.stack_padding = 99; /* out of range: clamped to 20 */
+  g_assert_cmpfloat_with_epsilon (fp_style_stack_width (&st), 1 - 40.0 / 64, 1e-9);
+  FpStyle other = st;
+  other.stack_padding = 3;
+  g_autofree char *k1 = fp_style_key (&st);
+  g_autofree char *k2 = fp_style_key (&other);
+  g_assert_cmpstr (k1, !=, k2);
+}
+
 /* PLAN.md §4.2: thousands of composite create/destroy cycles. */
 static void
 test_stress (void)
@@ -652,6 +695,7 @@ test_stress (void)
       st.view_top_radius = i % 5;
       st.view_bottom_radius = i % 6;
       st.corner_radius = i % 9;
+      st.stack_padding = i % 21;
       g_autoptr (GdkTexture) u = fp_composite_frame (&st, items, i % 4, 16 + (i % 5) * 8, NULL);
       g_assert_nonnull (u);
     }
@@ -683,6 +727,7 @@ main (int argc, char **argv)
   g_test_add_func ("/composite/depth", test_depth);
   g_test_add_func ("/composite/depth-presets", test_depth_presets);
   g_test_add_func ("/composite/fade-clip-radius", test_fade_clip_radius);
+  g_test_add_func ("/composite/front-upright-and-padding", test_front_upright_and_padding);
   g_test_add_func ("/composite/drop-shadow-shape", test_drop_shadow_shape);
   g_test_add_func ("/composite/stress", test_stress);
   int ret = g_test_run ();

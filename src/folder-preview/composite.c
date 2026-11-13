@@ -24,6 +24,7 @@ fp_style_init_default (FpStyle *style)
     .keep_aspect = TRUE,
     .depth = FP_DEPTH_BLUR,
     .corner_radius = 2,
+    .stack_padding = 8,
   };
 }
 
@@ -34,7 +35,8 @@ fp_style_equal (const FpStyle *a, const FpStyle *b)
          a->border_r == b->border_r && a->border_g == b->border_g && a->border_b == b->border_b &&
          a->shadow == b->shadow && a->rotation == b->rotation && a->keep_aspect == b->keep_aspect &&
          a->depth == b->depth && a->corner_radius == b->corner_radius && a->fade == b->fade &&
-         a->view_top_radius == b->view_top_radius && a->view_bottom_radius == b->view_bottom_radius;
+         a->view_top_radius == b->view_top_radius && a->view_bottom_radius == b->view_bottom_radius &&
+         a->stack_padding == b->stack_padding;
 }
 
 /* Returns a new string (caller frees). */
@@ -43,12 +45,12 @@ fp_style_key (const FpStyle *style)
 {
   gboolean stacked = style->layout == FP_LAYOUT_STACKED;
   /* Stacked-only options are left out of grid keys, so changing them keeps the grid's cached frames. */
-  return g_strdup_printf ("%s%u-b%d%02x%02x%02x-s%d-r%d-a%d-c%u-d%d-f%u-v%u.%u", stacked ? "stack" : "grid",
+  return g_strdup_printf ("%s%u-b%d%02x%02x%02x-s%d-r%d-a%d-c%u-d%d-f%u-v%u.%u-p%u", stacked ? "stack" : "grid",
                           stacked ? style->stack_step : 0u, style->border != FALSE, style->border_r,
                           style->border_g, style->border_b, style->shadow != FALSE, style->rotation != FALSE,
                           style->keep_aspect != FALSE, style->corner_radius, stacked ? (int) style->depth : 0,
                           stacked ? style->fade : 0u, stacked ? style->view_top_radius : 0u,
-                          stacked ? style->view_bottom_radius : 0u);
+                          stacked ? style->view_bottom_radius : 0u, stacked ? style->stack_padding : 0u);
 }
 
 guint
@@ -66,10 +68,16 @@ fp_style_step (const FpStyle *style)
 }
 
 double
+fp_style_stack_width (const FpStyle *style)
+{
+  return MAX (0.25, 1.0 - 2.0 * MIN (style->stack_padding, 20u) / REF_ICON_PX);
+}
+
+double
 fp_composite_icon_px (const FpStyle *style, guint width)
 {
   if (style->layout == FP_LAYOUT_STACKED)
-    return width / ((1.0 + 2 * STACK_PAD) * STACK_ICON_W);
+    return width / ((1.0 + 2 * STACK_PAD) * fp_style_stack_width (style));
   return width / ((1.0 + 2 * FRAME_PAD) * FRAME_FACE_W);
 }
 
@@ -459,7 +467,8 @@ draw_card (cairo_t *cr, const FpStyle *style, cairo_surface_t *img, double x, do
       cairo_paint (icr);
     }
   cairo_destroy (icr);
-  double angle = style->rotation ? unit (seed, 0x9e3779b9U) * STACK_MAX_TILT_DEG : 0;
+  /* The front card always stays upright (owner); only the cards behind it tilt. */
+  double angle = style->rotation && depth > 0 ? unit (seed, 0x9e3779b9U) * STACK_MAX_TILT_DEG : 0;
   item_finish (cr, &item, x + w / 2, y + ch / 2, angle, shadow, blur, alpha);
 }
 
