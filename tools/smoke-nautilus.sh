@@ -45,7 +45,26 @@ LOG="$ROOT/safety-logs/smoke-$STAMP"
 CMD_DIR="$LOG/driver"
 mkdir -p "$CMD_DIR"
 
+# Private runtime dir for the test session (on the real runtime dir's tmpfs). The private D-Bus session starts
+# its own portals; with the shared $XDG_RUNTIME_DIR its xdg-document-portal mounted over, and on exit
+# unmounted, the user's /run/user/$UID/doc, after which every Flatpak app failed to start ("bwrap: Can't find
+# source path /run/user/1000/doc/by-app/…"). Wayland is reached through the absolute socket path instead.
+REAL_RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+TEST_RUNTIME="$(mktemp -d "$REAL_RUNTIME/nu-smoke.XXXXXX")" || exit 2
+case "${WAYLAND_DISPLAY:-}" in
+  "") TEST_WAYLAND="" ;;
+  /*) TEST_WAYLAND="$WAYLAND_DISPLAY" ;;
+  *)  TEST_WAYLAND="$REAL_RUNTIME/$WAYLAND_DISPLAY" ;;
+esac
+
+cleanup_runtime() {
+  # Portals of the private session may leave their FUSE mount behind; only ever touch our own dir.
+  if mountpoint -q "$TEST_RUNTIME/doc" 2>/dev/null; then fusermount3 -u "$TEST_RUNTIME/doc" 2>/dev/null || fusermount -u "$TEST_RUNTIME/doc" 2>/dev/null; fi
+  rm -rf --one-file-system "$TEST_RUNTIME" 2>/dev/null
+}
+
 restore_build() {
+  cleanup_runtime
   echo "Restoring normal build in build/ ..."
   meson configure build -Db_sanitize=none -Ddebug_driver=false >/dev/null && ninja -C build >/dev/null ||
     echo "WARNING: could not restore build/; run: meson configure build -Db_sanitize=none -Ddebug_driver=false && ninja -C build" >&2
@@ -72,6 +91,8 @@ for f in A B C D; do mkdir -p "$FV_TREE/$f/sub"; for i in 1 2 3 4 5 6; do : > "$
   # The user's icon themes (read-only link): without them GTK falls back to its built-in folder-symbolic
   # icon, which (correctly) gets no previews (PLAN.md §11.1), and the preview checks would test nothing.
   [ -d "$HOME/.local/share/icons" ] && ln -s "$HOME/.local/share/icons" "$XDG_DATA_HOME/icons"
+  export XDG_RUNTIME_DIR="$TEST_RUNTIME"
+  [ -n "$TEST_WAYLAND" ] && export WAYLAND_DISPLAY="$TEST_WAYLAND"
   # LD_PRELOAD only for nautilus itself, not for the private dbus-daemon / portals.
   setsid dbus-run-session -- env \
     LD_PRELOAD="$ASAN_RT" \

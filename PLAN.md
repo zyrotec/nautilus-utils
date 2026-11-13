@@ -1494,3 +1494,10 @@ Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
 
 Border width (§11.5d) results: smoke `smoke-20261114-005830` **PASS** — previews drawn in 70/70 self-checks, 0 wrong.
 Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+
+Smoke harness (2026-11-14): the test session now gets a private `XDG_RUNTIME_DIR` (a temp dir under the real
+one, Wayland reached by its absolute socket path). With the shared runtime dir, the private session's
+xdg-document-portal unmounted the user's `/run/user/1000/doc` on exit, and every Flatpak app then failed to
+start ("bwrap: Can't find source path /run/user/1000/doc/by-app/…"; fixed for the user by restarting
+`xdg-document-portal.service`). Verified: after a smoke run the user's portal mount is intact and Flatpak
+apps start.
