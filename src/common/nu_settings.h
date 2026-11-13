@@ -32,6 +32,21 @@ typedef enum
 
 typedef enum
 {
+  NU_DEPTH_NONE         = 0,
+  NU_DEPTH_BLUR         = 1,
+  NU_DEPTH_TRANSPARENCY = 2,
+  NU_DEPTH_DARKEN       = 3,
+} NuDepthEffect;
+
+typedef enum
+{
+  NU_STACK_TOP    = 0,
+  NU_STACK_CENTRE = 1,
+  NU_STACK_BOTTOM = 2,
+} NuStackPosition;
+
+typedef enum
+{
   NU_STACK_STEP_ONE   = 0,
   NU_STACK_STEP_THREE = 1,
 } NuStackStep;
@@ -66,8 +81,9 @@ typedef enum
   NU_CHANGED_FV_GENERATION  = 1 << 6, /* folder-views-generation (Reset All) */
   NU_CHANGED_FV_DEFAULT     = 1 << 7, /* folder-views-default-*, folder-views-defaults-captured */
   NU_CHANGED_PREVIEW_STYLE  = 1 << 8, /* folder-preview-layout, -stack-step, -border*, -shadow, -rotation,
-                                       * -keep-aspect, -depth */
-  NU_CHANGED_PREVIEW_ICONS  = 1 << 9, /* folder-preview-cycle, -folder-icon, -overlay-icon */
+                                       * -keep-aspect, -depth-effect, -corner-radius, -fade, -view-*-radius */
+  NU_CHANGED_PREVIEW_ICONS  = 1 << 9, /* folder-preview-cycle, -folder-icon, -overlay-icon, -stack-position,
+                                       * -stack-offset (nothing that changes the pictures themselves) */
 } NuChanged;
 
 typedef struct
@@ -93,7 +109,13 @@ typedef struct
   gboolean        preview_shadow;
   gboolean        preview_rotation;
   gboolean        preview_keep_aspect;
-  gboolean        preview_depth;
+  NuDepthEffect   preview_depth_effect;
+  int             preview_corner_radius;   /* px at 64 × 64 */
+  int             preview_fade;            /* % of the stack height, 0 = off */
+  int             preview_view_top_radius; /* px at 64 × 64 */
+  int             preview_view_bottom_radius;
+  NuStackPosition preview_stack_position;
+  int             preview_stack_offset;    /* px at 64 × 64, positive = down */
   const char     *preview_folder_icon;  /* Never NULL ("" = theme icon); owned by the service, valid until
                                          * the next change notification or shutdown. */
   const char     *preview_overlay_icon; /* Never NULL ("" = none); same ownership. */

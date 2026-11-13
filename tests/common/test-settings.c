@@ -41,7 +41,13 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_cmpint (a->preview_shadow, ==, b->preview_shadow);
   g_assert_cmpint (a->preview_rotation, ==, b->preview_rotation);
   g_assert_cmpint (a->preview_keep_aspect, ==, b->preview_keep_aspect);
-  g_assert_cmpint (a->preview_depth, ==, b->preview_depth);
+  g_assert_cmpint (a->preview_depth_effect, ==, b->preview_depth_effect);
+  g_assert_cmpint (a->preview_corner_radius, ==, b->preview_corner_radius);
+  g_assert_cmpint (a->preview_fade, ==, b->preview_fade);
+  g_assert_cmpint (a->preview_view_top_radius, ==, b->preview_view_top_radius);
+  g_assert_cmpint (a->preview_view_bottom_radius, ==, b->preview_view_bottom_radius);
+  g_assert_cmpint (a->preview_stack_position, ==, b->preview_stack_position);
+  g_assert_cmpint (a->preview_stack_offset, ==, b->preview_stack_offset);
   g_assert_cmpstr (a->preview_folder_icon, ==, b->preview_folder_icon);
   g_assert_cmpstr (a->preview_overlay_icon, ==, b->preview_overlay_icon);
 }
@@ -247,7 +253,6 @@ test_each_group (void)
     { "folder-preview-shadow", NU_CHANGED_PREVIEW_STYLE },
     { "folder-preview-rotation", NU_CHANGED_PREVIEW_STYLE },
     { "folder-preview-keep-aspect", NU_CHANGED_PREVIEW_STYLE },
-    { "folder-preview-depth", NU_CHANGED_PREVIEW_STYLE },
     { "folder-preview-cycle", NU_CHANGED_PREVIEW_ICONS },
   };
   g_autoptr (GSettingsBackend) backend = start ();
@@ -294,6 +299,7 @@ test_each_group (void)
   } preview_enums[] = {
     { "folder-preview-layout", NU_PREVIEW_STACKED },
     { "folder-preview-stack-step", NU_STACK_STEP_THREE },
+    { "folder-preview-depth-effect", NU_DEPTH_DARKEN },
   };
   for (gsize i = 0; i < G_N_ELEMENTS (preview_enums); i++)
     {
@@ -305,6 +311,38 @@ test_each_group (void)
     }
   g_assert_cmpint (nu_settings_get ()->preview_layout, ==, NU_PREVIEW_STACKED);
   g_assert_cmpint (nu_settings_get ()->preview_stack_step, ==, NU_STACK_STEP_THREE);
+  g_assert_cmpint (nu_settings_get ()->preview_depth_effect, ==, NU_DEPTH_DARKEN);
+  static const struct
+  {
+    const char *key;
+    int         value;
+    NuChanged   group;
+  } ints[] = {
+    { "folder-preview-corner-radius", 7, NU_CHANGED_PREVIEW_STYLE },
+    { "folder-preview-fade", 40, NU_CHANGED_PREVIEW_STYLE },
+    { "folder-preview-view-top-radius", 5, NU_CHANGED_PREVIEW_STYLE },
+    { "folder-preview-view-bottom-radius", 9, NU_CHANGED_PREVIEW_STYLE },
+    { "folder-preview-stack-offset", -6, NU_CHANGED_PREVIEW_ICONS },
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS (ints); i++)
+    {
+      counter.calls = 0;
+      g_settings_set_int (s, ints[i].key, ints[i].value);
+      drain ();
+      g_assert_cmpuint (counter.calls, ==, 1);
+      g_assert_cmpuint (counter.last, ==, ints[i].group);
+    }
+  const NuConfig *pc = nu_settings_get ();
+  g_assert_cmpint (pc->preview_corner_radius, ==, 7);
+  g_assert_cmpint (pc->preview_fade, ==, 40);
+  g_assert_cmpint (pc->preview_view_top_radius, ==, 5);
+  g_assert_cmpint (pc->preview_view_bottom_radius, ==, 9);
+  g_assert_cmpint (pc->preview_stack_offset, ==, -6);
+  counter.calls = 0;
+  g_settings_set_enum (s, "folder-preview-stack-position", NU_STACK_BOTTOM);
+  drain ();
+  g_assert_cmpuint (counter.last, ==, NU_CHANGED_PREVIEW_ICONS);
+  g_assert_cmpint (nu_settings_get ()->preview_stack_position, ==, NU_STACK_BOTTOM);
   counter.calls = 0;
   g_settings_set_string (s, "folder-preview-border-colour", "#102030");
   drain ();

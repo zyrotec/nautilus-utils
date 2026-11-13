@@ -30,12 +30,25 @@ fp_decor_init_grid (FpDecor *decor)
 }
 
 void
-fp_decor_init_stacked (FpDecor *decor, const graphene_rect_t *body)
+fp_decor_init_stacked (FpDecor *decor, const graphene_rect_t *body, FpStackPosition position, int offset)
 {
   *decor = (FpDecor) { .layout = FP_LAYOUT_STACKED };
-  double w = STACK_BODY_W * body->size.width; /* stack width */
-  double x = body->origin.x + (body->size.width - w) / 2;
-  double y = body->origin.y + STACK_BODY_TOP * body->size.height;
+  double w = STACK_ICON_W, x = STACK_SIDE; /* stack width and left edge */
+  double y;
+  switch (position)
+    {
+    case FP_STACK_TOP:
+      y = STACK_EDGE;
+      break;
+    case FP_STACK_BOTTOM:
+      y = 1.0 - STACK_EDGE - STACK_H * w;
+      break;
+    case FP_STACK_CENTRE:
+    default:
+      y = body->origin.y + STACK_BODY_TOP * body->size.height;
+      break;
+    }
+  y += offset / REF_ICON_PX;
   double pad = STACK_PAD * w; /* the frame texture's margin, as in composite.c */
   graphene_rect_init (&decor->frame_rect, (float) (x - pad), (float) (y - pad), (float) (w + 2 * pad),
                       (float) (STACK_H * w + 2 * pad));

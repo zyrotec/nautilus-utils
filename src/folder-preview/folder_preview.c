@@ -35,8 +35,13 @@ apply_look (void)
   style.shadow = c->preview_shadow;
   style.rotation = c->preview_rotation;
   style.keep_aspect = c->preview_keep_aspect;
-  style.depth = c->preview_depth;
-  fp_view_hook_set_look (&style, c->preview_cycle, c->preview_folder_icon, c->preview_overlay_icon);
+  style.depth = (FpDepth) c->preview_depth_effect;      /* same values (nu_settings.h / composite.h) */
+  style.corner_radius = (guint) MAX (c->preview_corner_radius, 0);
+  style.fade = (guint) CLAMP (c->preview_fade, 0, 100);
+  style.view_top_radius = (guint) MAX (c->preview_view_top_radius, 0);
+  style.view_bottom_radius = (guint) MAX (c->preview_view_bottom_radius, 0);
+  fp_view_hook_set_look (&style, (FpStackPosition) c->preview_stack_position, c->preview_stack_offset,
+                         c->preview_cycle, c->preview_folder_icon, c->preview_overlay_icon);
 }
 
 /* Settings changed (once per Apply): follow the on/off switch (PLAN.md §9.1.2) and the look (§11). */

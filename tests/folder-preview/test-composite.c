@@ -379,7 +379,7 @@ test_stacked (void)
   st.rotation = FALSE;
   st.border = FALSE;
   st.keep_aspect = FALSE; /* pictures fill the cards */
-  st.depth = FALSE;       /* plain dimming: exact colours */
+  st.depth = FP_DEPTH_NONE;       /* plain dimming: exact colours */
   guint w = 336;
   guint h = fp_composite_frame_height (&st, w);
   g_assert_cmpfloat (fabs ((double) h / w - (STACK_H + 2 * STACK_PAD) / (1 + 2 * STACK_PAD)), <, 0.01);
@@ -461,7 +461,7 @@ test_keep_aspect_option (void)
   st.layout = FP_LAYOUT_STACKED;
   st.keep_aspect = TRUE;
   st.border = FALSE;
-  st.depth = FALSE;
+  st.depth = FP_DEPTH_NONE;
   g_autoptr (GdkTexture) s1 = fp_composite_frame (&st, wide, 1, w, NULL);
   debug_save (s1, "stacked-aspect.png");
   double cx, cy, cardw, cardh;
@@ -486,9 +486,9 @@ test_depth (void)
   st.keep_aspect = FALSE;
   guint w = 400;
   FpCompositeItem items[] = { { red_png, 1 }, { green_png, 2 }, { blue_png, 3 } };
-  st.depth = FALSE;
+  st.depth = FP_DEPTH_NONE;
   g_autoptr (GdkTexture) flat = fp_composite_frame (&st, items, 3, w, NULL);
-  st.depth = TRUE;
+  st.depth = FP_DEPTH_BLUR;
   g_autoptr (GdkTexture) deep = fp_composite_frame (&st, items, 3, w, NULL);
   debug_save (deep, "stacked-depth.png");
   double x[3], y[3], cw[3], ch[3];
@@ -539,6 +539,99 @@ test_drop_shadow_shape (void)
   g_assert_cmpuint (pixel (t, x + pw / 4, y).a, ==, 0);      /* and no box behind it */
 }
 
+/* Depth presets: transparency (back cards see-through, front opaque) and darken (darker, edges sharp). */
+static void
+test_depth_presets (void)
+{
+  FpStyle st = grid_style;
+  st.layout = FP_LAYOUT_STACKED;
+  st.rotation = FALSE;
+  st.border = FALSE;
+  st.shadow = FALSE;
+  st.keep_aspect = FALSE;
+  guint w = 400;
+  FpCompositeItem items[] = { { red_png, 1 }, { green_png, 2 }, { blue_png, 3 } };
+  double x[3], y[3], cw[3], ch[3];
+  for (guint i = 0; i < 3; i++)
+    fp_composite_card_rect (i, w, &x[i], &y[i], &cw[i], &ch[i]);
+  double mid = w / 2.0;
+
+  st.depth = FP_DEPTH_TRANSPARENCY;
+  g_autoptr (GdkTexture) tr = fp_composite_frame (&st, items, 3, w, NULL);
+  debug_save (tr, "stacked-transparency.png");
+  Px back = pixel (tr, mid, (y[2] + y[1]) / 2), middle = pixel (tr, mid, (y[1] + y[0]) / 2);
+  g_assert_cmpuint (back.a, <, middle.a);     /* further back = more transparent */
+  g_assert_cmpuint (middle.a, <, 255);
+  g_assert_cmpuint (back.a, >, 60);
+  assert_colour (tr, mid, y[0] + ch[0] / 2, RED, "front card fully visible");
+
+  st.depth = FP_DEPTH_DARKEN;
+  g_autoptr (GdkTexture) dk = fp_composite_frame (&st, items, 3, w, NULL);
+  debug_save (dk, "stacked-darken.png");
+  g_assert_true (near (pixel (dk, mid, (y[2] + y[1]) / 2), dimmed (BLUE, 2 * STACK_DEPTH_DARKEN)));
+  g_assert_cmpuint (pixel (dk, mid, y[2] - 2).a, ==, 0); /* no blur: sharp top edge */
+  assert_colour (dk, mid, y[0] + ch[0] / 2, RED, "front card undimmed");
+}
+
+/* Bottom fade, view clipping and corner radius (px at 64 × 64, scaled with the icon). */
+static void
+test_fade_clip_radius (void)
+{
+  FpStyle st = grid_style;
+  st.layout = FP_LAYOUT_STACKED;
+  st.rotation = FALSE;
+  st.border = FALSE;
+  st.shadow = FALSE;
+  st.keep_aspect = FALSE;
+  st.depth = FP_DEPTH_NONE;
+  st.corner_radius = 0;
+  guint w = 400;
+  FpCompositeItem items[] = { { red_png, 1 } };
+  double ax, ay, aw, ah;
+  fp_composite_stack_rect (w, &ax, &ay, &aw, &ah);
+  double s64 = fp_composite_icon_px (&st, w) / 64; /* frame px per "px at 64 × 64" */
+  g_assert_cmpfloat_with_epsilon (aw, 48 * s64, 0.01); /* 8 px from both sides */
+
+  st.fade = 50;
+  g_autoptr (GdkTexture) f = fp_composite_frame (&st, items, 1, w, NULL);
+  debug_save (f, "stacked-fade.png");
+  double mid = ax + aw / 2;
+  g_assert_cmpuint (pixel (f, mid, ay + ah * 0.45).a, ==, 255);  /* above the fade */
+  Px half = pixel (f, mid, ay + ah * 0.75);                        /* half-way down the fade */
+  g_assert_cmpuint (half.a, >, 90);
+  g_assert_cmpuint (half.a, <, 170);
+  g_assert_cmpuint (pixel (f, mid, ay + ah - 1).a, <, 10);        /* gone at the bottom */
+
+  /* View clip: nothing (not even a shadow or tilt) is drawn outside the stack area... */
+  st.fade = 0;
+  st.view_top_radius = 8;
+  st.shadow = TRUE;
+  st.rotation = TRUE;
+  FpCompositeItem three[] = { { red_png, 1 }, { green_png, 2 }, { blue_png, 3 } };
+  g_autoptr (GdkTexture) c3 = fp_composite_frame (&st, three, 3, w, NULL);
+  debug_save (c3, "stacked-clip.png");
+  g_assert_cmpuint (pixel (c3, mid, ay - 1).a, ==, 0);
+  g_assert_cmpuint (pixel (c3, mid, ay + ah + 2).a, ==, 0);
+  /* ...and with a bottom radius of 0 the front card's bottom-left corner stays square. */
+  st.shadow = FALSE;
+  st.rotation = FALSE;
+  double cx0, cy0, cw0, ch0;
+  fp_composite_card_rect (0, w, &cx0, &cy0, &cw0, &ch0);
+  g_autoptr (GdkTexture) c = fp_composite_frame (&st, items, 1, w, NULL);
+  assert_colour (c, cx0 + 1, cy0 + ch0 - 2, RED, "square bottom corner");
+  st.view_bottom_radius = 8;
+  g_autoptr (GdkTexture) cb = fp_composite_frame (&st, items, 1, w, NULL);
+  g_assert_cmpuint (pixel (cb, cx0 + 1, cy0 + ch0 - 2).a, ==, 0); /* clipped by the rounded bottom */
+
+  /* Corner radius of each picture: 0 = square corner drawn, 8 (at 64) = corner cut. */
+  st.view_top_radius = st.view_bottom_radius = 0;
+  st.corner_radius = 8;
+  g_autoptr (GdkTexture) r = fp_composite_frame (&st, items, 1, w, NULL);
+  debug_save (r, "stacked-radius.png");
+  g_assert_cmpuint (pixel (r, cx0 + 1, cy0 + ch0 - 2).a, ==, 0);
+  assert_colour (r, cx0 + 8 * s64, cy0 + ch0 / 2, RED, "card body");
+}
+
 /* PLAN.md §4.2: thousands of composite create/destroy cycles. */
 static void
 test_stress (void)
@@ -554,7 +647,11 @@ test_stress (void)
       st.border = (i % 2) == 0;
       st.shadow = (i % 3) == 0;
       st.keep_aspect = (i % 5) != 0;
-      st.depth = (i % 7) != 0;
+      st.depth = (FpDepth) (i % 4);
+      st.fade = (i % 3) * 30;
+      st.view_top_radius = i % 5;
+      st.view_bottom_radius = i % 6;
+      st.corner_radius = i % 9;
       g_autoptr (GdkTexture) u = fp_composite_frame (&st, items, i % 4, 16 + (i % 5) * 8, NULL);
       g_assert_nonnull (u);
     }
@@ -584,6 +681,8 @@ main (int argc, char **argv)
   g_test_add_func ("/composite/stacked", test_stacked);
   g_test_add_func ("/composite/keep-aspect-option", test_keep_aspect_option);
   g_test_add_func ("/composite/depth", test_depth);
+  g_test_add_func ("/composite/depth-presets", test_depth_presets);
+  g_test_add_func ("/composite/fade-clip-radius", test_fade_clip_radius);
   g_test_add_func ("/composite/drop-shadow-shape", test_drop_shadow_shape);
   g_test_add_func ("/composite/stress", test_stress);
   int ret = g_test_run ();

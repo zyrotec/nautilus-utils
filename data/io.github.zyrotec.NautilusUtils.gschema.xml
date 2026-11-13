@@ -31,6 +31,17 @@
     <value nick="grid" value="0"/>
     <value nick="stacked" value="1"/>
   </enum>
+  <enum id="io.github.zyrotec.NautilusUtils.DepthEffect">
+    <value nick="none" value="0"/>
+    <value nick="blur" value="1"/>
+    <value nick="transparency" value="2"/>
+    <value nick="darken" value="3"/>
+  </enum>
+  <enum id="io.github.zyrotec.NautilusUtils.StackPosition">
+    <value nick="top" value="0"/>
+    <value nick="centre" value="1"/>
+    <value nick="bottom" value="2"/>
+  </enum>
   <enum id="io.github.zyrotec.NautilusUtils.StackStep">
     <value nick="one" value="0"/>
     <value nick="three" value="1"/>
@@ -84,10 +95,48 @@
       <description>false = pictures fill their section (grid) or card (stacked), cropped.</description>
     </key>
 
-    <key name="folder-preview-depth" type="b">
-      <default>true</default>
+    <key name="folder-preview-depth-effect" enum="io.github.zyrotec.NautilusUtils.DepthEffect">
+      <default>'blur'</default>
       <summary>Depth effect in the stacked layout</summary>
-      <description>Cards further back are blurred and darkened more.</description>
+      <description>How cards further back look: blur = blurred and darkened; transparency = more transparent;
+        darken = darker; none = only slightly darker. The front card is always fully visible.</description>
+    </key>
+
+    <key name="folder-preview-corner-radius" type="i">
+      <range min="0" max="16"/>
+      <default>2</default>
+      <summary>Corner radius of each picture, in pixels at the 64 × 64 icon size (scaled with the icon)</summary>
+    </key>
+
+    <key name="folder-preview-fade" type="i">
+      <range min="0" max="100"/>
+      <default>0</default>
+      <summary>Stacked: fade out the bottom of the stack over this percentage of its height (0 = off)</summary>
+    </key>
+
+    <key name="folder-preview-view-top-radius" type="i">
+      <range min="0" max="16"/>
+      <default>0</default>
+      <summary>Stacked: top corner radius of the area that clips all pictures (px at 64 × 64)</summary>
+      <description>With both view radii 0 nothing is clipped.</description>
+    </key>
+
+    <key name="folder-preview-view-bottom-radius" type="i">
+      <range min="0" max="16"/>
+      <default>0</default>
+      <summary>Stacked: bottom corner radius of the area that clips all pictures (px at 64 × 64)</summary>
+    </key>
+
+    <key name="folder-preview-stack-position" enum="io.github.zyrotec.NautilusUtils.StackPosition">
+      <default>'centre'</default>
+      <summary>Stacked: vertical position of the stack</summary>
+      <description>top / bottom = 8 px from the icon's top / bottom at 64 × 64; centre = inside the folder.</description>
+    </key>
+
+    <key name="folder-preview-stack-offset" type="i">
+      <range min="-16" max="16"/>
+      <default>0</default>
+      <summary>Stacked: vertical fine-tuning in pixels at 64 × 64 (positive = down)</summary>
     </key>
 
     <key name="folder-preview-folder-icon" type="s">

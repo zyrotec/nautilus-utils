@@ -7,6 +7,7 @@
 #include "settings_dialog.h"
 
 #include <adwaita.h>
+#include <math.h>
 
 #include "nu_settings.h"
 
@@ -16,6 +17,8 @@ static const char *const colour_mode_nicks[] = { "accent", "custom", "gradient" 
 /* Folder preview enums (PLAN.md §11.3), NULL-terminated, in combo row order. */
 static const char *const layout_nicks[] = { "grid", "stacked", NULL };
 static const char *const stack_step_nicks[] = { "one", "three", NULL };
+static const char *const depth_nicks[] = { "none", "blur", "transparency", "darken", NULL };
+static const char *const position_nicks[] = { "top", "centre", "bottom", NULL };
 
 /* ---- GSettings ↔ property mappings (all return TRUE when @value was set) ------------------------------ */
 
@@ -76,6 +79,24 @@ nick_is (GValue *value, GVariant *variant, gpointer data)
 {
   g_value_set_boolean (value, g_strcmp0 (g_variant_get_string (variant, NULL), data) == 0);
   return TRUE;
+}
+
+/* Integer key → double property (GtkAdjustment:value). */
+static gboolean
+int_to_double (GValue *value, GVariant *variant, gpointer data)
+{
+  (void) data;
+  g_value_set_double (value, g_variant_get_int32 (variant));
+  return TRUE;
+}
+
+/* Double property → integer key, rounded. Returns a new floating variant (consumed by GSettings). */
+static GVariant *
+double_to_int (const GValue *value, const GVariantType *type, gpointer data)
+{
+  (void) type;
+  (void) data;
+  return g_variant_new_int32 ((gint32) lround (g_value_get_double (value)));
 }
 
 /* Path key → row subtitle: the file name, or @data (static text) when empty. */
@@ -210,6 +231,63 @@ enum_row (GSettings         *settings,
   adw_combo_row_set_model (ADW_COMBO_ROW (row), G_LIST_MODEL (model));
   g_settings_bind_with_mapping (settings, key, row, "selected", G_SETTINGS_BIND_DEFAULT, nick_to_selected,
                                 selected_to_nick, (gpointer) nicks, NULL);
+  return row;
+}
+
+/* GtkScale:format-value: whole numbers with @data (static) as the unit, e.g. "4 px", "30 %". Returns a new
+ * string (GTK frees it). */
+static char *
+format_value (GtkScale *scale, double value, gpointer data)
+{
+  (void) scale;
+  return g_strdup_printf ("%d %s", (int) lround (value), (const char *) data);
+}
+
+/* A row with a slider for integer @key in [min, max] (schema range); @unit is static text. */
+static GtkWidget *
+slider_row (GSettings  *settings,
+            const char *key,
+            const char *title,
+            const char *subtitle,
+            int         min,
+            int         max,
+            const char *unit)
+{
+  GtkWidget *row = adw_action_row_new ();
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), title);
+  if (subtitle != NULL)
+    adw_action_row_set_subtitle (ADW_ACTION_ROW (row), subtitle);
+  GtkWidget *scale = gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL, min, max, 1);
+  gtk_scale_set_digits (GTK_SCALE (scale), 0);
+  gtk_scale_set_draw_value (GTK_SCALE (scale), TRUE);
+  gtk_scale_set_value_pos (GTK_SCALE (scale), GTK_POS_RIGHT);
+  gtk_scale_set_format_value_func (GTK_SCALE (scale), format_value, (gpointer) unit, NULL);
+  if (min < 0 && max > 0)
+    gtk_scale_add_mark (GTK_SCALE (scale), 0, GTK_POS_BOTTOM, NULL);
+  gtk_widget_set_size_request (scale, 180, -1);
+  gtk_widget_set_valign (scale, GTK_ALIGN_CENTER);
+  gtk_accessible_update_property (GTK_ACCESSIBLE (scale), GTK_ACCESSIBLE_PROPERTY_LABEL, title, -1);
+  g_settings_bind_with_mapping (settings, key, gtk_range_get_adjustment (GTK_RANGE (scale)), "value",
+                                G_SETTINGS_BIND_DEFAULT, int_to_double, double_to_int, NULL, NULL);
+  adw_action_row_add_suffix (ADW_ACTION_ROW (row), scale);
+  return row;
+}
+
+/* A spin row for integer @key in [min, max] pixels (at the 64 × 64 icon size). */
+static GtkWidget *
+px_row (GSettings  *settings,
+        const char *key,
+        const char *title,
+        const char *subtitle,
+        int         min,
+        int         max)
+{
+  GtkWidget *row = adw_spin_row_new_with_range (min, max, 1);
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), title);
+  if (subtitle != NULL)
+    adw_action_row_set_subtitle (ADW_ACTION_ROW (row), subtitle);
+  g_settings_bind_with_mapping (settings, key, adw_spin_row_get_adjustment (ADW_SPIN_ROW (row)), "value",
+                                G_SETTINGS_BIND_DEFAULT, int_to_double, double_to_int, NULL, NULL);
   return row;
 }
 
@@ -360,8 +438,9 @@ folder_preview_page (GSettings *settings)
                                 NULL, (gpointer) "stacked", NULL);
   g_settings_bind (settings, "folder-preview-cycle", step, "sensitive", G_SETTINGS_BIND_GET);
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (layout_group), step);
-  GtkWidget *depth = switch_row (settings, "folder-preview-depth", "Depth Effect",
-                                 "Blur and darken the pictures further back in the stack");
+  GtkWidget *depth = enum_row (settings, "folder-preview-depth-effect", "Depth Effect",
+                               (const char *[]) { "None", "Blur", "Transparency", "Darken", NULL }, depth_nicks);
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (depth), "How the pictures further back look");
   g_settings_bind_with_mapping (settings, "folder-preview-layout", depth, "visible", G_SETTINGS_BIND_GET, nick_is,
                                 NULL, (gpointer) "stacked", NULL);
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (layout_group), depth);
@@ -382,9 +461,34 @@ folder_preview_page (GSettings *settings)
                                          "Show whole pictures in their own shape instead of filling the space, "
                                          "cropped"));
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (style_group),
+                             px_row (settings, "folder-preview-corner-radius", "Corner Radius",
+                                     "Pixels at the smallest icon size, scaled with the icons", 0, 16));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (style_group),
                              switch_row (settings, "folder-preview-rotation", "Random Rotation",
                                          "Tilt each picture by a small angle that stays the same"));
   adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (style_group));
+
+  /* Stack placement and the area all pictures are clipped to: stacked layout only (PLAN.md §11.5b). */
+  GtkWidget *stack_group = group ("Stack", "Sizes are in pixels at the smallest (64 × 64) icon size and "
+                                           "scale with the icons. The stack is 8 px from the sides.");
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             enum_row (settings, "folder-preview-stack-position", "Position",
+                                       (const char *[]) { "Top", "Centre", "Bottom", NULL }, position_nicks));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             slider_row (settings, "folder-preview-stack-offset", "Vertical Offset",
+                                         "Fine-tune the position", -16, 16, "px"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             slider_row (settings, "folder-preview-fade", "Bottom Fade",
+                                         "Fade the pictures out towards the bottom", 0, 100, "%"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             px_row (settings, "folder-preview-view-top-radius", "Top Corner Radius",
+                                     "Rounds the top of the area that clips all pictures", 0, 16));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             px_row (settings, "folder-preview-view-bottom-radius", "Bottom Corner Radius",
+                                     "Rounds the bottom of that area (both 0: no clipping)", 0, 16));
+  g_settings_bind_with_mapping (settings, "folder-preview-layout", stack_group, "visible", G_SETTINGS_BIND_GET,
+                                nick_is, NULL, (gpointer) "stacked", NULL);
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (stack_group));
 
   /* Custom folder SVGs: stacked layout only. */
   GtkWidget *icon_group = group ("Folder Icon",
@@ -404,6 +508,7 @@ folder_preview_page (GSettings *settings)
   g_settings_bind (settings, "folder-preview-enabled", layout_group, "sensitive", G_SETTINGS_BIND_GET);
   g_settings_bind (settings, "folder-preview-enabled", style_group, "sensitive", G_SETTINGS_BIND_GET);
   g_settings_bind (settings, "folder-preview-enabled", icon_group, "sensitive", G_SETTINGS_BIND_GET);
+  g_settings_bind (settings, "folder-preview-enabled", stack_group, "sensitive", G_SETTINGS_BIND_GET);
   return page;
 }
 

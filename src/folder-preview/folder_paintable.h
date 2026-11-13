@@ -16,6 +16,14 @@
 
 G_BEGIN_DECLS
 
+/* Stacked: where the stack goes vertically (PLAN.md §11.5b). */
+typedef enum
+{
+  FP_STACK_TOP    = 0, /* STACK_EDGE (8 px at 64 × 64) below the icon's top */
+  FP_STACK_CENTRE = 1, /* inside the folder: STACK_BODY_TOP below the top of its visible body */
+  FP_STACK_BOTTOM = 2, /* STACK_EDGE above the icon's bottom */
+} FpStackPosition;
+
 /* Where things go on one icon. Rectangles are fractions of the icon size (0 … 1, may exceed slightly). */
 typedef struct
 {
@@ -30,10 +38,13 @@ typedef struct
 /* The v1 grid: frame on the front face (FRAME_FACE_*), no back or overlay. */
 void fp_decor_init_grid (FpDecor *decor);
 
-/* Stacked: the card stack placed on a folder whose opaque body is @body (fractions of the icon, see
- * PLAN.md §11.1); no back or overlay yet. */
+/* Stacked: the card stack, STACK_SIDE from the icon's left and right edges, at @position on a folder whose
+ * opaque body is @body (fractions of the icon; used by FP_STACK_CENTRE), moved down by @offset px at the
+ * 64 × 64 size (negative = up). No back or overlay yet. */
 void fp_decor_init_stacked (FpDecor               *decor,
-                            const graphene_rect_t *body);
+                            const graphene_rect_t *body,
+                            FpStackPosition        position,
+                            int                    offset);
 
 /* Frame width in device pixels for a logical icon @size at @scale (HiDPI). */
 guint fp_decor_frame_px (const FpDecor *decor,

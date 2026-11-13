@@ -98,6 +98,8 @@ typedef struct
   guint       n_attached_total;
   /* Look (PLAN.md §11), set by fp_view_hook_set_look. */
   FpStyle     style;          /* Same as the cache's style. */
+  FpStackPosition position;   /* Stacked: where the stack goes (placement only: frames don't change). */
+  int         offset;         /* Stacked: vertical fine-tuning, px at 64 × 64. */
   gboolean    cycle;          /* Hover cycling on. */
   FpIconArt  *back_art;       /* Owned or NULL: custom folder SVG (stacked layout only). */
   FpIconArt  *overlay_art;    /* Owned or NULL: front overlay SVG (stacked layout only). */
@@ -259,7 +261,7 @@ hook_geometry (ImageHook *hook, FpDecor *decor, graphene_rect_t *body, gboolean 
   *custom_back = vh->back_art != NULL && fp_icon_art_get_body (vh->back_art, body);
   if (!*custom_back)
     theme_body (hook->icon, body);
-  fp_decor_init_stacked (decor, body);
+  fp_decor_init_stacked (decor, body, vh->position, vh->offset);
 }
 
 /* The full decor for @hook at its current size and scale; *decor gets owned texture refs (release with
@@ -1447,6 +1449,7 @@ fp_view_hook_init (FpCache *cache)
   vh->cache = fp_cache_ref (cache);
   vh->hooks = g_hash_table_new (g_direct_hash, g_direct_equal);
   vh->style = *fp_cache_get_style (cache);
+  vh->position = FP_STACK_CENTRE;
   vh->cycle = TRUE;
   vh->theme_bodies = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
 
@@ -1568,10 +1571,12 @@ reload_art (FpIconArt **art, char **loaded_path, const char *path)
 }
 
 void
-fp_view_hook_set_look (const FpStyle *style,
-                       gboolean       cycle,
-                       const char    *folder_icon,
-                       const char    *overlay_icon)
+fp_view_hook_set_look (const FpStyle   *style,
+                       FpStackPosition  position,
+                       int              offset,
+                       gboolean         cycle,
+                       const char      *folder_icon,
+                       const char      *overlay_icon)
 {
   g_return_if_fail (style != NULL);
   if (vh == NULL || vh->disabled)
@@ -1581,9 +1586,12 @@ fp_view_hook_set_look (const FpStyle *style,
   vh->style = *style;
   gboolean cycle_changed = vh->cycle != cycle;
   vh->cycle = cycle;
+  gboolean placement_changed = vh->position != position || vh->offset != offset;
+  vh->position = position;
+  vh->offset = offset;
   gboolean icons_changed = reload_art (&vh->back_art, &vh->back_path, folder_icon);
   icons_changed |= reload_art (&vh->overlay_art, &vh->overlay_path, overlay_icon);
-  if (!style_changed && !layout_changed && !cycle_changed && !icons_changed)
+  if (!style_changed && !layout_changed && !cycle_changed && !icons_changed && !placement_changed)
     return;
   g_debug ("look: %s, cycle %d, folder icon %s, overlay %s", style->layout == FP_LAYOUT_STACKED ? "stacked" : "grid",
            cycle, vh->back_art != NULL ? "custom" : "theme", vh->overlay_art != NULL ? "set" : "none");

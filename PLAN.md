@@ -1360,7 +1360,13 @@ an on/off switch for hover cycling. Branch `folder-thumbnail-preview-extended`. 
 | `folder-preview-shadow` | b | true |
 | `folder-preview-rotation` | b | true |
 | `folder-preview-keep-aspect` | b | true |
-| `folder-preview-depth` | b | true (stacked only) |
+| `folder-preview-depth-effect` | enum none / blur / transparency / darken | blur (stacked only) |
+| `folder-preview-corner-radius` | i 0–16 (px at 64 × 64) | 2 |
+| `folder-preview-fade` | i 0–100 (% of the stack height) | 0 (stacked only) |
+| `folder-preview-view-top-radius` | i 0–16 (px at 64 × 64) | 0 (stacked only) |
+| `folder-preview-view-bottom-radius` | i 0–16 (px at 64 × 64) | 0 (stacked only) |
+| `folder-preview-stack-position` | enum top / centre / bottom | centre (stacked only) |
+| `folder-preview-stack-offset` | i −16–16 (px at 64 × 64) | 0 (stacked only) |
 | `folder-preview-folder-icon` | s (path, empty = theme) | '' |
 | `folder-preview-overlay-icon` | s (path, empty = none) | '' |
 
@@ -1405,6 +1411,31 @@ folder icon and front overlay, each with Choose…/Clear). Everything waits for 
 `CACHE_DISK_VERSION` v5 (v4 is purged at start-up). Tests: keep-aspect (grid fill, stacked card shape),
 depth (darker, soft edge, sharp front), drop-shadow shape (no shadow under a transparent half).
 
+### 11.5b Second follow-up (owner, 2026-11-13)
+
+Sizes the owner gives "at 64 × 64" are fractions of the icon (`REF_ICON_PX` 64), so they scale with every
+zoom level; the compositor converts them with `fp_composite_icon_px` (each layout's frame covers a fixed
+part of the icon).
+
+1. **Depth presets** (replace the depth switch): *None* (STACK_DIM per card), *Blur* (the previous effect),
+   *Transparency* (opacity −30 % per card further back, at least 10 %), *Darken* (−22 % brightness per
+   card, no blur). The front card is always fully visible.
+2. **Bottom fade** (0–100 % of the stack height): the stack's cards are drawn into a group and painted
+   through a linear alpha mask (opaque above the fade, transparent at the stack's bottom edge), like the
+   sliding eject button's fade.
+3. **Stack 8 px from the sides** at 64 × 64 (`STACK_SIDE`): the stack width is now 0.75 of the icon, no
+   longer measured from the folder body.
+4. **Position** *Top* / *Bottom* (8 px from the icon's top / bottom edge) / *Centre* (the previous
+   placement inside the folder body), plus a **vertical offset** slider (±16 px). Placement only moves the
+   frame (its size is the same everywhere), so it never rebuilds pictures (the "icons" settings group).
+5. **Corner radius** of each picture (both layouts, default 2 px ≈ the previous stacked rounding; the grid's
+   photos were square before).
+6. **View top / bottom radius:** the stack area (the cards' untilted bounding box) clips all pictures, with
+   separate top and bottom corner radii; both 0 = no clipping (tilted corners and shadows may then poke out).
+
+`CACHE_DISK_VERSION` v6. Tests: depth presets, fade profile, clipping (nothing outside the area, rounded vs
+square bottom corners), corner radius, 8 px sides, placement (top / bottom / offset, frame size unchanged).
+
 ### 11.6 Phase results (2026-11-13)
 
 - **Phase 1:** schema keys + `nu_settings` (two new change groups: style, icons/cycle); `FpStyle` in
@@ -1434,3 +1465,7 @@ Follow-up (§11.5a) results: smoke `smoke-20261113-223428` **PASS** — previews
 now also switches keep-aspect and depth). scan-build flagged reading the blur line buffer as possibly
 uninitialised (a false positive: every read index is below the filled length); fixed by zero-initialising
 the buffer, not suppressed. Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+
+Second follow-up (§11.5b) results: smoke `smoke-20261113-234528` **PASS** — previews drawn in 66/66 self-checks, 0 wrong
+(look round now also cycles the depth presets, fade, view radii, corner radius, positions and offsets).
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.

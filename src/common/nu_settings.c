@@ -26,7 +26,13 @@ static const NuConfig defaults = {
   .preview_shadow = TRUE,
   .preview_rotation = TRUE,
   .preview_keep_aspect = TRUE,
-  .preview_depth = TRUE,
+  .preview_depth_effect = NU_DEPTH_BLUR,
+  .preview_corner_radius = 2,
+  .preview_fade = 0,
+  .preview_view_top_radius = 0,
+  .preview_view_bottom_radius = 0,
+  .preview_stack_position = NU_STACK_CENTRE,
+  .preview_stack_offset = 0,
   .preview_folder_icon = "",
   .preview_overlay_icon = "",
 };
@@ -59,7 +65,13 @@ static const struct
   { "folder-preview-shadow", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-rotation", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-keep-aspect", NU_CHANGED_PREVIEW_STYLE },
-  { "folder-preview-depth", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-depth-effect", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-corner-radius", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-fade", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-view-top-radius", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-view-bottom-radius", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-stack-position", NU_CHANGED_PREVIEW_ICONS },
+  { "folder-preview-stack-offset", NU_CHANGED_PREVIEW_ICONS },
   { "folder-preview-cycle", NU_CHANGED_PREVIEW_ICONS },
   { "folder-preview-folder-icon", NU_CHANGED_PREVIEW_ICONS },
   { "folder-preview-overlay-icon", NU_CHANGED_PREVIEW_ICONS },
@@ -184,7 +196,18 @@ read_all (void)
   c->preview_shadow = g_settings_get_boolean (s, "folder-preview-shadow");
   c->preview_rotation = g_settings_get_boolean (s, "folder-preview-rotation");
   c->preview_keep_aspect = g_settings_get_boolean (s, "folder-preview-keep-aspect");
-  c->preview_depth = g_settings_get_boolean (s, "folder-preview-depth");
+  int depth = g_settings_get_enum (s, "folder-preview-depth-effect");
+  c->preview_depth_effect = (depth >= NU_DEPTH_NONE && depth <= NU_DEPTH_DARKEN)
+                              ? (NuDepthEffect) depth : defaults.preview_depth_effect;
+  int position = g_settings_get_enum (s, "folder-preview-stack-position");
+  c->preview_stack_position = (position >= NU_STACK_TOP && position <= NU_STACK_BOTTOM)
+                                ? (NuStackPosition) position : defaults.preview_stack_position;
+  /* The schema ranges keep these in range (a hand-edited value outside is refused by GSettings). */
+  c->preview_corner_radius = g_settings_get_int (s, "folder-preview-corner-radius");
+  c->preview_fade = g_settings_get_int (s, "folder-preview-fade");
+  c->preview_view_top_radius = g_settings_get_int (s, "folder-preview-view-top-radius");
+  c->preview_view_bottom_radius = g_settings_get_int (s, "folder-preview-view-bottom-radius");
+  c->preview_stack_offset = g_settings_get_int (s, "folder-preview-stack-offset");
   /* Replace the owned strings; the config borrows them. */
   g_free (ns->folder_icon);
   ns->folder_icon = g_settings_get_string (s, "folder-preview-folder-icon");

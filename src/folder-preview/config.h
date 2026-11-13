@@ -39,17 +39,25 @@
 #define STACK_STEP          0.0405
 #define STACK_CARD_H        0.5975
 #define STACK_H             (STACK_CARD_H + (STACK_CARDS - 1) * STACK_STEP)
-#define STACK_RADIUS        0.0405 /* card corner radius */
 #define STACK_PAD           0.06   /* transparent margin around the stack in the frame texture */
 #define STACK_MAX_TILT_DEG  4.0
 #define STACK_DIM           0.10   /* each card further back is darkened by this much more */
-#define STACK_DEPTH_DIM     0.16   /* the same with the depth effect */
-#define STACK_DEPTH_BLUR    0.006  /* depth effect: blur radius per card further back (fraction of card width) */
-/* Where the stack sits on the folder, relative to the folder's visible body (its opaque bounding box). */
-#define STACK_BODY_W        0.969
+#define STACK_DEPTH_DIM     0.16   /* depth "blur": darkening per card further back */
+#define STACK_DEPTH_BLUR    0.006  /* depth "blur": blur radius per card further back (fraction of card width) */
+#define STACK_DEPTH_ALPHA   0.30   /* depth "transparency": opacity lost per card further back */
+#define STACK_DEPTH_DARKEN  0.22   /* depth "darken": darkening per card further back */
+
+/* Sizes the owner gives "at the 64 × 64 icon size" scale with the icon (PLAN.md §11.5b). */
+#define REF_ICON_PX         64.0
+#define STACK_SIDE          (8.0 / REF_ICON_PX) /* stack 8 px from the icon's left and right edges */
+#define STACK_ICON_W        (1.0 - 2 * STACK_SIDE) /* stack width as a fraction of the icon */
+#define STACK_EDGE          (8.0 / REF_ICON_PX) /* top / bottom position: 8 px from the icon's edge */
+/* Centre position: the stack's top is this far below the top of the folder's visible body (its opaque
+ * bounding box), as a fraction of the body height (the owner's mock-up). */
 #define STACK_BODY_TOP      0.204
 
 /* Disk cache layout version: bump when the look of frames changes, so old frames are never shown.
  * v4: the style (layout, border, shadow, rotation) is part of each folder's cache directory name.
- * v5: drop shadows following the picture's shape, keep-aspect and depth options. */
-#define CACHE_DISK_VERSION  "v5"
+ * v5: drop shadows following the picture's shape, keep-aspect and depth options.
+ * v6: stack 8 px from the sides, depth presets, corner radius, fade and view clipping. */
+#define CACHE_DISK_VERSION  "v6"

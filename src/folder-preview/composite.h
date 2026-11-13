@@ -33,6 +33,15 @@ typedef enum
   FP_LAYOUT_STACKED = 1,
 } FpLayout;
 
+/* Stacked: how cards further back look (the front card is always fully visible). */
+typedef enum
+{
+  FP_DEPTH_NONE         = 0, /* only slightly darker (STACK_DIM per card) */
+  FP_DEPTH_BLUR         = 1, /* blurred and darkened */
+  FP_DEPTH_TRANSPARENCY = 2, /* more transparent */
+  FP_DEPTH_DARKEN       = 3, /* darker, no blur */
+} FpDepth;
+
 /* Everything that changes how frames look. Plain values (copied freely, also into worker threads). */
 typedef struct
 {
@@ -44,10 +53,15 @@ typedef struct
   gboolean rotation;
   gboolean keep_aspect; /* Grid: fit (TRUE) or fill the section, cropped; stacked: card in the picture's
                          * shape (TRUE) or picture fills the card, cropped. */
-  gboolean depth;       /* Stacked: blur and darken cards further back. */
+  FpDepth  depth;            /* Stacked only. */
+  guint    corner_radius;    /* Each picture's corner radius, px at the 64 × 64 icon size (scaled). */
+  guint    fade;             /* Stacked: bottom fade over this % of the stack height (0 = off, max 100). */
+  guint    view_top_radius;  /* Stacked: the stack area clips all pictures with these corner radii (px at */
+  guint    view_bottom_radius; /* 64 × 64); both 0 = no clipping. */
 } FpStyle;
 
-/* The default look: grid, white border, shadow, rotation, aspect ratio kept, depth effect; stack step 1. */
+/* The default look: grid, white border, shadow, rotation, aspect ratio kept, 2 px corners; stacked: blur
+ * depth, no fade, no view clipping, step 1. */
 void fp_style_init_default (FpStyle *style);
 
 gboolean fp_style_equal (const FpStyle *a,
@@ -84,6 +98,18 @@ void fp_composite_slot_rect (guint   n_items,
                              double *y,
                              double *w,
                              double *h);
+
+/* Icon size in pixels that a frame @width pixels wide belongs to (the frame covers a fixed part of the icon
+ * in each layout); used to scale the "px at 64 × 64" options. */
+double fp_composite_icon_px (const FpStyle *style,
+                             guint          width);
+
+/* Stacked: the stack area (cards before tilting, without the frame's margin), in frame pixels. */
+void fp_composite_stack_rect (guint   width,
+                              double *x,
+                              double *y,
+                              double *w,
+                              double *h);
 
 /* Stacked: rectangle (before tilting) of card @index (0 = front) in a frame @width pixels wide, in frame
  * pixels. Exposed for tests. */
