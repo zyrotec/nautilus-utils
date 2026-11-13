@@ -41,27 +41,6 @@ fp_decor_init_stacked (FpDecor *decor, const graphene_rect_t *body)
                       (float) (STACK_H * w + 2 * pad));
 }
 
-void
-fp_decor_place_overlay (FpDecor *decor, const graphene_rect_t *body, double overlay_w, double overlay_h,
-                        double back_w, double back_h)
-{
-  double w, h;
-  if (back_w > 0 && back_h > 0)
-    {
-      /* The back is drawn as large as fits in the icon: 1 / max(w, h) icon widths per SVG unit. */
-      double unit = 1.0 / MAX (back_w, back_h);
-      w = overlay_w * unit;
-      h = overlay_h * unit;
-    }
-  else
-    {
-      w = body->size.width;
-      h = overlay_w > 0 ? w * overlay_h / overlay_w : 0;
-    }
-  graphene_rect_init (&decor->overlay_rect, (float) (body->origin.x + body->size.width / 2 - w / 2),
-                      (float) (body->origin.y + body->size.height - h), (float) w, (float) h);
-}
-
 guint
 fp_decor_frame_px (const FpDecor *decor, int size, int scale)
 {
@@ -114,11 +93,8 @@ fp_folder_paintable_snapshot (GdkPaintable *paintable, GdkSnapshot *snapshot, do
        * texture-*scale* nodes, which GSK renders through an extra pass. */
       gtk_snapshot_append_texture (GTK_SNAPSHOT (snapshot), self->frame, &rect);
       if (self->decor.overlay != NULL)
-        {
-          graphene_rect_t over;
-          scale_rect (&self->decor.overlay_rect, width, height, &over);
-          gtk_snapshot_append_texture (GTK_SNAPSHOT (snapshot), self->decor.overlay, &over);
-        }
+        gtk_snapshot_append_texture (GTK_SNAPSHOT (snapshot), self->decor.overlay,
+                                     &GRAPHENE_RECT_INIT (0, 0, (float) width, (float) height));
     }
 }
 
@@ -222,8 +198,7 @@ fp_folder_paintable_set_decor (FpFolderPaintable *self, const FpDecor *decor)
   else
     fp_decor_init_grid (&next);
   if (next.layout == self->decor.layout && next.back == self->decor.back && next.overlay == self->decor.overlay &&
-      graphene_rect_equal (&next.frame_rect, &self->decor.frame_rect) &&
-      graphene_rect_equal (&next.overlay_rect, &self->decor.overlay_rect))
+      graphene_rect_equal (&next.frame_rect, &self->decor.frame_rect))
     return;
   /* Take the new refs before dropping the old ones (they may be the same textures). */
   if (next.back != NULL)

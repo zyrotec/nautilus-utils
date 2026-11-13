@@ -40,6 +40,8 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_true (rgb_equal (a->preview_border_colour, b->preview_border_colour));
   g_assert_cmpint (a->preview_shadow, ==, b->preview_shadow);
   g_assert_cmpint (a->preview_rotation, ==, b->preview_rotation);
+  g_assert_cmpint (a->preview_keep_aspect, ==, b->preview_keep_aspect);
+  g_assert_cmpint (a->preview_depth, ==, b->preview_depth);
   g_assert_cmpstr (a->preview_folder_icon, ==, b->preview_folder_icon);
   g_assert_cmpstr (a->preview_overlay_icon, ==, b->preview_overlay_icon);
 }
@@ -244,6 +246,8 @@ test_each_group (void)
     { "folder-preview-border", NU_CHANGED_PREVIEW_STYLE },
     { "folder-preview-shadow", NU_CHANGED_PREVIEW_STYLE },
     { "folder-preview-rotation", NU_CHANGED_PREVIEW_STYLE },
+    { "folder-preview-keep-aspect", NU_CHANGED_PREVIEW_STYLE },
+    { "folder-preview-depth", NU_CHANGED_PREVIEW_STYLE },
     { "folder-preview-cycle", NU_CHANGED_PREVIEW_ICONS },
   };
   g_autoptr (GSettingsBackend) backend = start ();

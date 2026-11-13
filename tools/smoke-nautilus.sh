@@ -167,6 +167,8 @@ look_round() {
   cmd "st-set folder-preview-border false" 0.8; cmd "st-set folder-preview-shadow false" 0.8
   cmd "st-set folder-preview-rotation false" 0.8; cmd "st-set folder-preview-border-colour '#e01b24'" 0.8
   cmd "st-set folder-preview-border true" 1; cmd verify 0.3
+  cmd "st-set folder-preview-keep-aspect false" 1; cmd "st-set folder-preview-depth false" 1; cmd verify 0.3
+  cmd "st-set folder-preview-layout 'grid'" 1.2; cmd verify 0.3; cmd "st-set folder-preview-layout 'stacked'" 1.2
   cmd "st-set folder-preview-folder-icon '$FP_SVG_DIR/notes.txt'" 1; cmd verify 0.3   # not an SVG: theme icon
   cmd "st-set folder-preview-cycle false" 0.6; cmd hover 1.6; cmd leave 0.3
   cmd "st-set folder-preview-enabled false" 0.8; cmd fp-state 0.3
@@ -174,7 +176,7 @@ look_round() {
   cmd "action view.zoom-standard" 1.5
   for k in folder-preview-layout folder-preview-cycle folder-preview-stack-step folder-preview-border \
            folder-preview-border-colour folder-preview-shadow folder-preview-rotation \
-           folder-preview-folder-icon folder-preview-overlay-icon; do
+           folder-preview-keep-aspect folder-preview-depth folder-preview-folder-icon folder-preview-overlay-icon; do
     cmd "st-reset $k" 0.4
   done
   cmd verify 0.5

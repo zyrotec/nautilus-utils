@@ -42,9 +42,12 @@ typedef struct
   guint8   border_r, border_g, border_b;
   gboolean shadow;
   gboolean rotation;
+  gboolean keep_aspect; /* Grid: fit (TRUE) or fill the section, cropped; stacked: card in the picture's
+                         * shape (TRUE) or picture fills the card, cropped. */
+  gboolean depth;       /* Stacked: blur and darken cards further back. */
 } FpStyle;
 
-/* The v1 look: grid, white border, shadow, rotation; stack step 1. */
+/* The default look: grid, white border, shadow, rotation, aspect ratio kept, depth effect; stack step 1. */
 void fp_style_init_default (FpStyle *style);
 
 gboolean fp_style_equal (const FpStyle *a,

@@ -17,10 +17,13 @@ covers, and cycles through the next ones while the pointer hovers over it. Two l
 - **Stacked**: up to three rounded cards stacked inside the folder, the first picture in front. Hovering
   brings the next picture to the front (or the next three, see *Pictures per Step*). Optionally with your
   own **folder icon** SVG and a **front overlay** SVG drawn over the cards, so the pictures look like they
-  sit inside the folder. Export both SVGs from the same artboard: the overlay is drawn at the folder icon's
-  scale, anchored at its bottom centre. Folders without previews keep the theme's folder icon.
+  sit inside the folder. Both SVGs are drawn at the size of the icon: give them the same canvas and place
+  the overlay where it belongs inside its SVG. A **depth effect** blurs and darkens the cards further back.
+  Folders without previews keep the theme's folder icon.
 
-Border (on/off and colour), shadow, random rotation and cycling on hover can be changed for both layouts.
+Border (on/off and colour), drop shadow (it follows the picture's shape, so transparent logos get a soft
+outline shadow, not a box), keep aspect ratio (off = pictures fill their space, cropped), random rotation and
+cycling on hover can be changed for both layouts.
 Only folders with the theme's plain folder icon get previews: special folders (Pictures, Downloads, …,
 `folder-*` icons) and folders with a custom icon keep their own icon.
 
@@ -123,7 +126,8 @@ one tab per feature; every tab can switch its feature on or off. Changes only ta
 **Apply**; closing the dialog without Apply discards them.
 
 - **Folder Preview**: show previews on folder icons (on/off), layout (Grid or Stacked), cycle on hover,
-  pictures per step (Stacked), border, border colour, shadow and random rotation, and for the Stacked layout
+  pictures per step and depth effect (Stacked), border, border colour, shadow, keep aspect ratio and random
+  rotation, and for the Stacked layout
   a custom folder icon and front overlay (SVG files; the path is stored, so keep the files where they are).
 - **Sidebar Drives**: enhanced drive rows (on/off), bar colour (accent colour, a custom colour, or a
   two-colour gradient), show/hide the usage bars and the size labels, and slide the eject button in only

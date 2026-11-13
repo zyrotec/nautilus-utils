@@ -21,6 +21,8 @@ fp_style_init_default (FpStyle *style)
     .border_r = 0xff, .border_g = 0xff, .border_b = 0xff,
     .shadow = TRUE,
     .rotation = TRUE,
+    .keep_aspect = TRUE,
+    .depth = TRUE,
   };
 }
 
@@ -29,17 +31,19 @@ fp_style_equal (const FpStyle *a, const FpStyle *b)
 {
   return a->layout == b->layout && a->stack_step == b->stack_step && a->border == b->border &&
          a->border_r == b->border_r && a->border_g == b->border_g && a->border_b == b->border_b &&
-         a->shadow == b->shadow && a->rotation == b->rotation;
+         a->shadow == b->shadow && a->rotation == b->rotation && a->keep_aspect == b->keep_aspect &&
+         a->depth == b->depth;
 }
 
 /* Returns a new string (caller frees). */
 char *
 fp_style_key (const FpStyle *style)
 {
-  return g_strdup_printf ("%s%u-b%d%02x%02x%02x-s%d-r%d", style->layout == FP_LAYOUT_STACKED ? "stack" : "grid",
-                          style->layout == FP_LAYOUT_STACKED ? style->stack_step : 0u, style->border != FALSE,
-                          style->border_r, style->border_g, style->border_b, style->shadow != FALSE,
-                          style->rotation != FALSE);
+  gboolean stacked = style->layout == FP_LAYOUT_STACKED;
+  return g_strdup_printf ("%s%u-b%d%02x%02x%02x-s%d-r%d-a%d-d%d", stacked ? "stack" : "grid",
+                          stacked ? style->stack_step : 0u, style->border != FALSE, style->border_r,
+                          style->border_g, style->border_b, style->shadow != FALSE, style->rotation != FALSE,
+                          style->keep_aspect != FALSE, stacked && style->depth); /* depth: stacked only */
 }
 
 guint
@@ -181,24 +185,131 @@ rounded_rect (cairo_t *cr, double x, double y, double w, double h, double r)
   cairo_close_path (cr);
 }
 
-/* Soft shadow under a w×h shape centred at the origin: a few stacked translucent shapes, offset down-right.
- * @radius < 0 = plain rectangles. */
+/* In-place blur of a w×h image with @bpp bytes per pixel (1 = A8, 4 = premultiplied ARGB32): three box
+ * blurs of radius @r each way, close to a Gaussian. Pixels outside count as transparent. */
 static void
-draw_shadow (cairo_t *cr, double w, double h, double radius, double s)
+box_blur (guint8 *data, int w, int h, int stride, int bpp, int r)
 {
-  for (int i = 3; i >= 1; i--)
-    {
-      double grow = s * i * 0.6;
-      if (radius < 0)
-        cairo_rectangle (cr, -w / 2 - grow + s * 0.6, -h / 2 - grow + s, w + 2 * grow, h + 2 * grow);
-      else
-        rounded_rect (cr, -w / 2 - grow + s * 0.6, -h / 2 - grow + s, w + 2 * grow, h + 2 * grow, radius + grow);
-      cairo_set_source_rgba (cr, 0, 0, 0, 0.07);
-      cairo_fill (cr);
-    }
+  if (r < 1 || w < 1 || h < 1)
+    return;
+  int n = MAX (w, h);
+  g_autofree guint32 *line = g_new0 (guint32, (gsize) n); /* zeroed: every read is provably initialised */
+  int div = 2 * r + 1;
+  for (int pass = 0; pass < 3; pass++)
+    for (int dir = 0; dir < 2; dir++)
+      {
+        int len = dir == 0 ? w : h, lines = dir == 0 ? h : w;
+        for (int l = 0; l < lines; l++)
+          for (int c = 0; c < bpp; c++)
+            {
+              /* Element k of this line is at data[base + k·step]. */
+              gsize base = dir == 0 ? (gsize) l * (gsize) stride + (gsize) c : (gsize) l * (gsize) bpp + (gsize) c;
+              gsize step = dir == 0 ? (gsize) bpp : (gsize) stride;
+              for (int k = 0; k < len; k++)
+                line[k] = data[base + (gsize) k * step];
+              guint32 sum = 0;
+              for (int k = 0; k <= MIN (r, len - 1); k++)
+                sum += line[k];
+              for (int k = 0; k < len; k++)
+                {
+                  data[base + (gsize) k * step] = (guint8) (sum / (guint32) div);
+                  if (k + r + 1 < len)
+                    sum += line[k + r + 1];
+                  if (k - r >= 0)
+                    sum -= line[k - r];
+                }
+            }
+      }
 }
 
-/* Draws one grid photo centred at (cx, cy), fitted in a cw×ch section, tilted by @seed. */
+/* One photo or card, drawn upright into its own surface first, so that its drop shadow can follow its real
+ * shape (a transparent picture casts the shadow of what is drawn, not of a box) and it can be blurred. */
+typedef struct
+{
+  cairo_surface_t *surface; /* Owned (cairo_surface_destroy), ARGB32; NULL if it couldn't be created. */
+  double           w, h;    /* The item's size; it is drawn at (m, m) in @surface. */
+  double           m;       /* Transparent margin on every side (room for blur and shadow). */
+} Item;
+
+/* Creates an item surface for a w×h item with margin m; returns a cairo context drawing at (m, m), or NULL. */
+static cairo_t *
+item_begin (Item *item, double w, double h, double m)
+{
+  item->w = w, item->h = h, item->m = m;
+  int sw = (int) ceil (w + 2 * m), sh = (int) ceil (h + 2 * m);
+  item->surface = cairo_image_surface_create (CAIRO_FORMAT_ARGB32, sw, sh);
+  if (cairo_surface_status (item->surface) != CAIRO_STATUS_SUCCESS)
+    {
+      g_clear_pointer (&item->surface, cairo_surface_destroy);
+      return NULL;
+    }
+  cairo_t *cr = cairo_create (item->surface); /* caller destroys */
+  cairo_set_antialias (cr, CAIRO_ANTIALIAS_GOOD);
+  cairo_translate (cr, m, m);
+  return cr;
+}
+
+/* Paints @img into the w×h box at the context's origin: fitted (aspect kept, centred) or covering it. */
+static void
+paint_image (cairo_t *cr, cairo_surface_t *img, double w, double h, gboolean cover)
+{
+  double iw = cairo_image_surface_get_width (img), ih = cairo_image_surface_get_height (img);
+  double scale = cover ? MAX (w / iw, h / ih) : MIN (w / iw, h / ih);
+  cairo_translate (cr, (w - iw * scale) / 2, (h - ih * scale) / 2);
+  cairo_scale (cr, scale, scale);
+  cairo_set_source_surface (cr, img, 0, 0);
+  cairo_pattern_set_filter (cairo_get_source (cr), CAIRO_FILTER_GOOD);
+  cairo_paint (cr);
+}
+
+/* Draws @item centred at (cx, cy), tilted by @angle degrees, after its drop shadow (if @shadow > 0: blur
+ * radius in pixels; the shadow is the blurred alpha of the item, offset down). Frees the item surface. */
+static void
+item_finish (cairo_t *cr, Item *item, double cx, double cy, double angle, double shadow, double blur)
+{
+  if (item->surface == NULL)
+    return;
+  cairo_surface_flush (item->surface);
+  int sw = cairo_image_surface_get_width (item->surface), sh = cairo_image_surface_get_height (item->surface);
+  if (blur >= 1)
+    {
+      box_blur (cairo_image_surface_get_data (item->surface), sw, sh, cairo_image_surface_get_stride (item->surface),
+                4, (int) round (blur));
+      cairo_surface_mark_dirty (item->surface);
+    }
+
+  cairo_save (cr);
+  cairo_translate (cr, cx, cy);
+  if (angle != 0)
+    cairo_rotate (cr, angle * G_PI / 180.0);
+  double ox = -item->w / 2 - item->m, oy = -item->h / 2 - item->m;
+  if (shadow >= 1)
+    {
+      cairo_surface_t *mask = cairo_image_surface_create (CAIRO_FORMAT_A8, sw, sh); /* owned, freed below */
+      if (cairo_surface_status (mask) == CAIRO_STATUS_SUCCESS)
+        {
+          cairo_t *mcr = cairo_create (mask);
+          cairo_set_source_surface (mcr, item->surface, 0, 0);
+          cairo_paint (mcr); /* copies the alpha */
+          cairo_destroy (mcr);
+          cairo_surface_flush (mask);
+          box_blur (cairo_image_surface_get_data (mask), sw, sh, cairo_image_surface_get_stride (mask), 1,
+                    (int) round (shadow));
+          cairo_surface_mark_dirty (mask);
+          cairo_set_source_rgba (cr, 0, 0, 0, 0.42);
+          cairo_mask_surface (cr, mask, ox + shadow * 0.15, oy + shadow * 0.6);
+        }
+      cairo_surface_destroy (mask);
+    }
+  cairo_set_source_surface (cr, item->surface, ox, oy);
+  cairo_pattern_set_filter (cairo_get_source (cr), CAIRO_FILTER_GOOD);
+  cairo_paint (cr);
+  cairo_restore (cr);
+  g_clear_pointer (&item->surface, cairo_surface_destroy);
+}
+
+/* Draws one grid photo centred at (cx, cy) in a cw×ch section, tilted by @seed: fitted (aspect kept) or
+ * filling the section (cropped), with optional border and drop shadow. */
 static void
 draw_photo (cairo_t *cr, const FpStyle *style, cairo_surface_t *img, double cx, double cy, double cw, double ch,
             guint seed)
@@ -206,92 +317,89 @@ draw_photo (cairo_t *cr, const FpStyle *style, cairo_surface_t *img, double cx, 
   double iw = cairo_image_surface_get_width (img);
   double ih = cairo_image_surface_get_height (img);
   double border = style->border ? MAX (1.0, round (MIN (cw, ch) * 0.045)) : 0.0;
-
-  /* Fit the bordered photo inside the cell, keeping the image's aspect ratio. */
-  double scale = MIN ((cw * CELL_FILL - 2 * border) / iw, (ch * CELL_FILL - 2 * border) / ih);
-  if (scale <= 0)
+  double aw = cw * CELL_FILL - 2 * border, ah = ch * CELL_FILL - 2 * border; /* room for the picture */
+  if (aw <= 0 || ah <= 0)
     return;
-  double pw = iw * scale, ph = ih * scale; /* picture size */
+  double pw = aw, ph = ah; /* picture size */
+  if (style->keep_aspect)
+    {
+      double scale = MIN (aw / iw, ah / ih);
+      pw = iw * scale, ph = ih * scale;
+    }
   double fw = pw + 2 * border, fh = ph + 2 * border; /* photo size incl. border */
+  double shadow = style->shadow ? MAX (1.0, MIN (cw, ch) * 0.035) : 0.0;
 
-  cairo_save (cr);
-  cairo_translate (cr, cx, cy);
-  if (style->rotation)
-    cairo_rotate (cr, fp_composite_tilt (seed) * G_PI / 180.0);
-
-  if (style->shadow)
-    draw_shadow (cr, fw, fh, -1, MAX (1.0, MIN (cw, ch) * 0.025));
-
+  Item item;
+  cairo_t *icr = item_begin (&item, fw, fh, ceil (shadow * 3 + 2));
+  if (icr == NULL)
+    return;
   if (border > 0)
     {
-      cairo_rectangle (cr, -fw / 2, -fh / 2, fw, fh);
-      set_border_colour (cr, style);
-      cairo_fill (cr);
+      cairo_rectangle (icr, 0, 0, fw, fh);
+      set_border_colour (icr, style);
+      cairo_fill (icr);
     }
-
-  /* The picture, downscaled with a proper filter. */
-  cairo_rectangle (cr, -pw / 2, -ph / 2, pw, ph);
-  cairo_clip (cr);
-  cairo_translate (cr, -pw / 2, -ph / 2);
-  cairo_scale (cr, scale, scale);
-  cairo_set_source_surface (cr, img, 0, 0);
-  cairo_pattern_set_filter (cairo_get_source (cr), CAIRO_FILTER_GOOD);
-  cairo_paint (cr);
-  cairo_restore (cr);
+  cairo_rectangle (icr, border, border, pw, ph);
+  cairo_clip (icr);
+  cairo_translate (icr, border, border);
+  paint_image (icr, img, pw, ph, !style->keep_aspect);
+  cairo_destroy (icr);
+  item_finish (cr, &item, cx, cy, style->rotation ? fp_composite_tilt (seed) : 0, shadow, 0);
 }
 
-/* Draws one stacked card (x, y, w, h before tilting) with @img filling it (cropped), or a blank card if
- * @img is NULL; darkened by @dim (0 = front card). */
+/* Draws stacked card @depth (0 = front) in the card rectangle x, y, w, h: the picture fills the card
+ * (cropped), or with keep_aspect the card takes the picture's shape (fitted, centred, top-aligned so the
+ * stack's top edges stay in order); a blank card if @img is NULL. Further back = darker (and blurred with
+ * the depth effect). */
 static void
 draw_card (cairo_t *cr, const FpStyle *style, cairo_surface_t *img, double x, double y, double w, double h,
-           double radius, guint seed, double dim)
+           double radius, guint seed, guint depth)
 {
-  cairo_save (cr);
-  cairo_translate (cr, x + w / 2, y + h / 2);
-  if (style->rotation)
-    cairo_rotate (cr, unit (seed, 0x9e3779b9U) * STACK_MAX_TILT_DEG * G_PI / 180.0);
-
-  if (style->shadow)
-    draw_shadow (cr, w, h, radius, MAX (1.0, w * 0.012));
-
   double border = style->border ? MAX (1.0, round (w * 0.022)) : 0.0;
+  double cw = w, ch = h; /* this card's size */
+  if (img != NULL && style->keep_aspect)
+    {
+      double iw = cairo_image_surface_get_width (img), ih = cairo_image_surface_get_height (img);
+      double scale = MIN ((w - 2 * border) / iw, (h - 2 * border) / ih);
+      cw = iw * scale + 2 * border, ch = ih * scale + 2 * border;
+    }
+  double shadow = style->shadow ? MAX (1.0, w * 0.022) : 0.0;
+  double dim = depth * (style->depth ? STACK_DEPTH_DIM : STACK_DIM);
+  double blur = style->depth ? depth * w * STACK_DEPTH_BLUR : 0.0;
+
+  Item item;
+  cairo_t *icr = item_begin (&item, cw, ch, ceil (MAX (shadow, blur) * 3 + 2));
+  if (icr == NULL)
+    return;
   if (border > 0)
     {
-      rounded_rect (cr, -w / 2, -h / 2, w, h, radius);
-      set_border_colour (cr, style);
-      cairo_fill (cr);
+      rounded_rect (icr, 0, 0, cw, ch, radius);
+      set_border_colour (icr, style);
+      cairo_fill (icr);
     }
-
-  /* The picture area: inside the border. */
-  double pw = w - 2 * border, ph = h - 2 * border;
-  cairo_save (cr);
-  rounded_rect (cr, -pw / 2, -ph / 2, pw, ph, MAX (0.0, radius - border));
-  cairo_clip (cr);
+  double pw = cw - 2 * border, ph = ch - 2 * border;
+  cairo_save (icr);
+  rounded_rect (icr, border, border, pw, ph, MAX (0.0, radius - border));
+  cairo_clip (icr);
+  cairo_translate (icr, border, border);
   if (img != NULL)
-    {
-      double iw = cairo_image_surface_get_width (img);
-      double ih = cairo_image_surface_get_height (img);
-      double scale = MAX (pw / iw, ph / ih); /* cover: fill the card, crop the rest */
-      cairo_translate (cr, -iw * scale / 2, -ih * scale / 2);
-      cairo_scale (cr, scale, scale);
-      cairo_set_source_surface (cr, img, 0, 0);
-      cairo_pattern_set_filter (cairo_get_source (cr), CAIRO_FILTER_GOOD);
-      cairo_paint (cr);
-    }
+    paint_image (icr, img, pw, ph, TRUE);
   else if (border == 0)
     {
-      cairo_set_source_rgb (cr, 0.95, 0.95, 0.95); /* blank card (with a border it is the border colour) */
-      cairo_paint (cr);
+      cairo_set_source_rgb (icr, 0.95, 0.95, 0.95); /* blank card (with a border it is the border colour) */
+      cairo_paint (icr);
     }
-  cairo_restore (cr);
-
+  cairo_restore (icr);
   if (dim > 0)
     {
-      rounded_rect (cr, -w / 2, -h / 2, w, h, radius);
-      cairo_set_source_rgba (cr, 0, 0, 0, dim);
-      cairo_fill (cr);
+      /* Darken only what is drawn (ATOP), so a transparent picture stays transparent. */
+      cairo_set_operator (icr, CAIRO_OPERATOR_ATOP);
+      cairo_set_source_rgba (icr, 0, 0, 0, dim);
+      cairo_paint (icr);
     }
-  cairo_restore (cr);
+  cairo_destroy (icr);
+  double angle = style->rotation ? unit (seed, 0x9e3779b9U) * STACK_MAX_TILT_DEG : 0;
+  item_finish (cr, &item, x + w / 2, y + ch / 2, angle, shadow, blur);
 }
 
 GdkTexture *
@@ -333,7 +441,7 @@ fp_composite_frame (const FpStyle         *style,
       if (stacked)
         {
           fp_composite_card_rect (i, width, &sx, &sy, &sw, &sh);
-          draw_card (cr, style, img, sx, sy, sw, sh, radius, items[i].seed, i * STACK_DIM);
+          draw_card (cr, style, img, sx, sy, sw, sh, radius, items[i].seed, i);
         }
       else if (img != NULL)
         {

@@ -43,10 +43,13 @@
 #define STACK_PAD           0.06   /* transparent margin around the stack in the frame texture */
 #define STACK_MAX_TILT_DEG  4.0
 #define STACK_DIM           0.10   /* each card further back is darkened by this much more */
+#define STACK_DEPTH_DIM     0.16   /* the same with the depth effect */
+#define STACK_DEPTH_BLUR    0.006  /* depth effect: blur radius per card further back (fraction of card width) */
 /* Where the stack sits on the folder, relative to the folder's visible body (its opaque bounding box). */
 #define STACK_BODY_W        0.969
 #define STACK_BODY_TOP      0.204
 
 /* Disk cache layout version: bump when the look of frames changes, so old frames are never shown.
- * v4: the style (layout, border, shadow, rotation) is part of each folder's cache directory name. */
-#define CACHE_DISK_VERSION  "v4"
+ * v4: the style (layout, border, shadow, rotation) is part of each folder's cache directory name.
+ * v5: drop shadows following the picture's shape, keep-aspect and depth options. */
+#define CACHE_DISK_VERSION  "v5"

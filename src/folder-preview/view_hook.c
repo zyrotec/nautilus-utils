@@ -275,16 +275,9 @@ hook_decor (ImageHook *hook, FpDecor *decor)
   int px = hook->size * gtk_widget_get_scale_factor (hook->image);
   if (custom_back)
     decor->back = fp_icon_art_render (vh->back_art, px, px);
+  /* Same size and place as the folder icon (V4): the SVG itself positions the overlay. */
   if (vh->overlay_art != NULL)
-    {
-      fp_decor_place_overlay (decor, &body, fp_icon_art_get_width (vh->overlay_art),
-                              fp_icon_art_get_height (vh->overlay_art),
-                              custom_back ? fp_icon_art_get_width (vh->back_art) : 0,
-                              custom_back ? fp_icon_art_get_height (vh->back_art) : 0);
-      int w = (int) (decor->overlay_rect.size.width * px + 0.5);
-      int h = (int) (decor->overlay_rect.size.height * px + 0.5);
-      decor->overlay = fp_icon_art_render (vh->overlay_art, w, h);
-    }
+    decor->overlay = fp_icon_art_render (vh->overlay_art, px, px);
 }
 
 static void

@@ -22,9 +22,9 @@ typedef struct
   FpLayout        layout;
   GdkTexture     *back;         /* Borrowed here (the paintable takes its own ref): drawn instead of the icon
                                  * while a frame is shown; NULL = the icon. */
-  GdkTexture     *overlay;      /* Borrowed (same): drawn over the frame while a frame is shown; NULL = none. */
+  GdkTexture     *overlay;      /* Borrowed (same): drawn over the frame while a frame is shown, over the
+                                 * whole icon (the same size as the back, V4); NULL = none. */
   graphene_rect_t frame_rect;   /* The frame texture, including its transparent margin. */
-  graphene_rect_t overlay_rect;
 } FpDecor;
 
 /* The v1 grid: frame on the front face (FRAME_FACE_*), no back or overlay. */
@@ -34,16 +34,6 @@ void fp_decor_init_grid (FpDecor *decor);
  * PLAN.md §11.1); no back or overlay yet. */
 void fp_decor_init_stacked (FpDecor               *decor,
                             const graphene_rect_t *body);
-
-/* Sets decor->overlay_rect for an overlay of @overlay_w × @overlay_h SVG units on the folder body @body:
- * anchored at the body's bottom centre; same scale as a custom back of @back_w × @back_h units drawn
- * centred in the icon (V4), or, if @back_w <= 0 (theme icon), as wide as the body. */
-void fp_decor_place_overlay (FpDecor               *decor,
-                             const graphene_rect_t *body,
-                             double                 overlay_w,
-                             double                 overlay_h,
-                             double                 back_w,
-                             double                 back_h);
 
 /* Frame width in device pixels for a logical icon @size at @scale (HiDPI). */
 guint fp_decor_frame_px (const FpDecor *decor,

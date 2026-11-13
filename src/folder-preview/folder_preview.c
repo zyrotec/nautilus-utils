@@ -34,6 +34,8 @@ apply_look (void)
   style.border_b = c->preview_border_colour.b;
   style.shadow = c->preview_shadow;
   style.rotation = c->preview_rotation;
+  style.keep_aspect = c->preview_keep_aspect;
+  style.depth = c->preview_depth;
   fp_view_hook_set_look (&style, c->preview_cycle, c->preview_folder_icon, c->preview_overlay_icon);
 }
 

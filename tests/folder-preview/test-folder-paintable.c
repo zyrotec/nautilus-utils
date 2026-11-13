@@ -161,7 +161,7 @@ assert_near_rect (const graphene_rect_t *r, double x, double y, double w, double
   g_assert_cmpfloat_with_epsilon (r->size.height, h, 1e-4);
 }
 
-/* PLAN.md §11.1: stack placement from the folder body, overlay placement (same scale / theme width). */
+/* PLAN.md §11.1: stack placement from the folder body. */
 static void
 test_decor_geometry (void)
 {
@@ -188,16 +188,6 @@ test_decor_geometry (void)
   guint px = fp_decor_frame_px (&st, 256, 1);
   g_assert_cmpfloat_with_epsilon ((double) fp_composite_frame_height (&style, px) / px,
                                   st.frame_rect.size.height / st.frame_rect.size.width, 0.01);
-
-  /* Same scale as a 100 × 100 back: an 80 × 40 overlay is 0.8 × 0.4 of the icon, on the body's bottom. */
-  fp_decor_place_overlay (&st, &body, 80, 40, 100, 100);
-  assert_near_rect (&st.overlay_rect, 0.1, 0.4, 0.8, 0.4);
-  /* A 200 × 100 back is drawn 1 icon wide: 0.005 icon per unit. */
-  fp_decor_place_overlay (&st, &body, 80, 40, 200, 100);
-  assert_near_rect (&st.overlay_rect, 0.5 - 0.2, 0.8 - 0.2, 0.4, 0.2);
-  /* Theme icon (no back size): as wide as the body. */
-  fp_decor_place_overlay (&st, &body, 80, 20, 0, 0);
-  assert_near_rect (&st.overlay_rect, 0.1, 0.6, 0.8, 0.2);
 }
 
 /* Stacked decor: custom back and overlay are drawn only together with a frame (V3), in order
@@ -208,7 +198,7 @@ test_decor_drawing (void)
   g_autoptr (GdkTexture) icon = solid (96, 96, 10);
   g_autoptr (GdkTexture) frame = solid (60, 40, 200);
   GdkTexture *back = solid (96, 96, 50);     /* owned until handed over below */
-  GdkTexture *overlay = solid (80, 40, 90);  /* owned until handed over below */
+  GdkTexture *overlay = solid (96, 96, 90);  /* owned until handed over below */
   g_autoptr (FpFolderPaintable) p = fp_folder_paintable_new (GDK_PAINTABLE (icon), 96);
   guint contents = 0;
   g_signal_connect (p, "invalidate-contents", G_CALLBACK (count), &contents);
@@ -216,7 +206,6 @@ test_decor_drawing (void)
   graphene_rect_t body = GRAPHENE_RECT_INIT (0.1f, 0.2f, 0.8f, 0.6f);
   FpDecor d;
   fp_decor_init_stacked (&d, &body);
-  fp_decor_place_overlay (&d, &body, 80, 40, 100, 100);
   d.back = back;
   d.overlay = overlay;
   fp_folder_paintable_set_decor (p, &d);
@@ -239,8 +228,7 @@ test_decor_drawing (void)
   g_assert_true (g_array_index (b, Drawn, 1).texture == frame);
   Drawn o = g_array_index (b, Drawn, 2);
   g_assert_true (o.texture == overlay);
-  g_assert_cmpfloat_with_epsilon (o.bounds.origin.y + o.bounds.size.height, 0.8 * 96, 0.01);
-  g_assert_cmpfloat_with_epsilon (o.bounds.size.width, 0.8 * 96, 0.01);
+  g_assert_true (graphene_rect_equal (&o.bounds, &full)); /* same size and place as the back (V4) */
 
   /* Back to the grid look: icon + frame on the front face. */
   fp_folder_paintable_set_decor (p, NULL);

@@ -360,6 +360,11 @@ folder_preview_page (GSettings *settings)
                                 NULL, (gpointer) "stacked", NULL);
   g_settings_bind (settings, "folder-preview-cycle", step, "sensitive", G_SETTINGS_BIND_GET);
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (layout_group), step);
+  GtkWidget *depth = switch_row (settings, "folder-preview-depth", "Depth Effect",
+                                 "Blur and darken the pictures further back in the stack");
+  g_settings_bind_with_mapping (settings, "folder-preview-layout", depth, "visible", G_SETTINGS_BIND_GET, nick_is,
+                                NULL, (gpointer) "stacked", NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (layout_group), depth);
   adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (layout_group));
 
   /* Thumbnail style: both layouts (V1). */
@@ -373,15 +378,20 @@ folder_preview_page (GSettings *settings)
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (style_group),
                              switch_row (settings, "folder-preview-shadow", "Shadow", NULL));
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (style_group),
+                             switch_row (settings, "folder-preview-keep-aspect", "Keep Aspect Ratio",
+                                         "Show whole pictures in their own shape instead of filling the space, "
+                                         "cropped"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (style_group),
                              switch_row (settings, "folder-preview-rotation", "Random Rotation",
                                          "Tilt each picture by a small angle that stays the same"));
   adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (style_group));
 
   /* Custom folder SVGs: stacked layout only. */
   GtkWidget *icon_group = group ("Folder Icon",
-                                 "Used on folders that show previews in the stacked layout. Export both "
-                                 "SVGs from the same artboard: the overlay is drawn at the folder icon’s "
-                                 "scale, at its bottom centre, on top of the pictures.");
+                                 "Used on folders that show previews in the stacked layout. Both SVGs are "
+                                 "drawn at the size of the icon: give them the same canvas, and place the "
+                                 "overlay where it belongs inside its SVG. It is drawn on top of the "
+                                 "pictures.");
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (icon_group),
                              svg_row (settings, "folder-preview-folder-icon", "Folder Icon", "Theme folder icon"));
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (icon_group),

@@ -25,6 +25,8 @@ static const NuConfig defaults = {
   .preview_border_colour = { 0xff, 0xff, 0xff },
   .preview_shadow = TRUE,
   .preview_rotation = TRUE,
+  .preview_keep_aspect = TRUE,
+  .preview_depth = TRUE,
   .preview_folder_icon = "",
   .preview_overlay_icon = "",
 };
@@ -56,6 +58,8 @@ static const struct
   { "folder-preview-border-colour", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-shadow", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-rotation", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-keep-aspect", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-depth", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-cycle", NU_CHANGED_PREVIEW_ICONS },
   { "folder-preview-folder-icon", NU_CHANGED_PREVIEW_ICONS },
   { "folder-preview-overlay-icon", NU_CHANGED_PREVIEW_ICONS },
@@ -179,6 +183,8 @@ read_all (void)
   read_colour (s, "folder-preview-border-colour", defaults.preview_border_colour, &c->preview_border_colour);
   c->preview_shadow = g_settings_get_boolean (s, "folder-preview-shadow");
   c->preview_rotation = g_settings_get_boolean (s, "folder-preview-rotation");
+  c->preview_keep_aspect = g_settings_get_boolean (s, "folder-preview-keep-aspect");
+  c->preview_depth = g_settings_get_boolean (s, "folder-preview-depth");
   /* Replace the owned strings; the config borrows them. */
   g_free (ns->folder_icon);
   ns->folder_icon = g_settings_get_string (s, "folder-preview-folder-icon");

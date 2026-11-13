@@ -78,6 +78,18 @@
       <summary>Tilt each photo by a random (but stable) angle</summary>
     </key>
 
+    <key name="folder-preview-keep-aspect" type="b">
+      <default>true</default>
+      <summary>Keep each picture's aspect ratio</summary>
+      <description>false = pictures fill their section (grid) or card (stacked), cropped.</description>
+    </key>
+
+    <key name="folder-preview-depth" type="b">
+      <default>true</default>
+      <summary>Depth effect in the stacked layout</summary>
+      <description>Cards further back are blurred and darkened more.</description>
+    </key>
+
     <key name="folder-preview-folder-icon" type="s">
       <default>''</default>
       <summary>Custom folder icon (SVG path) for the stacked layout</summary>
@@ -87,7 +99,7 @@
     <key name="folder-preview-overlay-icon" type="s">
       <default>''</default>
       <summary>Front overlay (SVG path) drawn over the stack in the stacked layout</summary>
-      <description>Empty = none. Drawn at the folder icon's scale, anchored at the folder's bottom centre.</description>
+      <description>Empty = none. Drawn at the same size and position as the folder icon (the whole icon square).</description>
     </key>
 
     <key name="sidebar-drives-enabled" type="b">

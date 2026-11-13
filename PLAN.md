@@ -1333,9 +1333,8 @@ an on/off switch for hover cycling. Branch `folder-thumbnail-preview-extended`. 
   step like Grid). The stack wraps around at the end so it never shrinks.
 - **Custom folder icon (Stacked only):** an SVG that replaces the folder icon (the back of the folder),
   drawn centred in the icon square, aspect ratio kept. **Front overlay (Stacked only):** an SVG drawn on
-  top of the cards, at the **same scale** as the custom folder icon (export both from one artboard) and
-  anchored at the folder's visible bottom centre (the bottom of its opaque body, not its shadow). Without a
-  custom folder icon the overlay is fitted to the theme folder's width. Either one may be set alone.
+  top of the cards at the **same size and place** as the folder icon; the user positions the overlay inside
+  its SVG (same canvas as the folder SVG). Either one may be set alone.
 - Folders with nothing to preview (or not loaded yet) keep the **theme icon** (owner); the custom SVGs are
   drawn only together with the cards.
 - Card stack placement (Stacked): measured from the folder's visible body (its opaque bounding box): stack
@@ -1360,6 +1359,8 @@ an on/off switch for hover cycling. Branch `folder-thumbnail-preview-extended`. 
 | `folder-preview-border-colour` | s `#rrggbb` | `#ffffff` |
 | `folder-preview-shadow` | b | true |
 | `folder-preview-rotation` | b | true |
+| `folder-preview-keep-aspect` | b | true |
+| `folder-preview-depth` | b | true (stacked only) |
 | `folder-preview-folder-icon` | s (path, empty = theme) | '' |
 | `folder-preview-overlay-icon` | s (path, empty = none) | '' |
 
@@ -1374,7 +1375,7 @@ folder icon and front overlay, each with Choose…/Clear). Everything waits for 
 | V1 | Style options apply to **both** layouts. |
 | V2 | Stacked cycling step is a **user option** (one / three photos per step). |
 | V3 | Folders without previews keep the **theme icon**, even with custom SVGs set. |
-| V4 | The overlay uses the **same scale** as the custom folder SVG; fitted to the folder width with the theme icon. |
+| V4 | ~~Same scale, anchored at the body's bottom centre~~ → (owner, 2026-11-13 follow-up) the overlay SVG is drawn at **the same size and place as the folder SVG** (the whole icon square); the SVG itself positions the overlay. |
 | V5 | SVG rasterising runs on the main thread (GtkSvg is not thread-safe), once per (zoom, scale) per settings change; textures are cached and shared by all icons. |
 | V6 | Nautilus 51.1 looks a plain folder's icon up as `inode-directory` before `folder` (verified: Adwaita and the owner's Hatter-Orange both resolve to `mimetypes/inode-directory.svg`), so both icon file names count as "the plain folder icon". |
 | V7 | The disk cache keeps one directory per folder **per look** (style key in the hashed name, `CACHE_DISK_VERSION` v4), so switching back to a look is a disk hit. Directories of older versions (v3) are deleted by a low-priority worker job at start-up. |
@@ -1387,6 +1388,22 @@ folder icon and front overlay, each with Choose…/Clear). Everything waits for 
 | 2 Icons & hook | `icon_art.c` (GtkSvg → textures, opaque bounds); paintable decor (back, frame, overlay); view hook: plain-`folder` filter, decor, live restyle, cycle off; tests. | Isolated Nautilus shows both layouts and the custom SVGs; `folder-*` folders untouched. |
 | 3 Settings tab | Groups and rows of §11.3. | Every option applies live on Apply. |
 | 4 Hardening & docs | Smoke rounds switching layouts/styles, `check-safety.sh`, README. | All PASS. |
+
+### 11.5a Follow-up (owner, 2026-11-13)
+
+1. Folder SVG and overlay SVG are drawn at the same size (V4 updated).
+2. **Depth effect** (stacked, `folder-preview-depth`, default on): card *n* behind the front is darkened by
+   `n·STACK_DEPTH_DIM` (0.16) and blurred with radius `n·STACK_DEPTH_BLUR` (0.6 % of the card width).
+3. **Drop shadow** instead of a box shadow (both layouts): each photo/card is drawn into its own surface; its
+   shadow is that surface's alpha, blurred (3 × box blur ≈ Gaussian) and offset down, so a transparent
+   picture (an SVG logo) casts the shadow of its shape. Dimming uses `ATOP`, so transparent parts stay
+   transparent.
+4. **Keep Aspect Ratio** (`folder-preview-keep-aspect`, default on, both layouts): grid on = v1 fit, off =
+   fill the section (cropped); stacked on = the card takes the picture's shape (fitted in the card rectangle,
+   centred, top-aligned so the stack's top edges stay in order), off = the picture fills the card (cropped).
+
+`CACHE_DISK_VERSION` v5 (v4 is purged at start-up). Tests: keep-aspect (grid fill, stacked card shape),
+depth (darker, soft edge, sharp front), drop-shadow shape (no shadow under a transparent half).
 
 ### 11.6 Phase results (2026-11-13)
 
@@ -1412,3 +1429,8 @@ folder icon and front overlay, each with Choose…/Clear). Everything waits for 
 - Smoke (ASan, 150 s + every round, 46 photo folders): `smoke-20261113-211922` **PASS** — previews drawn in 53/54
   self-checks, 0 wrong, 27 off/on toggles, 8 hovers.
 Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+
+Follow-up (§11.5a) results: smoke `smoke-20261113-223428` **PASS** — previews drawn in 58/58 self-checks, 0 wrong (look round
+now also switches keep-aspect and depth). scan-build flagged reading the blur line buffer as possibly
+uninitialised (a false positive: every read index is below the filled length); fixed by zero-initialising
+the buffer, not suppressed. Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
