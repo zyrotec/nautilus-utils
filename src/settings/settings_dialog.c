@@ -13,6 +13,9 @@
 #define DIALOG_KEY "st-settings-dialog" /* window qdata: GWeakRef to the open dialog */
 
 static const char *const colour_mode_nicks[] = { "accent", "custom", "gradient" };
+/* Folder preview enums (PLAN.md §11.3), NULL-terminated, in combo row order. */
+static const char *const layout_nicks[] = { "grid", "stacked", NULL };
+static const char *const stack_step_nicks[] = { "one", "three", NULL };
 
 /* ---- GSettings ↔ property mappings (all return TRUE when @value was set) ------------------------------ */
 
@@ -39,6 +42,62 @@ selected_to_mode (const GValue *value, const GVariantType *type, gpointer data)
   (void) data;
   guint i = g_value_get_uint (value);
   return i < G_N_ELEMENTS (colour_mode_nicks) ? g_variant_new_string (colour_mode_nicks[i]) : NULL;
+}
+
+/* Enum nick → combo row index; @data = NULL-terminated nick array (static). Unknown nick → 0. */
+static gboolean
+nick_to_selected (GValue *value, GVariant *variant, gpointer data)
+{
+  const char *const *nicks = data;
+  const char *nick = g_variant_get_string (variant, NULL);
+  g_value_set_uint (value, 0);
+  for (guint i = 0; nicks[i] != NULL; i++)
+    if (g_strcmp0 (nick, nicks[i]) == 0)
+      g_value_set_uint (value, i);
+  return TRUE;
+}
+
+/* Combo row index → enum nick. Returns a new floating variant (consumed by GSettings), or NULL to reject. */
+static GVariant *
+selected_to_nick (const GValue *value, const GVariantType *type, gpointer data)
+{
+  (void) type;
+  const char *const *nicks = data;
+  guint i = g_value_get_uint (value);
+  for (guint k = 0; nicks[k] != NULL; k++)
+    if (k == i)
+      return g_variant_new_string (nicks[k]);
+  return NULL;
+}
+
+/* Enum key == @data (a static nick) → boolean property (e.g. visible only in the stacked layout). */
+static gboolean
+nick_is (GValue *value, GVariant *variant, gpointer data)
+{
+  g_value_set_boolean (value, g_strcmp0 (g_variant_get_string (variant, NULL), data) == 0);
+  return TRUE;
+}
+
+/* Path key → row subtitle: the file name, or @data (static text) when empty. */
+static gboolean
+path_to_subtitle (GValue *value, GVariant *variant, gpointer data)
+{
+  const char *path = g_variant_get_string (variant, NULL);
+  if (path == NULL || *path == '\0')
+    g_value_set_string (value, data);
+  else
+    g_value_take_string (value, g_filename_display_basename (path));
+  return TRUE;
+}
+
+/* Path key → TRUE when set. */
+static gboolean
+path_is_set (GValue *value, GVariant *variant, gpointer data)
+{
+  (void) data;
+  const char *path = g_variant_get_string (variant, NULL);
+  g_value_set_boolean (value, path != NULL && *path != '\0');
+  return TRUE;
 }
 
 /* bar-colour-mode → visible, for the rows of one mode (@data = the mode, as a pointer-sized int). */
@@ -98,13 +157,12 @@ switch_row (GSettings  *settings,
   return row;
 }
 
-/* An action row with a colour button for @key, visible only in colour @mode. */
+/* An action row with a colour button for "#rrggbb" @key (@fallback: static default for invalid values). */
 static GtkWidget *
-colour_row (GSettings      *settings,
-            const char     *key,
-            const char     *title,
-            const NuRgb    *fallback,
-            NuBarColourMode mode)
+colour_button_row (GSettings   *settings,
+                   const char  *key,
+                   const char  *title,
+                   const NuRgb *fallback)
 {
   GtkWidget *row = adw_action_row_new ();
   adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), title);
@@ -121,8 +179,144 @@ colour_row (GSettings      *settings,
   /* @fallback points at static defaults (nu_settings_defaults), so no destroy notify is needed. */
   g_settings_bind_with_mapping (settings, key, button, "rgba", G_SETTINGS_BIND_DEFAULT,
                                 string_to_rgba, rgba_to_string, (gpointer) fallback, NULL);
+  return row;
+}
+
+/* A bar colour row for @key, visible only in colour @mode. */
+static GtkWidget *
+colour_row (GSettings      *settings,
+            const char     *key,
+            const char     *title,
+            const NuRgb    *fallback,
+            NuBarColourMode mode)
+{
+  GtkWidget *row = colour_button_row (settings, key, title, fallback);
   g_settings_bind_with_mapping (settings, "bar-colour-mode", row, "visible", G_SETTINGS_BIND_GET,
                                 mode_is, NULL, GUINT_TO_POINTER ((guint) mode), NULL);
+  return row;
+}
+
+/* A combo row bound to enum @key; @labels and @nicks are NULL-terminated and in the same order (static). */
+static GtkWidget *
+enum_row (GSettings         *settings,
+          const char        *key,
+          const char        *title,
+          const char *const *labels,
+          const char *const *nicks)
+{
+  GtkWidget *row = adw_combo_row_new ();
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), title);
+  g_autoptr (GtkStringList) model = gtk_string_list_new (labels);
+  adw_combo_row_set_model (ADW_COMBO_ROW (row), G_LIST_MODEL (model));
+  g_settings_bind_with_mapping (settings, key, row, "selected", G_SETTINGS_BIND_DEFAULT, nick_to_selected,
+                                selected_to_nick, (gpointer) nicks, NULL);
+  return row;
+}
+
+/* ---- SVG file rows (PLAN.md §11.3) ---------------------------------------------------------------------- */
+
+typedef struct
+{
+  GSettings  *settings; /* Owned ref: the dialog's delayed settings. */
+  const char *key;      /* Static. */
+} SvgPick;
+
+static void
+svg_pick_free (SvgPick *pick)
+{
+  g_clear_object (&pick->settings);
+  g_free (pick);
+}
+
+/* The file chooser closed. A cancelled choice changes nothing. Consumes @data. */
+static void
+on_svg_chosen (GObject *source, GAsyncResult *res, gpointer data)
+{
+  SvgPick *pick = data;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GFile) file = gtk_file_dialog_open_finish (GTK_FILE_DIALOG (source), res, &error);
+  g_autofree char *path = file != NULL ? g_file_get_path (file) : NULL;
+  if (path != NULL)
+    g_settings_set_string (pick->settings, pick->key, path); /* pending until Apply, like every setting */
+  else if (error != NULL && !g_error_matches (error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED))
+    g_debug ("SVG chooser: %s", error->message);
+  svg_pick_free (pick);
+}
+
+static void
+on_svg_choose (GtkButton *button, gpointer data)
+{
+  GSettings *settings = data; /* kept alive by the dialog */
+  const char *key = g_object_get_data (G_OBJECT (button), "st-key"); /* static string */
+  const char *title = g_object_get_data (G_OBJECT (button), "st-title");
+
+  g_autoptr (GtkFileDialog) chooser = gtk_file_dialog_new ();
+  gtk_file_dialog_set_title (chooser, title);
+  gtk_file_dialog_set_modal (chooser, TRUE);
+  g_autoptr (GtkFileFilter) svg = gtk_file_filter_new ();
+  gtk_file_filter_set_name (svg, "SVG Images");
+  gtk_file_filter_add_mime_type (svg, "image/svg+xml");
+  gtk_file_filter_add_suffix (svg, "svg");
+  g_autoptr (GListStore) filters = g_list_store_new (GTK_TYPE_FILE_FILTER);
+  g_list_store_append (filters, svg);
+  gtk_file_dialog_set_filters (chooser, G_LIST_MODEL (filters));
+  gtk_file_dialog_set_default_filter (chooser, svg);
+  g_autofree char *current = g_settings_get_string (settings, key);
+  if (current != NULL && *current != '\0')
+    {
+      g_autoptr (GFile) file = g_file_new_for_path (current);
+      gtk_file_dialog_set_initial_file (chooser, file);
+    }
+
+  SvgPick *pick = g_new0 (SvgPick, 1); /* freed by on_svg_chosen */
+  pick->settings = g_object_ref (settings);
+  pick->key = key;
+  GtkRoot *root = gtk_widget_get_root (GTK_WIDGET (button));
+  gtk_file_dialog_open (chooser, GTK_IS_WINDOW (root) ? GTK_WINDOW (root) : NULL, NULL, on_svg_chosen, pick);
+}
+
+static void
+on_svg_clear (GtkButton *button, gpointer data)
+{
+  g_settings_set_string (G_SETTINGS (data), g_object_get_data (G_OBJECT (button), "st-key"), "");
+}
+
+/* A row for SVG path @key (static): file name as subtitle (@unset when empty), Choose… and Clear buttons. */
+static GtkWidget *
+svg_row (GSettings  *settings,
+         const char *key,
+         const char *title,
+         const char *unset)
+{
+  GtkWidget *row = adw_action_row_new ();
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), title);
+  g_settings_bind_with_mapping (settings, key, row, "subtitle", G_SETTINGS_BIND_GET, path_to_subtitle, NULL,
+                                (gpointer) unset, NULL);
+
+  GtkWidget *clear = gtk_button_new_from_icon_name ("edit-clear-symbolic");
+  gtk_widget_set_valign (clear, GTK_ALIGN_CENTER);
+  gtk_widget_add_css_class (clear, "flat");
+  g_autofree char *clear_label = g_strdup_printf ("Clear %s", title);
+  gtk_widget_set_tooltip_text (clear, clear_label);
+  gtk_accessible_update_property (GTK_ACCESSIBLE (clear), GTK_ACCESSIBLE_PROPERTY_LABEL, clear_label, -1);
+  g_object_set_data (G_OBJECT (clear), "st-key", (gpointer) key);
+  g_signal_connect (clear, "clicked", G_CALLBACK (on_svg_clear), settings);
+  g_settings_bind_with_mapping (settings, key, clear, "sensitive", G_SETTINGS_BIND_GET, path_is_set, NULL, NULL,
+                                NULL);
+
+  GtkWidget *choose = gtk_button_new_from_icon_name ("document-open-symbolic");
+  gtk_widget_set_valign (choose, GTK_ALIGN_CENTER);
+  gtk_widget_add_css_class (choose, "flat");
+  g_autofree char *choose_label = g_strdup_printf ("Choose %s…", title);
+  gtk_widget_set_tooltip_text (choose, choose_label);
+  gtk_accessible_update_property (GTK_ACCESSIBLE (choose), GTK_ACCESSIBLE_PROPERTY_LABEL, choose_label, -1);
+  g_object_set_data (G_OBJECT (choose), "st-key", (gpointer) key);
+  g_object_set_data (G_OBJECT (choose), "st-title", (gpointer) title);
+  g_signal_connect (choose, "clicked", G_CALLBACK (on_svg_choose), settings);
+
+  adw_action_row_add_suffix (ADW_ACTION_ROW (row), clear);
+  adw_action_row_add_suffix (ADW_ACTION_ROW (row), choose);
+  adw_action_row_set_activatable_widget (ADW_ACTION_ROW (row), choose);
   return row;
 }
 
@@ -142,13 +336,64 @@ group (const char *title,
 static GtkWidget *
 folder_preview_page (GSettings *settings)
 {
+  const NuConfig *d = nu_settings_defaults ();
   GtkWidget *page = adw_preferences_page_new ();
   GtkWidget *g = group (NULL, NULL);
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (g),
                              switch_row (settings, "folder-preview-enabled", "Show Previews on Folder Icons",
                                          "Draw the first pictures and videos of a folder on its icon in the "
-                                         "grid view, and cycle through more while hovering"));
+                                         "grid view"));
   adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (g));
+
+  /* Layout (PLAN.md §11.3). */
+  GtkWidget *layout_group = group ("Layout", NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (layout_group),
+                             enum_row (settings, "folder-preview-layout", "Layout",
+                                       (const char *[]) { "Grid", "Stacked", NULL }, layout_nicks));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (layout_group),
+                             switch_row (settings, "folder-preview-cycle", "Cycle on Hover",
+                                         "Show the next pictures while the pointer is over a folder"));
+  GtkWidget *step = enum_row (settings, "folder-preview-stack-step", "Pictures per Step",
+                              (const char *[]) { "One", "Three", NULL }, stack_step_nicks);
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (step), "How many new pictures each hover step brings to the stack");
+  g_settings_bind_with_mapping (settings, "folder-preview-layout", step, "visible", G_SETTINGS_BIND_GET, nick_is,
+                                NULL, (gpointer) "stacked", NULL);
+  g_settings_bind (settings, "folder-preview-cycle", step, "sensitive", G_SETTINGS_BIND_GET);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (layout_group), step);
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (layout_group));
+
+  /* Thumbnail style: both layouts (V1). */
+  GtkWidget *style_group = group ("Thumbnails", NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (style_group),
+                             switch_row (settings, "folder-preview-border", "Border", NULL));
+  GtkWidget *border_colour = colour_button_row (settings, "folder-preview-border-colour", "Border Colour",
+                                                &d->preview_border_colour);
+  g_settings_bind (settings, "folder-preview-border", border_colour, "sensitive", G_SETTINGS_BIND_GET);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (style_group), border_colour);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (style_group),
+                             switch_row (settings, "folder-preview-shadow", "Shadow", NULL));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (style_group),
+                             switch_row (settings, "folder-preview-rotation", "Random Rotation",
+                                         "Tilt each picture by a small angle that stays the same"));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (style_group));
+
+  /* Custom folder SVGs: stacked layout only. */
+  GtkWidget *icon_group = group ("Folder Icon",
+                                 "Used on folders that show previews in the stacked layout. Export both "
+                                 "SVGs from the same artboard: the overlay is drawn at the folder icon’s "
+                                 "scale, at its bottom centre, on top of the pictures.");
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (icon_group),
+                             svg_row (settings, "folder-preview-folder-icon", "Folder Icon", "Theme folder icon"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (icon_group),
+                             svg_row (settings, "folder-preview-overlay-icon", "Front Overlay", "None"));
+  g_settings_bind_with_mapping (settings, "folder-preview-layout", icon_group, "visible", G_SETTINGS_BIND_GET,
+                                nick_is, NULL, (gpointer) "stacked", NULL);
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (icon_group));
+
+  /* Options of a switched-off feature can't be edited (follows the pending switch). */
+  g_settings_bind (settings, "folder-preview-enabled", layout_group, "sensitive", G_SETTINGS_BIND_GET);
+  g_settings_bind (settings, "folder-preview-enabled", style_group, "sensitive", G_SETTINGS_BIND_GET);
+  g_settings_bind (settings, "folder-preview-enabled", icon_group, "sensitive", G_SETTINGS_BIND_GET);
   return page;
 }
 

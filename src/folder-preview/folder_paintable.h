@@ -1,4 +1,8 @@
-/* FpFolderPaintable: the theme's folder icon with a 2×2 preview frame on its front face (PLAN.md §6.1.2, D10).
+/* FpFolderPaintable: the theme's folder icon with a preview frame on it (PLAN.md §6.1.2, D10; §11).
+ *
+ * What is drawn, bottom to top: the folder icon (or, while a frame is shown, the decor's custom back
+ * texture), the frame at the decor's frame rectangle, and (while a frame is shown) the decor's overlay
+ * texture. Without a decor it is the v1 grid: the theme icon with the frame on its front face.
  *
  * Plain GTK (no Nautilus internals), so it can be tested on its own. The view hook installs one per grid
  * icon as NautilusImage's fallback (D4) and swaps frames in place while hovering, which only
@@ -8,7 +12,43 @@
 
 #include <gtk/gtk.h>
 
+#include "composite.h"
+
 G_BEGIN_DECLS
+
+/* Where things go on one icon. Rectangles are fractions of the icon size (0 … 1, may exceed slightly). */
+typedef struct
+{
+  FpLayout        layout;
+  GdkTexture     *back;         /* Borrowed here (the paintable takes its own ref): drawn instead of the icon
+                                 * while a frame is shown; NULL = the icon. */
+  GdkTexture     *overlay;      /* Borrowed (same): drawn over the frame while a frame is shown; NULL = none. */
+  graphene_rect_t frame_rect;   /* The frame texture, including its transparent margin. */
+  graphene_rect_t overlay_rect;
+} FpDecor;
+
+/* The v1 grid: frame on the front face (FRAME_FACE_*), no back or overlay. */
+void fp_decor_init_grid (FpDecor *decor);
+
+/* Stacked: the card stack placed on a folder whose opaque body is @body (fractions of the icon, see
+ * PLAN.md §11.1); no back or overlay yet. */
+void fp_decor_init_stacked (FpDecor               *decor,
+                            const graphene_rect_t *body);
+
+/* Sets decor->overlay_rect for an overlay of @overlay_w × @overlay_h SVG units on the folder body @body:
+ * anchored at the body's bottom centre; same scale as a custom back of @back_w × @back_h units drawn
+ * centred in the icon (V4), or, if @back_w <= 0 (theme icon), as wide as the body. */
+void fp_decor_place_overlay (FpDecor               *decor,
+                             const graphene_rect_t *body,
+                             double                 overlay_w,
+                             double                 overlay_h,
+                             double                 back_w,
+                             double                 back_h);
+
+/* Frame width in device pixels for a logical icon @size at @scale (HiDPI). */
+guint fp_decor_frame_px (const FpDecor *decor,
+                         int            size,
+                         int            scale);
 
 #define FP_TYPE_FOLDER_PAINTABLE (fp_folder_paintable_get_type ())
 G_DECLARE_FINAL_TYPE (FpFolderPaintable, fp_folder_paintable, FP, FOLDER_PAINTABLE, GObject)
@@ -30,17 +70,21 @@ void fp_folder_paintable_set_frame (FpFolderPaintable *self,
                                     GdkTexture        *frame,
                                     const char        *uri);
 
+/* Copies @decor (NULL = fp_decor_init_grid), taking refs on its textures; invalidates the contents. */
+void fp_folder_paintable_set_decor (FpFolderPaintable *self,
+                                    const FpDecor     *decor);
+
 /* Borrowed getters. */
 GdkPaintable *fp_folder_paintable_get_icon      (FpFolderPaintable *self);
 GdkTexture   *fp_folder_paintable_get_frame     (FpFolderPaintable *self);
 const char   *fp_folder_paintable_get_frame_uri (FpFolderPaintable *self);
 
-/* Where the frame goes inside a @width × @height icon (logical units). */
+/* Grid: where the frame goes inside a @width × @height icon (logical units). */
 void fp_folder_paintable_frame_rect (double           width,
                                      double           height,
                                      graphene_rect_t *out);
 
-/* Frame width in device pixels for a logical icon @size at @scale (HiDPI); the height follows from the
+/* Grid: frame width in device pixels for a logical icon @size at @scale (HiDPI); the height follows from the
  * face's aspect ratio (fp_composite_frame_height). */
 guint fp_folder_paintable_frame_px (int size,
                                     int scale);

@@ -28,6 +28,7 @@ fp_core_lib = static_library('fp-core',
 # Plain-GTK drawing code (no Nautilus internals), shared by the module and its unit test.
 fp_ui_lib = static_library('fp-ui',
   'folder_paintable.c',
+  'icon_art.c',
   c_args: fp_c_args,
   dependencies: core_deps,
   include_directories: conf_inc,

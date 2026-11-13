@@ -1318,8 +1318,8 @@ an on/off switch for hover cycling. Branch `folder-thumbnail-preview-extended`. 
 
 ### 11.1 Behaviour
 
-- **Which folders get previews (both layouts):** only folders whose icon is the theme's plain `folder` icon
-  (icon file `folder.svg`/`folder.png`). Every `folder-*` icon (Pictures, Documents, Downloads, Music,
+- **Which folders get previews (both layouts):** only folders whose icon is the theme's plain folder icon
+  (icon file `folder.*` or `inode-directory.*`, V6). Every `folder-*` icon (Pictures, Documents, Downloads, Music,
   Videos, Templates, Public, remote, …) and any custom icon keeps its normal icon, with no preview.
 - **Layout** (setting): **Grid** = the v1 look (§6.1.2), **Stacked** = up to 3 rounded "cards" stacked
   like the mock: the front card full width, each card behind it inset on both sides and raised by
@@ -1375,6 +1375,7 @@ folder icon and front overlay, each with Choose…/Clear). Everything waits for 
 | V2 | Stacked cycling step is a **user option** (one / three photos per step). |
 | V3 | Folders without previews keep the **theme icon**, even with custom SVGs set. |
 | V4 | The overlay uses the **same scale** as the custom folder SVG; fitted to the folder width with the theme icon. |
+| V6 | Nautilus 51.1 looks a plain folder's icon up as `inode-directory` before `folder` (verified: Adwaita and the owner's Hatter-Orange both resolve to `mimetypes/inode-directory.svg`), so both icon file names count as "the plain folder icon". |
 | V5 | SVG rasterising runs on the main thread (GtkSvg is not thread-safe), once per (zoom, scale) per settings change; textures are cached and shared by all icons. |
 
 ### 11.5 Phases
