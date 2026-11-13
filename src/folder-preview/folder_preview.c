@@ -2,6 +2,8 @@
  * nautilus-utils module entry points (src/extension.c). */
 #include "folder_preview.h"
 
+#include <math.h>
+
 #include "cache.h"
 #include "config.h"
 #include "info_provider.h"
@@ -32,6 +34,7 @@ apply_look (void)
   style.border_r = c->preview_border_colour.r;
   style.border_g = c->preview_border_colour.g;
   style.border_b = c->preview_border_colour.b;
+  style.border_width = (guint) lround (CLAMP (c->preview_border_width, 0.5, 6.0) * 10);
   style.shadow = c->preview_shadow;
   style.rotation = c->preview_rotation;
   style.keep_aspect = c->preview_keep_aspect;

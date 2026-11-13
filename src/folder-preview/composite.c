@@ -19,6 +19,7 @@ fp_style_init_default (FpStyle *style)
     .stack_step = 1,
     .border = TRUE,
     .border_r = 0xff, .border_g = 0xff, .border_b = 0xff,
+    .border_width = 10,
     .shadow = TRUE,
     .rotation = TRUE,
     .keep_aspect = TRUE,
@@ -32,6 +33,7 @@ gboolean
 fp_style_equal (const FpStyle *a, const FpStyle *b)
 {
   return a->layout == b->layout && a->stack_step == b->stack_step && a->border == b->border &&
+         a->border_width == b->border_width &&
          a->border_r == b->border_r && a->border_g == b->border_g && a->border_b == b->border_b &&
          a->shadow == b->shadow && a->rotation == b->rotation && a->keep_aspect == b->keep_aspect &&
          a->depth == b->depth && a->corner_radius == b->corner_radius && a->fade == b->fade &&
@@ -45,12 +47,12 @@ fp_style_key (const FpStyle *style)
 {
   gboolean stacked = style->layout == FP_LAYOUT_STACKED;
   /* Stacked-only options are left out of grid keys, so changing them keeps the grid's cached frames. */
-  return g_strdup_printf ("%s%u-b%d%02x%02x%02x-s%d-r%d-a%d-c%u-d%d-f%u-v%u.%u-p%u", stacked ? "stack" : "grid",
+  return g_strdup_printf ("%s%u-b%d%02x%02x%02x-s%d-r%d-a%d-c%u-d%d-f%u-v%u.%u-p%u-w%u", stacked ? "stack" : "grid",
                           stacked ? style->stack_step : 0u, style->border != FALSE, style->border_r,
                           style->border_g, style->border_b, style->shadow != FALSE, style->rotation != FALSE,
                           style->keep_aspect != FALSE, style->corner_radius, stacked ? (int) style->depth : 0,
                           stacked ? style->fade : 0u, stacked ? style->view_top_radius : 0u,
-                          stacked ? style->view_bottom_radius : 0u, stacked ? style->stack_padding : 0u);
+                          stacked ? style->view_bottom_radius : 0u, stacked ? style->stack_padding : 0u, style->border ? style->border_width : 0u);
 }
 
 guint
@@ -365,11 +367,10 @@ item_finish (cairo_t *cr, Item *item, double cx, double cy, double angle, double
  * filling the section (cropped), with optional border and drop shadow. */
 static void
 draw_photo (cairo_t *cr, const FpStyle *style, cairo_surface_t *img, double cx, double cy, double cw, double ch,
-            double radius, guint seed)
+            double radius, double border, guint seed)
 {
   double iw = cairo_image_surface_get_width (img);
   double ih = cairo_image_surface_get_height (img);
-  double border = style->border ? MAX (1.0, round (MIN (cw, ch) * 0.045)) : 0.0;
   double aw = cw * CELL_FILL - 2 * border, ah = ch * CELL_FILL - 2 * border; /* room for the picture */
   if (aw <= 0 || ah <= 0)
     return;
@@ -406,9 +407,8 @@ draw_photo (cairo_t *cr, const FpStyle *style, cairo_surface_t *img, double cx, 
  * depth effect; the front card is always fully visible. */
 static void
 draw_card (cairo_t *cr, const FpStyle *style, cairo_surface_t *img, double x, double y, double w, double h,
-           double radius, guint seed, guint depth)
+           double radius, double border, guint seed, guint depth)
 {
-  double border = style->border ? MAX (1.0, round (w * 0.022)) : 0.0;
   double cw = w, ch = h; /* this card's size */
   if (img != NULL && style->keep_aspect)
     {
@@ -500,6 +500,8 @@ fp_composite_frame (const FpStyle         *style,
 
   gboolean stacked = style->layout == FP_LAYOUT_STACKED;
   double radius = ref_px (style, width, style->corner_radius);
+  /* Border width: tenths of a px at 64 × 64, whole device pixels, at least 1. */
+  double border = style->border ? MAX (1.0, round (ref_px (style, width, style->border_width) / 10.0)) : 0.0;
   double vt = ref_px (style, width, style->view_top_radius), vb = ref_px (style, width, style->view_bottom_radius);
   gboolean clip = stacked && (vt > 0 || vb > 0);
   gboolean fade = stacked && style->fade > 0;
@@ -516,12 +518,12 @@ fp_composite_frame (const FpStyle         *style,
       if (stacked)
         {
           fp_composite_card_rect (i, width, &sx, &sy, &sw, &sh);
-          draw_card (cr, style, img, sx, sy, sw, sh, radius, items[i].seed, i);
+          draw_card (cr, style, img, sx, sy, sw, sh, radius, border, items[i].seed, i);
         }
       else if (img != NULL)
         {
           fp_composite_slot_rect (n_items, i, width, &sx, &sy, &sw, &sh);
-          draw_photo (cr, style, img, sx + sw / 2, sy + sh / 2, sw, sh, radius, items[i].seed);
+          draw_photo (cr, style, img, sx + sw / 2, sy + sh / 2, sw, sh, radius, border, items[i].seed);
         }
       if (img != NULL)
         cairo_surface_destroy (img);

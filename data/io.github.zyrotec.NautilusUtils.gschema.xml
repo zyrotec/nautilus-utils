@@ -79,6 +79,12 @@
       <summary>Photo border colour (#rrggbb)</summary>
     </key>
 
+    <key name="folder-preview-border-width" type="d">
+      <range min="0.5" max="6.0"/>
+      <default>1.0</default>
+      <summary>Photo border width, in pixels at the 64 × 64 icon size (scaled with the icon)</summary>
+    </key>
+
     <key name="folder-preview-shadow" type="b">
       <default>true</default>
       <summary>Draw a soft shadow under each photo</summary>

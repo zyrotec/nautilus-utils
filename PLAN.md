@@ -1357,6 +1357,7 @@ an on/off switch for hover cycling. Branch `folder-thumbnail-preview-extended`. 
 | `folder-preview-stack-step` | enum one / three | one |
 | `folder-preview-border` | b | true |
 | `folder-preview-border-colour` | s `#rrggbb` | `#ffffff` |
+| `folder-preview-border-width` | d 0.5–6 (px at 64 × 64) | 1.0 |
 | `folder-preview-shadow` | b | true |
 | `folder-preview-rotation` | b | true |
 | `folder-preview-keep-aspect` | b | true |
@@ -1447,6 +1448,13 @@ square bottom corners), corner radius, 8 px sides, placement (top / bottom / off
 `CACHE_DISK_VERSION` v7. Tests: upright front card (identical with rotation on/off), the card behind tilts,
 padding widths and clamping, placement with padding 0 / 16.
 
+### 11.5d Border width (owner, 2026-11-14)
+
+**Border Width** slider (both layouts, active while Border is on): 0.5–6 px at 64 × 64 in 0.5 steps (a whole
+pixel at 64 × 64 is 4 px at the largest zoom, too coarse), default 1. Drawn in whole device pixels, at least
+1; it replaces the previous widths (4.5 % of a grid section, 2.2 % of a card), which were about 1 px at
+64 × 64. Stored in `FpStyle.border_width` as tenths (integer key/equality). `CACHE_DISK_VERSION` v8.
+
 ### 11.6 Phase results (2026-11-13)
 
 - **Phase 1:** schema keys + `nu_settings` (two new change groups: style, icons/cycle); `FpStyle` in
@@ -1482,4 +1490,7 @@ Second follow-up (§11.5b) results: smoke `smoke-20261113-234528` **PASS** — p
 Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
 
 Third follow-up (§11.5c) results: smoke `smoke-20261114-001626` **PASS** — previews drawn in 68/68 self-checks, 0 wrong.
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.
+
+Border width (§11.5d) results: smoke `smoke-20261114-005830` **PASS** — previews drawn in 70/70 self-checks, 0 wrong.
 Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.

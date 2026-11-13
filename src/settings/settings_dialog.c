@@ -273,6 +273,43 @@ slider_row (GSettings  *settings,
   return row;
 }
 
+/* GtkScale:format-value with one decimal and @data (static) as the unit. Returns a new string (GTK frees). */
+static char *
+format_value_1 (GtkScale *scale, double value, gpointer data)
+{
+  (void) scale;
+  return g_strdup_printf ("%.1f %s", value, (const char *) data);
+}
+
+/* A row with a slider for double @key in [min, max] (schema range), in steps of @step. */
+static GtkWidget *
+slider_row_d (GSettings  *settings,
+              const char *key,
+              const char *title,
+              const char *subtitle,
+              double      min,
+              double      max,
+              double      step,
+              const char *unit)
+{
+  GtkWidget *row = adw_action_row_new ();
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), title);
+  if (subtitle != NULL)
+    adw_action_row_set_subtitle (ADW_ACTION_ROW (row), subtitle);
+  GtkWidget *scale = gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL, min, max, step);
+  gtk_scale_set_digits (GTK_SCALE (scale), 1);
+  gtk_scale_set_draw_value (GTK_SCALE (scale), TRUE);
+  gtk_scale_set_value_pos (GTK_SCALE (scale), GTK_POS_RIGHT);
+  gtk_scale_set_format_value_func (GTK_SCALE (scale), format_value_1, (gpointer) unit, NULL);
+  gtk_range_set_round_digits (GTK_RANGE (scale), 1);
+  gtk_widget_set_size_request (scale, 180, -1);
+  gtk_widget_set_valign (scale, GTK_ALIGN_CENTER);
+  gtk_accessible_update_property (GTK_ACCESSIBLE (scale), GTK_ACCESSIBLE_PROPERTY_LABEL, title, -1);
+  g_settings_bind (settings, key, gtk_range_get_adjustment (GTK_RANGE (scale)), "value", G_SETTINGS_BIND_DEFAULT);
+  adw_action_row_add_suffix (ADW_ACTION_ROW (row), scale);
+  return row;
+}
+
 /* A spin row for integer @key in [min, max] pixels (at the 64 × 64 icon size). */
 static GtkWidget *
 px_row (GSettings  *settings,
@@ -454,6 +491,11 @@ folder_preview_page (GSettings *settings)
                                                 &d->preview_border_colour);
   g_settings_bind (settings, "folder-preview-border", border_colour, "sensitive", G_SETTINGS_BIND_GET);
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (style_group), border_colour);
+  GtkWidget *border_width = slider_row_d (settings, "folder-preview-border-width", "Border Width",
+                                          "Pixels at the smallest icon size, scaled with the icons", 0.5, 6.0,
+                                          0.5, "px");
+  g_settings_bind (settings, "folder-preview-border", border_width, "sensitive", G_SETTINGS_BIND_GET);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (style_group), border_width);
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (style_group),
                              switch_row (settings, "folder-preview-shadow", "Shadow", NULL));
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (style_group),

@@ -23,6 +23,7 @@ static const NuConfig defaults = {
   .preview_stack_step = NU_STACK_STEP_ONE,
   .preview_border = TRUE,
   .preview_border_colour = { 0xff, 0xff, 0xff },
+  .preview_border_width = 1.0,
   .preview_shadow = TRUE,
   .preview_rotation = TRUE,
   .preview_keep_aspect = TRUE,
@@ -63,6 +64,7 @@ static const struct
   { "folder-preview-stack-step", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-border", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-border-colour", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-border-width", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-shadow", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-rotation", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-keep-aspect", NU_CHANGED_PREVIEW_STYLE },
@@ -195,6 +197,7 @@ read_all (void)
   c->preview_cycle = g_settings_get_boolean (s, "folder-preview-cycle");
   c->preview_border = g_settings_get_boolean (s, "folder-preview-border");
   read_colour (s, "folder-preview-border-colour", defaults.preview_border_colour, &c->preview_border_colour);
+  c->preview_border_width = g_settings_get_double (s, "folder-preview-border-width");
   c->preview_shadow = g_settings_get_boolean (s, "folder-preview-shadow");
   c->preview_rotation = g_settings_get_boolean (s, "folder-preview-rotation");
   c->preview_keep_aspect = g_settings_get_boolean (s, "folder-preview-keep-aspect");

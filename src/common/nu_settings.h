@@ -82,7 +82,7 @@ typedef enum
   NU_CHANGED_FV_DEFAULT     = 1 << 7, /* folder-views-default-*, folder-views-defaults-captured */
   NU_CHANGED_PREVIEW_STYLE  = 1 << 8, /* folder-preview-layout, -stack-step, -border*, -shadow, -rotation,
                                        * -keep-aspect, -depth-effect, -corner-radius, -fade, -view-*-radius,
-                                       * -stack-padding */
+                                       * -stack-padding, -border-width */
   NU_CHANGED_PREVIEW_ICONS  = 1 << 9, /* folder-preview-cycle, -folder-icon, -overlay-icon, -stack-position,
                                        * -stack-offset (nothing that changes the pictures themselves) */
 } NuChanged;
@@ -107,6 +107,7 @@ typedef struct
   NuStackStep     preview_stack_step;
   gboolean        preview_border;
   NuRgb           preview_border_colour;
+  double          preview_border_width;    /* px at 64 × 64, 0.5 … 6 */
   gboolean        preview_shadow;
   gboolean        preview_rotation;
   gboolean        preview_keep_aspect;

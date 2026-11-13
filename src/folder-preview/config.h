@@ -58,5 +58,6 @@
  * v4: the style (layout, border, shadow, rotation) is part of each folder's cache directory name.
  * v5: drop shadows following the picture's shape, keep-aspect and depth options.
  * v6: stack 8 px from the sides, depth presets, corner radius, fade and view clipping.
- * v7: side padding setting, the front card is never tilted. */
-#define CACHE_DISK_VERSION  "v7"
+ * v7: side padding setting, the front card is never tilted.
+ * v8: border width setting. */
+#define CACHE_DISK_VERSION  "v8"

@@ -49,6 +49,7 @@ typedef struct
   guint    stack_step;  /* Stacked: photos per hover step (1 or 3); ignored by the grid. */
   gboolean border;
   guint8   border_r, border_g, border_b;
+  guint    border_width;     /* Tenths of a pixel at the 64 × 64 icon size (scaled; at least 1 device px). */
   gboolean shadow;
   gboolean rotation;
   gboolean keep_aspect; /* Grid: fit (TRUE) or fill the section, cropped; stacked: card in the picture's

@@ -24,7 +24,7 @@ covers, and cycles through the next ones while the pointer hovers over it. Two l
   rounded top/bottom corners that clip all pictures can be set too.
   Folders without previews keep the theme's folder icon.
 
-Border (on/off and colour), drop shadow (it follows the picture's shape, so transparent logos get a soft
+Border (on/off, colour and width), drop shadow (it follows the picture's shape, so transparent logos get a soft
 outline shadow, not a box), keep aspect ratio (off = pictures fill their space, cropped), corner radius,
 random rotation and cycling on hover can be changed for both layouts.
 Only folders with the theme's plain folder icon get previews: special folders (Pictures, Downloads, …,
@@ -129,7 +129,7 @@ one tab per feature; every tab can switch its feature on or off. Changes only ta
 **Apply**; closing the dialog without Apply discards them.
 
 - **Folder Preview**: show previews on folder icons (on/off), layout (Grid or Stacked), cycle on hover,
-  pictures per step and depth effect (Stacked), border, border colour, shadow, keep aspect ratio, corner
+  pictures per step and depth effect (Stacked), border, border colour, border width, shadow, keep aspect ratio, corner
   radius and random rotation; for the Stacked layout the stack's position, vertical offset, bottom fade and
   top/bottom corner radius, and
   a custom folder icon and front overlay (SVG files; the path is stored, so keep the files where they are).

@@ -167,6 +167,7 @@ look_round() {
   cmd "st-set folder-preview-border false" 0.8; cmd "st-set folder-preview-shadow false" 0.8
   cmd "st-set folder-preview-rotation false" 0.8; cmd "st-set folder-preview-border-colour '#e01b24'" 0.8
   cmd "st-set folder-preview-border true" 1; cmd verify 0.3
+  cmd "st-set folder-preview-border-width 4.5" 0.8; cmd "st-set folder-preview-border-width 0.5" 0.8; cmd verify 0.3
   cmd "st-set folder-preview-keep-aspect false" 1; cmd verify 0.3
   for d in none transparency darken blur; do cmd "st-set folder-preview-depth-effect '$d'" 0.8; done
   cmd "st-set folder-preview-fade 60" 0.8; cmd "st-set folder-preview-view-top-radius 6" 0.8
@@ -184,7 +185,7 @@ look_round() {
            folder-preview-border-colour folder-preview-shadow folder-preview-rotation \
            folder-preview-keep-aspect folder-preview-depth-effect folder-preview-corner-radius folder-preview-fade \
            folder-preview-view-top-radius folder-preview-view-bottom-radius folder-preview-stack-position \
-           folder-preview-stack-offset folder-preview-stack-padding folder-preview-folder-icon folder-preview-overlay-icon; do
+           folder-preview-stack-offset folder-preview-stack-padding folder-preview-border-width folder-preview-folder-icon folder-preview-overlay-icon; do
     cmd "st-reset $k" 0.4
   done
   cmd verify 0.5

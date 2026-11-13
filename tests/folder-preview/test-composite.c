@@ -675,6 +675,40 @@ test_front_upright_and_padding (void)
   g_assert_cmpstr (k1, !=, k2);
 }
 
+/* Border width (tenths of a px at 64 × 64): 10 px into the photo is picture with 1 px, border with 4 px. */
+static void
+test_border_width (void)
+{
+  guint w = 300;
+  FpStyle st = grid_style;
+  st.rotation = FALSE;
+  st.shadow = FALSE;
+  st.corner_radius = 0;
+  st.border_r = st.border_g = st.border_b = 0;
+  FpCompositeItem one[] = { { blue_png, 5 } };
+  double cx, cy, cw, ch;
+  slot_center (w, 1, 0, &cx, &cy, &cw, &ch);
+  double edge = cx - MIN (cw, ch) * 0.96 / 2; /* left edge of the square photo incl. border */
+  double s64 = fp_composite_icon_px (&st, w) / 64;
+  g_assert_cmpfloat (4 * s64, >, 14); /* the probe below lies inside a 4 px border, outside a 1 px one */
+
+  st.border_width = 10;
+  g_autoptr (GdkTexture) thin = fp_composite_frame (&st, one, 1, w, NULL);
+  assert_colour (thin, edge + 1, cy, (Px) { 0, 0, 0, 255 }, "thin border");
+  assert_colour (thin, edge + 10, cy, BLUE, "picture inside a thin border");
+  st.border_width = 40;
+  g_autoptr (GdkTexture) thick = fp_composite_frame (&st, one, 1, w, NULL);
+  debug_save (thick, "grid-thick-border.png");
+  assert_colour (thick, edge + 10, cy, (Px) { 0, 0, 0, 255 }, "thick border");
+  /* Off: the width doesn't matter (same key, same pixels). */
+  st.border = FALSE;
+  FpStyle other = st;
+  other.border_width = 10;
+  g_autofree char *k1 = fp_style_key (&st);
+  g_autofree char *k2 = fp_style_key (&other);
+  g_assert_cmpstr (k1, ==, k2);
+}
+
 /* PLAN.md §4.2: thousands of composite create/destroy cycles. */
 static void
 test_stress (void)
@@ -696,6 +730,7 @@ test_stress (void)
       st.view_bottom_radius = i % 6;
       st.corner_radius = i % 9;
       st.stack_padding = i % 21;
+      st.border_width = 5 + i % 56;
       g_autoptr (GdkTexture) u = fp_composite_frame (&st, items, i % 4, 16 + (i % 5) * 8, NULL);
       g_assert_nonnull (u);
     }
@@ -728,6 +763,7 @@ main (int argc, char **argv)
   g_test_add_func ("/composite/depth-presets", test_depth_presets);
   g_test_add_func ("/composite/fade-clip-radius", test_fade_clip_radius);
   g_test_add_func ("/composite/front-upright-and-padding", test_front_upright_and_padding);
+  g_test_add_func ("/composite/border-width", test_border_width);
   g_test_add_func ("/composite/drop-shadow-shape", test_drop_shadow_shape);
   g_test_add_func ("/composite/stress", test_stress);
   int ret = g_test_run ();

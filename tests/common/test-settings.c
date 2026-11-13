@@ -49,6 +49,7 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_cmpint (a->preview_stack_position, ==, b->preview_stack_position);
   g_assert_cmpint (a->preview_stack_offset, ==, b->preview_stack_offset);
   g_assert_cmpint (a->preview_stack_padding, ==, b->preview_stack_padding);
+  g_assert_cmpfloat (a->preview_border_width, ==, b->preview_border_width);
   g_assert_cmpstr (a->preview_folder_icon, ==, b->preview_folder_icon);
   g_assert_cmpstr (a->preview_overlay_icon, ==, b->preview_overlay_icon);
 }
@@ -341,6 +342,12 @@ test_each_group (void)
   g_assert_cmpint (pc->preview_view_bottom_radius, ==, 9);
   g_assert_cmpint (pc->preview_stack_offset, ==, -6);
   g_assert_cmpint (pc->preview_stack_padding, ==, 3);
+  counter.calls = 0;
+  g_settings_set_double (s, "folder-preview-border-width", 2.5);
+  drain ();
+  g_assert_cmpuint (counter.calls, ==, 1);
+  g_assert_cmpuint (counter.last, ==, NU_CHANGED_PREVIEW_STYLE);
+  g_assert_cmpfloat (nu_settings_get ()->preview_border_width, ==, 2.5);
   counter.calls = 0;
   g_settings_set_enum (s, "folder-preview-stack-position", NU_STACK_BOTTOM);
   drain ();
