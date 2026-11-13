@@ -438,6 +438,55 @@ disk_store (const char *disk_dir, const char *uri, const FpStyle *style, guint64
     }
 }
 
+/* Deletes @path and everything below it (no symlinks are followed). Errors are ignored. */
+static void
+rm_tree (const char *path)
+{
+  if (!g_file_test (path, G_FILE_TEST_IS_SYMLINK) && g_file_test (path, G_FILE_TEST_IS_DIR))
+    {
+      g_autoptr (GDir) dir = g_dir_open (path, 0, NULL);
+      const char *name;
+      while (dir != NULL && (name = g_dir_read_name (dir)) != NULL) /* borrowed from @dir */
+        {
+          g_autofree char *child = g_build_filename (path, name, NULL);
+          rm_tree (child);
+        }
+      g_rmdir (path);
+    }
+  else
+    g_unlink (path);
+}
+
+/* FpWorkFunc: removes every version directory but the current one. @task_data is the disk dir (borrowed). */
+static void
+purge_work (GTask *task, gpointer task_data, GCancellable *cancellable)
+{
+  (void) cancellable;
+  const char *disk_dir = task_data;
+  g_autoptr (GDir) dir = g_dir_open (disk_dir, 0, NULL);
+  const char *name;
+  while (dir != NULL && (name = g_dir_read_name (dir)) != NULL)
+    {
+      /* Only our own "v<N>" directories: never anything else someone put there. */
+      if (name[0] != 'v' || !g_ascii_isdigit (name[1]) || g_str_equal (name, CACHE_DISK_VERSION))
+        continue;
+      g_autofree char *old = g_build_filename (disk_dir, name, NULL);
+      g_debug ("disk cache: removing old version %s", old);
+      rm_tree (old);
+    }
+  g_task_return_boolean (task, TRUE);
+}
+
+void
+fp_cache_purge_old_versions (FpCache *cache)
+{
+  g_return_if_fail (cache != NULL);
+  g_autoptr (GTask) task = g_task_new (NULL, NULL, NULL, NULL);
+  g_task_set_source_tag (task, fp_cache_purge_old_versions);
+  g_task_set_task_data (task, g_strdup (cache->disk_dir), g_free);
+  fp_workers_push (cache->workers, task, G_PRIORITY_LOW, purge_work);
+}
+
 /* ================================================================================================ */
 /* Request pipeline                                                                                 */
 

@@ -101,6 +101,10 @@ const FpStyle *fp_cache_get_style (FpCache *cache);
 gboolean fp_cache_invalidate (FpCache    *cache,
                               const char *uri);
 
+/* Queues a low-priority worker job that deletes disk cache directories of other CACHE_DISK_VERSIONs (frames
+ * an older version of the extension wrote; they can never be read again). Only touches the disk cache. */
+void fp_cache_purge_old_versions (FpCache *cache);
+
 /* Number of folders / texture bytes currently held in memory (for tests and logs). */
 guint fp_cache_get_n_folders (FpCache *cache);
 gsize fp_cache_get_n_bytes   (FpCache *cache);

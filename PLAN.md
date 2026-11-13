@@ -142,7 +142,7 @@ findings and the smoke test is clean.
 
 | # | Feature | Dir | Status |
 |---|---|---|---|
-| 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover; v2: stacked layout, custom folder SVGs, thumbnail style (§11) | `src/folder-preview/` | **v1 done** (grid view); v2 in progress |
+| 1 | Folder preview — Dolphin-style thumbnails on folder icons, cycling on hover; v2: stacked layout, custom folder SVGs, thumbnail style (§11) | `src/folder-preview/` | **v2 done** (2026-11-13), pending the owner's final check |
 | 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **v1 done** (2026-11-12), pending the owner's final check |
@@ -1375,8 +1375,9 @@ folder icon and front overlay, each with Choose…/Clear). Everything waits for 
 | V2 | Stacked cycling step is a **user option** (one / three photos per step). |
 | V3 | Folders without previews keep the **theme icon**, even with custom SVGs set. |
 | V4 | The overlay uses the **same scale** as the custom folder SVG; fitted to the folder width with the theme icon. |
-| V6 | Nautilus 51.1 looks a plain folder's icon up as `inode-directory` before `folder` (verified: Adwaita and the owner's Hatter-Orange both resolve to `mimetypes/inode-directory.svg`), so both icon file names count as "the plain folder icon". |
 | V5 | SVG rasterising runs on the main thread (GtkSvg is not thread-safe), once per (zoom, scale) per settings change; textures are cached and shared by all icons. |
+| V6 | Nautilus 51.1 looks a plain folder's icon up as `inode-directory` before `folder` (verified: Adwaita and the owner's Hatter-Orange both resolve to `mimetypes/inode-directory.svg`), so both icon file names count as "the plain folder icon". |
+| V7 | The disk cache keeps one directory per folder **per look** (style key in the hashed name, `CACHE_DISK_VERSION` v4), so switching back to a look is a disk hit. Directories of older versions (v3) are deleted by a low-priority worker job at start-up. |
 
 ### 11.5 Phases
 
@@ -1386,3 +1387,28 @@ folder icon and front overlay, each with Choose…/Clear). Everything waits for 
 | 2 Icons & hook | `icon_art.c` (GtkSvg → textures, opaque bounds); paintable decor (back, frame, overlay); view hook: plain-`folder` filter, decor, live restyle, cycle off; tests. | Isolated Nautilus shows both layouts and the custom SVGs; `folder-*` folders untouched. |
 | 3 Settings tab | Groups and rows of §11.3. | Every option applies live on Apply. |
 | 4 Hardening & docs | Smoke rounds switching layouts/styles, `check-safety.sh`, README. | All PASS. |
+
+### 11.6 Phase results (2026-11-13)
+
+- **Phase 1:** schema keys + `nu_settings` (two new change groups: style, icons/cycle); `FpStyle` in
+  `composite.c` (stacked cards measured from the mock, border/colour/shadow/rotation for both layouts);
+  cache keyed by style (memory generation drops results of older looks; disk directory per look, v4);
+  stacked stepping with wrap-around. Tests: style helpers, grid options, stacked cards (order, insets,
+  dimming, blank cards, determinism), cache styles and few-photo stacks.
+- **Phase 2:** `icon_art.c` (GtkSvg, parse errors rejected — GtkSvg reports "not XML" as
+  `GTK_SVG_ERROR_INVALID_SYNTAX`; Illustrator's `data-name` attributes are harmless notices); paintable
+  decor (back → frame → overlay, custom SVGs only with a frame); view hook: plain-folder filter (V6), decor,
+  live restyle, cycle off. Verified in an isolated Nautilus with the owner's SVGs: result matches
+  `Asset-3`; Pictures (`folder-pictures`) and folders without media keep their icons.
+- **Phase 3:** settings tab groups Layout / Thumbnails / Folder Icon (stacked only), Choose…/Clear rows with
+  a GtkFileDialog (SVG filter); everything pending until Apply.
+- **Phase 4:** smoke `look_round` (every option while browsing, an invalid SVG, off/on, reset) plus random
+  layout switches. Smoke harness fixes: the isolated `XDG_DATA_HOME` hid the user's icon themes (GTK then
+  used its built-in `folder-symbolic`, which gets no previews), so `~/.local/share/icons` is linked in; the
+  smoke now fails if no self-check ever sees a drawn preview; `SMOKE_XDG_CACHE` is quoted (paths with
+  spaces). New thumbnails can't be generated under the ASan preload (thumbnailer children inherit it), so
+  the smoke tree's thumbnails are made first by a normal build and passed with `SMOKE_XDG_CACHE`.
+  Old v3 disk cache directories are removed by a start-up worker job (V7).
+- Smoke (ASan, 150 s + every round, 46 photo folders): `smoke-20261113-211922` **PASS** — previews drawn in 53/54
+  self-checks, 0 wrong, 27 off/on toggles, 8 hovers.
+Safety: strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind all PASS.

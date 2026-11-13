@@ -58,6 +58,7 @@ fp_feature_initialize (GTypeModule *module)
   workers = fp_workers_new (WORKER_THREADS);
   thumbs = fp_thumbs_new (WORKER_THREADS);
   cache = fp_cache_new (workers, thumbs, NULL, LRU_FOLDERS, CACHE_MAX_BYTES);
+  fp_cache_purge_old_versions (cache); /* frames of older versions (e.g. v3 before §11) can't be read again */
   fp_view_hook_init (cache);
   apply_look ();
   fp_view_hook_set_enabled (nu_settings_get ()->folder_preview_enabled);

@@ -320,6 +320,36 @@ test_stacked_few_photos (void)
   session_stop (&s);
 }
 
+/* Old disk cache versions are deleted in the background; the current one and foreign entries stay. */
+static void
+test_purge_old_versions (void)
+{
+  g_autofree char *old_file = g_build_filename (disk_dir, "v3", "abc", "1.0-96-1.png", NULL);
+  g_autofree char *old_dir = g_build_filename (disk_dir, "v3", NULL);
+  g_autofree char *keep_file = g_build_filename (disk_dir, CACHE_DISK_VERSION, "keep", "x.png", NULL);
+  g_autofree char *foreign = g_build_filename (disk_dir, "notes", NULL);
+  for (const char *const *p = (const char *const[]) { old_file, keep_file, NULL }; *p; p++)
+    {
+      g_autofree char *parent = g_path_get_dirname (*p);
+      g_assert_cmpint (g_mkdir_with_parents (parent, 0700), ==, 0);
+      g_assert_true (g_file_set_contents_full (*p, "x", -1, G_FILE_SET_CONTENTS_NONE, 0600, NULL));
+    }
+  g_assert_true (g_file_set_contents_full (foreign, "x", -1, G_FILE_SET_CONTENTS_NONE, 0600, NULL));
+
+  Session s = { 0 };
+  session_start (&s, LRU_FOLDERS, CACHE_MAX_BYTES);
+  fp_cache_purge_old_versions (s.cache);
+  /* A job that hasn't started when the pool is freed is cancelled, so wait for it to run. */
+  for (int i = 0; i < 500 && g_file_test (old_dir, G_FILE_TEST_EXISTS); i++)
+    g_usleep (10 * 1000);
+  session_stop (&s);
+  g_assert_false (g_file_test (old_dir, G_FILE_TEST_EXISTS));
+  g_assert_true (g_file_test (keep_file, G_FILE_TEST_EXISTS));
+  g_assert_true (g_file_test (foreign, G_FILE_TEST_EXISTS));
+  g_unlink (keep_file);
+  g_unlink (foreign);
+}
+
 static void
 test_no_media (void)
 {
@@ -588,6 +618,7 @@ main (int argc, char **argv)
   g_test_add_func ("/cache/hover-frames", test_hover_frames);
   g_test_add_func ("/cache/no-media", test_no_media);
   g_test_add_func ("/cache/styles", test_styles);
+  g_test_add_func ("/cache/purge-old-versions", test_purge_old_versions);
   g_test_add_func ("/cache/stacked-few-photos", test_stacked_few_photos);
   g_test_add_func ("/cache/invalidation-by-mtime", test_invalidation_by_mtime);
   g_test_add_func ("/cache/sizes-and-corrupt-disk-file", test_sizes_and_corrupt_disk_file);

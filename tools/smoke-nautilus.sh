@@ -69,6 +69,9 @@ for f in A B C D; do mkdir -p "$FV_TREE/$f/sub"; for i in 1 2 3 4 5 6; do : > "$
   # Own gvfs metadata + data dir for the whole private session (daemons included).
   export XDG_DATA_HOME="$LOG/xdg-data"
   mkdir -p "$XDG_DATA_HOME"
+  # The user's icon themes (read-only link): without them GTK falls back to its built-in folder-symbolic
+  # icon, which (correctly) gets no previews (PLAN.md §11.1), and the preview checks would test nothing.
+  [ -d "$HOME/.local/share/icons" ] && ln -s "$HOME/.local/share/icons" "$XDG_DATA_HOME/icons"
   # LD_PRELOAD only for nautilus itself, not for the private dbus-daemon / portals.
   setsid dbus-run-session -- env \
     LD_PRELOAD="$ASAN_RT" \
@@ -78,7 +81,7 @@ for f in A B C D; do mkdir -p "$FV_TREE/$f/sub"; for i in 1 2 3 4 5 6; do : > "$
     G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings folder-views" \
     GSETTINGS_BACKEND=memory GSETTINGS_SCHEMA_DIR="$ROOT/build/data" \
     SD_DEBUG_FAKE_NETWORK="${SMOKE_FAKE_NETWORK:-}" \
-    FP_DEBUG_DIR="$CMD_DIR" FP_DEBUG_ROOT="$DIR" ${SMOKE_XDG_CACHE:+XDG_CACHE_HOME=$SMOKE_XDG_CACHE} \
+    FP_DEBUG_DIR="$CMD_DIR" FP_DEBUG_ROOT="$DIR" ${SMOKE_XDG_CACHE:+"XDG_CACHE_HOME=$SMOKE_XDG_CACHE"} \
     nautilus --new-window "$DIR" >"$LOG/nautilus.log" 2>&1 &
 )
 
@@ -152,8 +155,34 @@ eject_round() {
   cmd "st-set eject-slide false" 0.6; cmd sd-dump 0.3
 }
 
+# Folder preview v2 (PLAN.md §11): every layout/style/icon option while scrolling, hovering and zooming,
+# including an SVG that isn't one; every change must redraw the right folder's preview (verify).
+FP_SVG_DIR="$ROOT/tests/folder-preview/data"
+look_round() {
+  cmd "st-set folder-preview-layout 'stacked'" 1.2; cmd verify 0.3; cmd hover 1.6; cmd leave 0.3
+  cmd "st-set folder-preview-folder-icon '$FP_SVG_DIR/back.svg'" 1; cmd verify 0.3
+  cmd "st-set folder-preview-overlay-icon '$FP_SVG_DIR/overlay.svg'" 1; cmd verify 0.3
+  cmd "action view.zoom-in" 1.5; cmd verify 0.3; cmd hover 1.6; cmd leave 0.3
+  cmd "st-set folder-preview-stack-step 'three'" 1; cmd hover 2.2; cmd leave 0.3
+  cmd "st-set folder-preview-border false" 0.8; cmd "st-set folder-preview-shadow false" 0.8
+  cmd "st-set folder-preview-rotation false" 0.8; cmd "st-set folder-preview-border-colour '#e01b24'" 0.8
+  cmd "st-set folder-preview-border true" 1; cmd verify 0.3
+  cmd "st-set folder-preview-folder-icon '$FP_SVG_DIR/notes.txt'" 1; cmd verify 0.3   # not an SVG: theme icon
+  cmd "st-set folder-preview-cycle false" 0.6; cmd hover 1.6; cmd leave 0.3
+  cmd "st-set folder-preview-enabled false" 0.8; cmd fp-state 0.3
+  cmd "st-set folder-preview-enabled true" 1.2; cmd fp-state 0.3; cmd verify 0.3
+  cmd "action view.zoom-standard" 1.5
+  for k in folder-preview-layout folder-preview-cycle folder-preview-stack-step folder-preview-border \
+           folder-preview-border-colour folder-preview-shadow folder-preview-rotation \
+           folder-preview-folder-icon folder-preview-overlay-icon; do
+    cmd "st-reset $k" 0.4
+  done
+  cmd verify 0.5
+}
+
 if [ -n "$AUTO" ]; then
   end=$(( $(date +%s) + AUTO ))
+  look_round
   style_round
   eject_round
   cmd st-dump 0.3; cmd st-open 1; cmd st-close 0.5
@@ -166,14 +195,17 @@ if [ -n "$AUTO" ]; then
   for a in view.zoom-in view.zoom-in view.zoom-out view.zoom-out view.zoom-out view.zoom-standard; do
     cmd "action $a" 1.5; cmd "scroll 0.$((RANDOM % 10))" 1.5; cmd verify 0.3
   done
+  look_round
   while [ "$(date +%s)" -lt "$end" ]; do
-    case $((RANDOM % 8)) in
+    case $((RANDOM % 9)) in
       0|1|2) cmd "scroll 0.$((RANDOM % 100))" 0.3 ;;
       3)     cmd hover 1.6; cmd leave 0.3 ;;
       4)     cmd "action view.zoom-$([ $((RANDOM % 2)) = 0 ] && echo in || echo out)" 1 ;;
       5)     cmd verify 0.3 ;;
       6)     sidebar_round ;;
       7)     cmd "fv-view $((1 + RANDOM % 2))" 1.2; cmd fv-dump 0.3 ;;
+      8)     cmd "st-set folder-preview-layout '$([ $((RANDOM % 2)) = 0 ] && echo stacked || echo grid)'" 1
+             cmd verify 0.3 ;;
     esac
   done
   cmd "action view.zoom-standard" 1.5; cmd verify 0.5
@@ -236,6 +268,14 @@ if [ -n "$wrong" ]; then
   fail=1
 fi
 
+# Previews must actually be drawn somewhere (DIR needs subfolders with pictures and the plain folder icon),
+# otherwise the wrong-folder checks above checked nothing.
+n_shown="$(grep -cE 'debug verify: ok=[1-9]' "$LOG/nautilus.log" || true)"
+if [ "$n_shown" -eq 0 ]; then
+  echo "FINDING: no self-check ever saw a drawn preview (DIR without picture folders, or the plain folder icon wasn't found)"
+  fail=1
+fi
+
 left="$(grep -E 'sd dump: OFF .*leftovers=[1-9]' "$LOG/nautilus.log" || true)"
 [ -z "$left" ] || { echo "FINDING: sidebar-drives left traces while switched off:"; echo "$left" | sed 's/^/    | /'; fail=1; }
 stale="$(grep -E 'fp state: off=1 .*installed=[1-9]' "$LOG/nautilus.log" || true)"
@@ -279,6 +319,7 @@ sidebar_ok="$(grep -c 'sd dump: .*OS-ROW' "$LOG/nautilus.log" || true)"
 echo
 echo "Smoke summary:"
 echo "  module loaded:          $([ "$loaded" -gt 0 ] && echo yes || echo NO)"
+echo "  previews drawn in:      $n_shown self-checks"
 echo "  self-checks (verify):   $n_verify, wrong previews: $([ -z "$wrong" ] && echo 0 || echo SOME)"
 echo "  sidebar self-dumps:     $sidebar_ok"
 echo "  sliding eject (shown):  $n_eject"
