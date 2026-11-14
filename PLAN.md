@@ -146,7 +146,7 @@ findings and the smoke test is clean.
 | 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **v1 done** (2026-11-12), pending the owner's final check |
-| 5 | Folder icons by name — every folder with a given name (e.g. `node_modules`) gets a chosen icon, as Files' own custom icon (§12) | `src/folder-icons/` | in progress (Phase 0 done 2026-11-14) |
+| 5 | Folder icons by name — every folder with a given name (e.g. `node_modules`) gets a chosen icon, as Files' own custom icon (§12) | `src/folder-icons/` | **v1 done** (2026-11-14), pending the owner's final check |
 
 Open items:
 
@@ -1646,3 +1646,15 @@ Design refinements from the spike:
   of 3), rule change and free while jobs run; the GIO backend without gvfs. Verified in an isolated Nautilus:
   adding a rule turns the on-screen `node_modules` into the custom icon within ~0.1 s (grid and list view),
   removing it restores the plain folder and leaves no metadata behind.
+- **Phase 3:** "Folder Icons" tab (§12.2): on/off, rule rows (icon preview, editable name, Choose Icon…,
+  Remove), Add Rule in the group header, invalid / duplicate names marked red; chosen icons are copied into
+  the store in a worker thread. The dialog is 720 px wide so the four tab titles fit (600 px truncated
+  them). Debug driver `st-tab <name>`.
+- **Phase 4:** smoke `icons_round` (rules added, icon changed, a second rule, feature off/on, rules removed,
+  on a tree of nested `node_modules` folders); the smoke fails unless icons were set and restored without
+  errors and **no folder keeps a custom icon or our marker** afterwards (read from the test session's own
+  gvfs metadata). `folder-icons` added to the smoke's warning check. README section.
+- Smoke (ASan, every round): `smoke-20261114-025331` **PASS** — folder icons set 7 / restored 6 (an icon change re-sets),
+  0 errors, nothing left behind; previews 70/70, 0 wrong. Safety: strict, `-fanalyzer`, scan-build,
+  ASan+UBSan, valgrind all PASS (Phase 2 fixes: a GCC -O2 null-dereference false positive in the fake
+  backend, an -fanalyzer NULL check in a test — both fixed in code, not suppressed).

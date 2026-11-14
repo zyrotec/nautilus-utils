@@ -122,6 +122,24 @@ Known limitations:
   fast as stock.
 - Network shares (SMB, SFTP) haven't been tested yet; reading a saved view never blocks Files.
 
+### Folder icons by name
+
+Give every folder with a certain name its own icon, everywhere — e.g. all your `node_modules` folders. Add a
+rule (folder name + an SVG or PNG icon) under **Nautilus Utils Settings → Folder Icons**; each folder Files
+lists whose name matches exactly (capitals count) gets the icon as **Files' own custom icon** (the same as
+Properties → custom icon), so it shows in the grid and list view, the path bar and Properties.
+
+- Custom icons you set yourself are never changed: the extension only touches folders it marked.
+- Folders on screen update at once; others get the icon the first time Files lists them.
+- Removing a rule (or switching the feature off) restores the folders it changed, as Files lists them again;
+  a folder that is never opened again keeps the icon until then (finding every folder would mean scanning
+  the whole disk).
+- The chosen icon is copied to `~/.local/share/nautilus-utils/folder-icons/`, so the original can be moved.
+- Where a location can't store this kind of folder information (some network shares), folders keep their
+  normal icon.
+- Like any custom icon, the icons stay if the extension is uninstalled; remove a rule first to restore its
+  folders.
+
 ### Settings
 
 Files' main menu (☰) gets a **Nautilus Utils Settings** entry above *Preferences*. It opens a dialog with
@@ -136,6 +154,8 @@ one tab per feature; every tab can switch its feature on or off. Changes only ta
 - **Sidebar Drives**: enhanced drive rows (on/off), bar colour (accent colour, a custom colour, or a
   two-colour gradient), show/hide the usage bars and the size labels, and slide the eject button in only
   on hover.
+- **Folder Icons**: icons by folder name (on/off) and the rules: folder name, icon (Choose…), remove; Add
+  Rule (+) in the group header.
 - **Folder Views**: remember the view per folder (on/off), and **Reset All Folder Views…**, which asks for
   confirmation and acts right away (it isn't a setting waiting for Apply).
 
@@ -190,7 +210,7 @@ Nautilus keeps running in the background, so a rebuild only takes effect after i
 
 ```
 nautilus -q
-G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings" nautilus    # with log messages
+G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings folder-views folder-icons" nautilus    # with log messages
 ```
 
 ## Install system-wide
@@ -269,6 +289,11 @@ build/tests/folder-preview/bench-core DIR  # per-stage timings of the pipeline o
 | `src/sidebar-drives/bar_style.c` | Bar colours from the settings, as CSS |
 | `src/sidebar-drives/fade_bin.c` | Container that fades its content out under the sliding eject button |
 | `src/sidebar-drives/config.h` | Tunable constants |
+| `src/folder-icons/folder_icons.c` | Folder icons by name: set-up, settings, re-check of listed folders |
+| `src/folder-icons/fi_rules.c` | Rules, markers and the decide-what-to-do table |
+| `src/folder-icons/fi_apply.c` | Applies the decisions through Files' custom-icon metadata (worker threads, bounded) |
+| `src/folder-icons/fi_provider.c` | Supported Nautilus hook (`NautilusInfoProvider`) |
+| `src/common/nu_icon_store.c` | Copies chosen icons into the data dir |
 | `src/folder-views/folder_views.c` | Feature set-up / tear-down, follows the settings |
 | `src/folder-views/fv_state.c` | Saved-value format, location kinds, zoom levels, in-memory cache |
 | `src/folder-views/view_mode_hook.c` | **Unsupported**: hooks into Nautilus' private tabs and views (switch view, zoom, detect the user's changes) |

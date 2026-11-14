@@ -102,7 +102,7 @@ for f in A B C D; do mkdir -p "$FV_TREE/$f/sub"; for i in 1 2 3 4 5 6; do : > "$
     ASAN_OPTIONS="log_path='$LOG/asan':detect_leaks=1:verify_asan_link_order=0" \
     UBSAN_OPTIONS="log_path='$LOG/ubsan':print_stacktrace=1" \
     LSAN_OPTIONS="suppressions='$ROOT/tools/lsan.supp':print_suppressions=0" \
-    G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings folder-views" \
+    G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings folder-views folder-icons" \
     GSETTINGS_BACKEND=memory GSETTINGS_SCHEMA_DIR="$ROOT/build/data" \
     SD_DEBUG_FAKE_NETWORK="${SMOKE_FAKE_NETWORK:-}" \
     FP_DEBUG_DIR="$CMD_DIR" FP_DEBUG_ROOT="$DIR" ${SMOKE_XDG_CACHE:+"XDG_CACHE_HOME=$SMOKE_XDG_CACHE"} \
@@ -308,7 +308,7 @@ for r in "${reports[@]}"; do
   fi
 done
 
-ours_warnings="$(grep -E '(nautilus-utils|folder-preview|sidebar-drives|settings|folder-views)-(WARNING|CRITICAL)' "$LOG/nautilus.log" || true)"
+ours_warnings="$(grep -E '(nautilus-utils|folder-preview|sidebar-drives|settings|folder-views|folder-icons)-(WARNING|CRITICAL)' "$LOG/nautilus.log" || true)"
 if [ -n "$ours_warnings" ]; then
   echo "FINDING: warnings/criticals from our log domain:"
   echo "$ours_warnings" | sed 's/^/    | /'
@@ -332,6 +332,16 @@ if [ -n "$AUTO" ]; then
   if [ -z "$fi_set" ] || [ -z "$fi_cleared" ] || [ -n "$fi_errors" ]; then
     echo "FINDING: folder icons: set/restore/error counters wrong:"
     grep 'fi dump:' "$LOG/nautilus.log" | sed 's/^/    | /'
+    fail=1
+  fi
+  # The rules were removed at the end: every folder must be restored. The test session's gvfs metadata is
+  # read straight from its own data dir (reads need no daemon).
+  fi_left="$(find "$FI_TREE" -type d | while IFS= read -r d; do
+    XDG_DATA_HOME="$LOG/xdg-data" gio info -a 'metadata::*' "$d" 2>/dev/null |
+      grep -qE 'metadata::(custom-icon|nautilus-utils-icon-rule):' && echo "$d"; done)"
+  if [ -n "$fi_left" ]; then
+    echo "FINDING: folder icons: folders still carry a custom icon / our marker after the rules were removed:"
+    echo "$fi_left" | sed 's/^/    | /'
     fail=1
   fi
 fi
