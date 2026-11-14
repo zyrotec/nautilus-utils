@@ -1,6 +1,7 @@
 /* Tests for src/common/nu_icon_store.c (PLAN.md §12.1): copies by content hash, refuses other types and
  * huge files, async variant. Files live under the build dir (PLAN.md §4.2). */
 #include <glib/gstdio.h>
+#include <stdio.h>
 
 #include "nu_icon_store.h"
 
@@ -78,9 +79,13 @@ test_refused (void)
   g_assert_null (nu_icon_store_import (b, data, NULL, &e2));
   g_assert_error (e2, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
 
-  gsize big = NU_ICON_STORE_MAX_BYTES + 1;
-  g_autofree char *junk = g_malloc0 (big);
-  g_autofree char *huge = write_file ("huge.svg", junk, (gssize) big);
+  /* One byte over the limit, as a sparse file (no buffer needed). */
+  g_autofree char *huge = g_build_filename (run_dir, "huge.svg", NULL);
+  FILE *fp = g_fopen (huge, "wb");
+  g_assert_nonnull (fp);
+  g_assert_cmpint (fseek (fp, (long) NU_ICON_STORE_MAX_BYTES, SEEK_SET), ==, 0);
+  g_assert_cmpint (fputc ('x', fp), ==, 'x');
+  g_assert_cmpint (fclose (fp), ==, 0);
   g_autoptr (GFile) c = g_file_new_for_path (huge);
   g_autoptr (GError) e3 = NULL;
   g_assert_null (nu_icon_store_import (c, data, NULL, &e3));
