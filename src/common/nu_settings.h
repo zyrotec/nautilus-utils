@@ -95,6 +95,8 @@ typedef enum
   NU_CHANGED_PREVIEW_ICONS  = 1 << 9, /* folder-preview-cycle, -folder-icon, -overlay-icon, -stack-position,
                                        * -stack-offset (nothing that changes the pictures themselves) */
   NU_CHANGED_FOLDER_ICONS   = 1 << 10, /* folder-icons-enabled, folder-icon-rules, folder-icon-rule-history */
+  NU_CHANGED_DETAILS_PANE   = 1 << 11, /* details-pane-enabled */
+  NU_CHANGED_DP_STATE       = 1 << 12, /* details-pane-visible, details-pane-width (UI state) */
 } NuChanged;
 
 typedef struct
@@ -136,7 +138,13 @@ typedef struct
   const NuIconRule *icon_rules;         /* n_icon_rules entries (NULL when 0); same ownership. */
   guint           n_icon_rules;
   const char *const *icon_rule_history; /* NULL-terminated, never NULL; same ownership. */
+  gboolean        details_pane_enabled;
+  gboolean        details_pane_visible;
+  int             details_pane_width;   /* px, NU_DETAILS_PANE_WIDTH_MIN … _MAX */
 } NuConfig;
+
+#define NU_DETAILS_PANE_WIDTH_MIN 260
+#define NU_DETAILS_PANE_WIDTH_MAX 480
 
 typedef void (*NuSettingsListener) (NuChanged changed, gpointer user_data);
 
@@ -194,6 +202,11 @@ gboolean nu_settings_reset_folder_views (void);
  * (not a pending dialog setting), keeping the newest NU_ICON_RULE_HISTORY_MAX. Returns FALSE without
  * schema or if nothing was added. */
 gboolean nu_settings_remember_icon_rule_names (const char *const *names);
+
+/* Details pane UI state (PLAN.md §13.4), written right away (not a pending dialog setting); @width is
+ * clamped to the schema range. Only changed keys are written. Returns FALSE without schema. */
+gboolean nu_settings_set_details_pane_state (gboolean visible,
+                                             int      width);
 
 /* The built-in defaults (static, never freed). */
 const NuConfig *nu_settings_defaults (void);

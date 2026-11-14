@@ -203,6 +203,25 @@
       <default>false</default>
       <summary>Slide the eject button in on hover or focus</summary>
     </key>
+    <!-- Details pane (PLAN.md §13.4). -->
+    <key name="details-pane-enabled" type="b">
+      <default>true</default>
+      <summary>Offer the details pane (its button in the header bar)</summary>
+    </key>
+
+    <key name="details-pane-visible" type="b">
+      <default>false</default>
+      <summary>Details pane shown (in every window)</summary>
+      <description>UI state, written when the pane is toggled.</description>
+    </key>
+
+    <key name="details-pane-width" type="i">
+      <range min="260" max="480"/>
+      <default>320</default>
+      <summary>Details pane width in pixels</summary>
+      <description>UI state, written when the pane is resized.</description>
+    </key>
+
     <!-- Folder icons by name (PLAN.md §12.4). -->
     <key name="folder-icons-enabled" type="b">
       <default>true</default>

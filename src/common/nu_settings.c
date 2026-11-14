@@ -41,6 +41,9 @@ static const NuConfig defaults = {
   .icon_rules = NULL,
   .n_icon_rules = 0,
   .icon_rule_history = (const char *const[]) { NULL },
+  .details_pane_enabled = TRUE,
+  .details_pane_visible = FALSE,
+  .details_pane_width = 320,
 };
 
 /* Key name → group reported to listeners. */
@@ -86,6 +89,9 @@ static const struct
   { "folder-icon-rule-history", NU_CHANGED_FOLDER_ICONS },
   { "folder-preview-folder-icon", NU_CHANGED_PREVIEW_ICONS },
   { "folder-preview-overlay-icon", NU_CHANGED_PREVIEW_ICONS },
+  { "details-pane-enabled", NU_CHANGED_DETAILS_PANE },
+  { "details-pane-visible", NU_CHANGED_DP_STATE },
+  { "details-pane-width", NU_CHANGED_DP_STATE },
 };
 
 typedef struct
@@ -246,6 +252,11 @@ read_all (void)
   g_strfreev (ns->history);
   ns->history = g_settings_get_strv (s, "folder-icon-rule-history");
   c->icon_rule_history = (const char *const *) ns->history;
+
+  c->details_pane_enabled = g_settings_get_boolean (s, "details-pane-enabled");
+  c->details_pane_visible = g_settings_get_boolean (s, "details-pane-visible");
+  c->details_pane_width = CLAMP (g_settings_get_int (s, "details-pane-width"), NU_DETAILS_PANE_WIDTH_MIN,
+                                 NU_DETAILS_PANE_WIDTH_MAX);
 }
 
 static gboolean
@@ -428,6 +439,20 @@ nu_settings_remember_icon_rule_names (const char *const *names)
   guint drop = next->len > NU_ICON_RULE_HISTORY_MAX ? next->len - NU_ICON_RULE_HISTORY_MAX : 0;
   g_ptr_array_add (next, NULL);
   g_settings_set_strv (ns->settings, "folder-icon-rule-history", (const char *const *) next->pdata + drop);
+  return TRUE;
+}
+
+gboolean
+nu_settings_set_details_pane_state (gboolean visible,
+                                    int      width)
+{
+  if (!nu_settings_available ())
+    return FALSE;
+  width = CLAMP (width, NU_DETAILS_PANE_WIDTH_MIN, NU_DETAILS_PANE_WIDTH_MAX);
+  if (g_settings_get_boolean (ns->settings, "details-pane-visible") != visible)
+    g_settings_set_boolean (ns->settings, "details-pane-visible", visible);
+  if (g_settings_get_int (ns->settings, "details-pane-width") != width)
+    g_settings_set_int (ns->settings, "details-pane-width", width);
   return TRUE;
 }
 
