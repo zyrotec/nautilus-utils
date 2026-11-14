@@ -51,6 +51,7 @@ typedef struct
   guint               width_id;      /* Pending width apply / save, or 0 */
   guint               width_tries;   /* apply_width retries while the paned has no size yet */
   gboolean            applying;      /* We are setting the paned position ourselves */
+  gboolean            switching;     /* Right ↔ bottom: position changes until apply_width aren't the user's */
   gboolean            dirty;         /* The selection changed while the pane was hidden */
   char               *shown_key;     /* Owned: what the pane shows (location + selected URIs) */
 } WinHook;
@@ -330,6 +331,8 @@ apply_width (gpointer data)
     {
       if (hook->width_tries++ < 40)
         hook->width_id = g_timeout_add (25, apply_width, hook);
+      else
+        hook->switching = FALSE; /* gave up: let the user's drags count again */
       return G_SOURCE_REMOVE;
     }
   int handle = gtk_paned_get_wide_handle (GTK_PANED (paned)) ? 5 : 1;
@@ -337,6 +340,7 @@ apply_width (gpointer data)
   hook->applying = TRUE;
   gtk_paned_set_position (GTK_PANED (paned), position);
   hook->applying = FALSE;
+  hook->switching = FALSE;
   return G_SOURCE_REMOVE;
 }
 
@@ -365,7 +369,7 @@ on_position (GObject *paned, GParamSpec *pspec, gpointer window)
   (void) pspec;
   WinHook *hook = get_hook (window);
   g_autoptr (DpPane) pane = hook != NULL ? hook_pane (hook) : NULL;
-  if (hook == NULL || hook->applying || pane == NULL || !gtk_widget_get_visible (GTK_WIDGET (pane)))
+  if (hook == NULL || hook->applying || hook->switching || pane == NULL || !gtk_widget_get_visible (GTK_WIDGET (pane)))
     return;
   int total = dh->bottom ? gtk_widget_get_height (GTK_WIDGET (paned)) : gtk_widget_get_width (GTK_WIDGET (paned));
   if (total <= 0 || !gtk_widget_get_mapped (GTK_WIDGET (paned)))
@@ -436,6 +440,8 @@ apply_position (WinHook *hook)
   GtkOrientation o = dh->bottom ? GTK_ORIENTATION_VERTICAL : GTK_ORIENTATION_HORIZONTAL;
   if (gtk_orientable_get_orientation (GTK_ORIENTABLE (paned)) != o)
     {
+      /* The old position means nothing in the new direction: not a drag (it stored a width as the height). */
+      hook->switching = TRUE;
       gtk_orientable_set_orientation (GTK_ORIENTABLE (paned), o);
       dp_pane_set_layout (pane, dh->bottom ? GTK_ORIENTATION_HORIZONTAL : GTK_ORIENTATION_VERTICAL);
       queue_apply_width (hook);

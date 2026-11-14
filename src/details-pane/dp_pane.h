@@ -40,6 +40,7 @@ typedef struct
   gboolean stack_keep_aspect;
   int      stack_fade;      /* % */
   gboolean stack_card;      /* translucent card behind icon items */
+  int      icon_size;       /* px: icons in the preview box and the stack's front icon (P16) */
 } DpPaneStyle;
 
 /* Restyles every pane (and re-renders shown stacks if their options changed). Main thread. */
@@ -50,7 +51,7 @@ void dp_pane_set_layout (DpPane         *self,
                          GtkOrientation  layout);
 
 /* Height the pane asks for at the bottom; the minimum is DP_PANE_MIN_HEIGHT. */
-#define DP_PANE_MIN_HEIGHT 120
+#define DP_PANE_MIN_HEIGHT 72
 void dp_pane_set_preferred_height (DpPane *self,
                                    int     height);
 

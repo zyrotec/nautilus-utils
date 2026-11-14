@@ -36,6 +36,7 @@ apply_look (void)
     .stack_keep_aspect = c->details_pane_stack_keep_aspect,
     .stack_fade = c->details_pane_stack_fade,
     .stack_card = c->details_pane_stack_card,
+    .icon_size = c->details_pane_icon_size,
   };
   dp_pane_set_style (&st);
   dp_hook_set_look (c->details_pane_position == NU_PANE_BOTTOM, c->details_pane_header_border);

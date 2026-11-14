@@ -30,6 +30,7 @@ dp_ui_deps = dp_core_deps + [gtk_dep, adw_dep, gnome_desktop_dep, cairo_dep]
 dp_ui_lib = static_library('dp-ui',
   'dp_thumb.c',
   'dp_stack.c',
+  'dp_box.c',
   'dp_pane.c',
   c_args: dp_c_args,
   dependencies: dp_ui_deps,

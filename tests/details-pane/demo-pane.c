@@ -48,7 +48,7 @@ files_from_args (int argc, char **argv)
 static void
 demo_style (void)
 {
-  DpPaneStyle st = { TRUE, 0, 18, 0, 12, 0, 1, TRUE, TRUE, TRUE, 0, TRUE };
+  DpPaneStyle st = { TRUE, 0, 18, 0, 12, 0, 1, TRUE, TRUE, TRUE, 0, TRUE, 128 };
   g_auto (GStrv) parts = g_strsplit (g_getenv ("DP_DEMO_STYLE") != NULL ? g_getenv ("DP_DEMO_STYLE") : "", " ", -1);
   for (guint i = 0; parts[i] != NULL; i++)
     {
@@ -68,6 +68,7 @@ demo_style (void)
       else if (g_str_equal (kv[0], "keep_aspect")) st.stack_keep_aspect = v;
       else if (g_str_equal (kv[0], "fade")) st.stack_fade = v;
       else if (g_str_equal (kv[0], "card")) st.stack_card = v;
+      else if (g_str_equal (kv[0], "icon")) st.icon_size = v;
     }
   dp_pane_set_style (&st);
 }
@@ -78,11 +79,14 @@ render_png (const char *out, int argc, char **argv)
   g_autoptr (GPtrArray) files = files_from_args (argc, argv);
   gboolean bottom = g_getenv ("DP_DEMO_BOTTOM") != NULL;
   GtkWidget *window = gtk_window_new ();
-  gtk_window_set_default_size (GTK_WINDOW (window), bottom ? 1100 : 340, bottom ? 260 : 1300);
+  gtk_window_set_default_size (GTK_WINDOW (window), bottom ? 1100 : 340, bottom ? 170 : 1300);
   GtkWidget *pane = dp_pane_new ();
   demo_style ();
   if (bottom)
-    dp_pane_set_layout (DP_PANE (pane), GTK_ORIENTATION_HORIZONTAL);
+    {
+      dp_pane_set_preferred_height (DP_PANE (pane), 112);
+      dp_pane_set_layout (DP_PANE (pane), GTK_ORIENTATION_HORIZONTAL);
+    }
   gtk_window_set_child (GTK_WINDOW (window), pane);
   gtk_window_present (GTK_WINDOW (window));
   g_autoptr (GFile) parent = files->len > 0 ? g_file_get_parent (g_ptr_array_index (files, 0)) : NULL;
