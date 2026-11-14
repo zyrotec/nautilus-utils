@@ -5,6 +5,7 @@ nu_common_inc = include_directories('.')
 
 nu_common_lib = static_library('nu-common',
   'nu_settings.c',
+  'nu_icon_store.c',
   c_args: ['-DG_LOG_DOMAIN="settings"'],
   dependencies: nu_common_deps,
   include_directories: nu_common_inc,
