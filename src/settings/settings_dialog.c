@@ -663,6 +663,21 @@ folder_views_page (GSettings *settings)
   return page;
 }
 
+/* Details pane (PLAN.md §13.4): only the on/off switch; shown/hidden and width are UI state, kept as the user
+ * leaves them. */
+static GtkWidget *
+details_pane_page (GSettings *settings)
+{
+  GtkWidget *page = adw_preferences_page_new ();
+  GtkWidget *main_group = group (NULL, NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (main_group),
+                             switch_row (settings, "details-pane-enabled", "Details Pane",
+                                         "A button next to View Options (or Alt+Shift+P) shows the selected "
+                                         "item’s preview and properties right of the folder view"));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (main_group));
+  return page;
+}
+
 /* Shown instead of the tabs when the schema isn't installed. */
 static GtkWidget *
 unavailable_page (void)
@@ -768,6 +783,8 @@ st_settings_dialog_present (GtkWidget *parent)
                                            "folder-views", "Folder Views", "view-grid-symbolic");
       adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), st_folder_icons_page (settings),
                                            "folder-icons", "Folder Icons", "folder-symbolic");
+      adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), details_pane_page (settings),
+                                           "details-pane", "Details Pane", "sidebar-show-right-symbolic");
 
       /* Sidebar pane: one row per feature. */
       GtkWidget *sidebar = adw_view_switcher_sidebar_new ();
