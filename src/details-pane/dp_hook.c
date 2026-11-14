@@ -35,6 +35,7 @@ typedef struct
   GWeakRef            toolbar_view;  /* The content AdwToolbarView (Nautilus') */
   GWeakRef            tab_view;      /* Nautilus' AdwTabView, moved into @paned */
   GWeakRef            view_controls; /* The header's NautilusViewControls */
+  GWeakRef            header_bar;    /* Nautilus' content AdwHeaderBar (the line under it, P15) */
   GWeakRef            paned;         /* Ours */
   GWeakRef            pane;          /* Ours (DpPane) */
   GWeakRef            button;        /* Ours */
@@ -63,6 +64,9 @@ typedef struct
   gboolean    warned;
   gboolean    visible;     /* Global state (PLAN.md §13.1.1, P8) */
   int         width;
+  int         height;      /* At the bottom (§13.10) */
+  gboolean    bottom;      /* Position: bottom (Windows 7 strip) instead of right */
+  gboolean    header_line; /* P15 */
   guint       save_id;     /* Pending settings write of a dragged width, or 0 */
   GType       window_type, slot_type, files_view_type, list_base_type, toolbar_type, view_controls_type;
 } Hook;
@@ -321,7 +325,7 @@ apply_width (gpointer data)
   g_autoptr (DpPane) pane = hook_pane (hook);
   if (paned == NULL || pane == NULL || !gtk_widget_get_visible (GTK_WIDGET (pane)))
     return G_SOURCE_REMOVE;
-  int total = gtk_widget_get_width (paned);
+  int total = dh->bottom ? gtk_widget_get_height (paned) : gtk_widget_get_width (paned);
   if (total <= 0)
     {
       if (hook->width_tries++ < 40)
@@ -329,7 +333,7 @@ apply_width (gpointer data)
       return G_SOURCE_REMOVE;
     }
   int handle = gtk_paned_get_wide_handle (GTK_PANED (paned)) ? 5 : 1;
-  int position = MAX (total - dh->width - handle, 0);
+  int position = MAX (total - (dh->bottom ? dh->height : dh->width) - handle, 0);
   hook->applying = TRUE;
   gtk_paned_set_position (GTK_PANED (paned), position);
   hook->applying = FALSE;
@@ -350,6 +354,7 @@ save_width (gpointer data)
   (void) data;
   dh->save_id = 0;
   nu_settings_set_details_pane_state (dh->visible, dh->width);
+  nu_settings_set_details_pane_height (dh->height);
   return G_SOURCE_REMOVE;
 }
 
@@ -362,16 +367,27 @@ on_position (GObject *paned, GParamSpec *pspec, gpointer window)
   g_autoptr (DpPane) pane = hook != NULL ? hook_pane (hook) : NULL;
   if (hook == NULL || hook->applying || pane == NULL || !gtk_widget_get_visible (GTK_WIDGET (pane)))
     return;
-  int total = gtk_widget_get_width (GTK_WIDGET (paned));
+  int total = dh->bottom ? gtk_widget_get_height (GTK_WIDGET (paned)) : gtk_widget_get_width (GTK_WIDGET (paned));
   if (total <= 0 || !gtk_widget_get_mapped (GTK_WIDGET (paned)))
     return;
   int handle = gtk_paned_get_wide_handle (GTK_PANED (paned)) ? 5 : 1;
-  int width = CLAMP (total - gtk_paned_get_position (GTK_PANED (paned)) - handle, NU_DETAILS_PANE_WIDTH_MIN,
-                     NU_DETAILS_PANE_WIDTH_MAX);
-  if (width == dh->width)
-    return;
-  dh->width = width;
-  dp_pane_set_preferred_width (pane, width);
+  int size = total - gtk_paned_get_position (GTK_PANED (paned)) - handle;
+  if (dh->bottom)
+    {
+      size = CLAMP (size, NU_DETAILS_PANE_HEIGHT_MIN, NU_DETAILS_PANE_HEIGHT_MAX);
+      if (size == dh->height)
+        return;
+      dh->height = size;
+      dp_pane_set_preferred_height (pane, size);
+    }
+  else
+    {
+      size = CLAMP (size, NU_DETAILS_PANE_WIDTH_MIN, NU_DETAILS_PANE_WIDTH_MAX);
+      if (size == dh->width)
+        return;
+      dh->width = size;
+      dp_pane_set_preferred_width (pane, size);
+    }
   g_clear_handle_id (&dh->save_id, g_source_remove);
   dh->save_id = g_timeout_add (500, save_width, NULL);
 }
@@ -387,7 +403,17 @@ apply_visibility (WinHook *hook)
   gboolean show = dh->visible && (vc == NULL || gtk_widget_get_visible (vc));
   gboolean was = gtk_widget_get_visible (GTK_WIDGET (pane));
   dp_pane_set_preferred_width (pane, dh->width);
+  dp_pane_set_preferred_height (pane, dh->height);
   gtk_widget_set_visible (GTK_WIDGET (pane), show);
+  /* P15: a line under Files' content header bar while the pane is shown. */
+  g_autoptr (GtkWidget) header = g_weak_ref_get (&hook->header_bar);
+  if (header != NULL)
+    {
+      if (show && dh->header_line)
+        gtk_widget_add_css_class (header, "dp-header-line");
+      else
+        gtk_widget_remove_css_class (header, "dp-header-line");
+    }
   if (show && !was)
     {
       queue_apply_width (hook);
@@ -397,6 +423,23 @@ apply_visibility (WinHook *hook)
   g_autoptr (GSimpleAction) action = g_weak_ref_get (&hook->action);
   if (action != NULL)
     g_simple_action_set_state (action, g_variant_new_boolean (dh->visible));
+}
+
+/* Right or bottom (§13.10 P14): our paned's orientation and the pane's layout. */
+static void
+apply_position (WinHook *hook)
+{
+  g_autoptr (GtkWidget) paned = g_weak_ref_get (&hook->paned);
+  g_autoptr (DpPane) pane = hook_pane (hook);
+  if (paned == NULL || pane == NULL)
+    return;
+  GtkOrientation o = dh->bottom ? GTK_ORIENTATION_VERTICAL : GTK_ORIENTATION_HORIZONTAL;
+  if (gtk_orientable_get_orientation (GTK_ORIENTABLE (paned)) != o)
+    {
+      gtk_orientable_set_orientation (GTK_ORIENTABLE (paned), o);
+      dp_pane_set_layout (pane, dh->bottom ? GTK_ORIENTATION_HORIZONTAL : GTK_ORIENTATION_VERTICAL);
+      queue_apply_width (hook);
+    }
 }
 
 static void
@@ -446,6 +489,7 @@ win_hook_free (gpointer data)
   g_weak_ref_clear (&hook->toolbar_view);
   g_weak_ref_clear (&hook->tab_view);
   g_weak_ref_clear (&hook->view_controls);
+  g_weak_ref_clear (&hook->header_bar);
   g_weak_ref_clear (&hook->paned);
   g_weak_ref_clear (&hook->pane);
   g_weak_ref_clear (&hook->button);
@@ -482,6 +526,7 @@ install (GtkWidget *window)
 
   WinHook *hook = g_new0 (WinHook, 1);
   hook->window = window;
+  g_weak_ref_init (&hook->header_bar, find_type (toolbar, ADW_TYPE_HEADER_BAR, 4));
   g_weak_ref_init (&hook->toolbar_view, toolbar_view);
   g_weak_ref_init (&hook->tab_view, tab_view);
   g_weak_ref_init (&hook->view_controls, vc);
@@ -489,6 +534,7 @@ install (GtkWidget *window)
 
   /* The paned: [Nautilus' tab view | our pane] (§13.7 item 3), done once per window. */
   GtkWidget *paned = gtk_paned_new (GTK_ORIENTATION_HORIZONTAL);
+  gtk_widget_add_css_class (paned, "dp-paned"); /* its line is drawn by the pane instead (P13) */
   gtk_paned_set_resize_start_child (GTK_PANED (paned), TRUE);
   gtk_paned_set_shrink_start_child (GTK_PANED (paned), FALSE);
   gtk_paned_set_resize_end_child (GTK_PANED (paned), FALSE);
@@ -537,6 +583,7 @@ install (GtkWidget *window)
 
   hook->active_id = g_signal_connect (window, "notify::active-slot", G_CALLBACK (on_active_slot), NULL);
   watch_active_slot (hook);
+  apply_position (hook);
   apply_visibility (hook);
   g_debug ("installed in a window");
   return TRUE;
@@ -577,6 +624,9 @@ uninstall (GtkWidget *window)
   g_autoptr (GtkWidget) button = g_weak_ref_get (&hook->button);
   if (button != NULL)
     gtk_widget_unparent (button);
+  g_autoptr (GtkWidget) header = g_weak_ref_get (&hook->header_bar);
+  if (header != NULL)
+    gtk_widget_remove_css_class (header, "dp-header-line"); /* Files' header bar exactly as before */
   g_autoptr (GtkEventController) shortcuts = g_weak_ref_get (&hook->shortcuts);
   if (shortcuts != NULL)
     gtk_widget_remove_controller (window, shortcuts);
@@ -635,6 +685,9 @@ dp_hook_init (gboolean enabled)
   const NuConfig *c = nu_settings_get ();
   dh->visible = c->details_pane_visible;
   dh->width = c->details_pane_width;
+  dh->height = c->details_pane_height;
+  dh->bottom = c->details_pane_position == NU_PANE_BOTTOM;
+  dh->header_line = c->details_pane_header_border;
   dh->toplevels = gtk_window_get_toplevels ();
   dh->changed_id = g_signal_connect (dh->toplevels, "items-changed", G_CALLBACK (on_toplevels_changed), NULL);
   dp_hook_set_enabled (enabled);
@@ -660,19 +713,34 @@ dp_hook_set_enabled (gboolean enabled)
 
 void
 dp_hook_set_state (gboolean visible,
-                   int      width)
+                   int      width,
+                   int      height)
 {
   if (dh == NULL)
     return;
   width = CLAMP (width, NU_DETAILS_PANE_WIDTH_MIN, NU_DETAILS_PANE_WIDTH_MAX);
-  gboolean width_changed = width != dh->width;
+  height = CLAMP (height, NU_DETAILS_PANE_HEIGHT_MIN, NU_DETAILS_PANE_HEIGHT_MAX);
+  gboolean width_changed = width != dh->width || height != dh->height;
   if (visible == dh->visible && !width_changed)
     return;
   dh->visible = visible;
   dh->width = width;
+  dh->height = height;
   for_each_hook (apply_visibility);
   if (width_changed)
     for_each_hook (queue_apply_width);
+}
+
+void
+dp_hook_set_look (gboolean bottom,
+                  gboolean header_line)
+{
+  if (dh == NULL)
+    return;
+  dh->bottom = bottom;
+  dh->header_line = header_line;
+  for_each_hook (apply_position);
+  for_each_hook (apply_visibility);
 }
 
 void
@@ -771,6 +839,11 @@ dp_hook_debug_command (const char *cmd)
         }
       g_autofree char *desc = pane != NULL ? dp_pane_describe (pane) : g_strdup ("-");
       g_autoptr (GtkWidget) button = hook != NULL ? g_weak_ref_get (&hook->button) : NULL;
+      g_autoptr (GtkWidget) header = hook != NULL ? g_weak_ref_get (&hook->header_bar) : NULL;
+      g_autoptr (GtkWidget) paned = hook != NULL ? g_weak_ref_get (&hook->paned) : NULL;
+      g_message ("dp look: bottom=%d paned-vertical=%d height=%d header-line=%d", dh != NULL && dh->bottom,
+                 paned != NULL && gtk_orientable_get_orientation (GTK_ORIENTABLE (paned)) == GTK_ORIENTATION_VERTICAL,
+                 dh != NULL ? dh->height : 0, header != NULL && gtk_widget_has_css_class (header, "dp-header-line"));
       g_message ("dp dump: enabled=%d windows=%u state=%d width=%d shown=%d button=%d max-main-us=%" G_GINT64_FORMAT
                  " max-update-us=%" G_GINT64_FORMAT " %s", dh != NULL && dh->enabled,
                  windows, dh != NULL && dh->visible, dh != NULL ? dh->width : 0,
@@ -803,10 +876,32 @@ dp_hook_debug_command (const char *cmd)
       if (tab_view != NULL && n >= 0 && n < adw_tab_view_get_n_pages (ADW_TAB_VIEW (tab_view)))
         adw_tab_view_set_selected_page (ADW_TAB_VIEW (tab_view), adw_tab_view_get_nth_page (ADW_TAB_VIEW (tab_view), n));
     }
+  else if (g_str_has_prefix (cmd, "dp-png "))
+    {
+      /* The whole window to a PNG (the owner's review of the look; cairo renders text off screen). */
+      const char *out = cmd + strlen ("dp-png ");
+      int w = gtk_widget_get_width (hook->window), h = gtk_widget_get_height (hook->window);
+      g_autoptr (GdkPaintable) shot = gtk_widget_paintable_new (hook->window);
+      GtkSnapshot *snap = gtk_snapshot_new (); /* consumed below */
+      GdkRGBA bg = adw_style_manager_get_dark (adw_style_manager_get_default ()) ? (GdkRGBA) { 0.12f, 0.12f, 0.13f, 1 }
+                                                                                 : (GdkRGBA) { 1, 1, 1, 1 };
+      gtk_snapshot_append_color (snap, &bg, &GRAPHENE_RECT_INIT (0, 0, w, h));
+      gdk_paintable_snapshot (shot, snap, w, h);
+      g_autoptr (GskRenderNode) node = gtk_snapshot_free_to_node (snap);
+      g_autoptr (GskRenderer) renderer = gsk_cairo_renderer_new ();
+      gboolean ok = FALSE;
+      if (node != NULL && gsk_renderer_realize_for_display (renderer, gtk_widget_get_display (hook->window), NULL))
+        {
+          g_autoptr (GdkTexture) tex = gsk_renderer_render_texture (renderer, node, &GRAPHENE_RECT_INIT (0, 0, w, h));
+          ok = gdk_texture_save_to_png (tex, out);
+          gsk_renderer_unrealize (renderer);
+        }
+      g_message ("dp png: %s %s", ok ? "saved" : "FAILED", out);
+    }
   else if (g_str_equal (cmd, "dp-close-window"))
     gtk_window_close (GTK_WINDOW (hook->window));
   else if (g_str_has_prefix (cmd, "dp-width "))
-    dp_hook_set_state (dh->visible, (int) g_ascii_strtoll (cmd + strlen ("dp-width "), NULL, 10));
+    dp_hook_set_state (dh->visible, (int) g_ascii_strtoll (cmd + strlen ("dp-width "), NULL, 10), dh->height);
   else
     g_message ("dp: unknown command %s", cmd);
   return TRUE;

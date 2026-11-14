@@ -25,6 +25,35 @@ void dp_pane_show (DpPane    *self,
 /* Stops the video preview, if playing, and shows the thumbnail again. */
 void dp_pane_stop_media (DpPane *self);
 
+/* Look options shared by every pane (PLAN.md §13.10). */
+typedef struct
+{
+  gboolean border;          /* line toward the folder view (all round when floating) */
+  int      margin;          /* px around the pane; > 0 = a floating card */
+  int      padding;         /* px inside */
+  int      radius;          /* px corner radius of the pane */
+  int      preview_radius;  /* px corner radius of the preview box */
+  int      preview_margin;  /* px around the preview box */
+  int      stack_depth;     /* FpDepth (= NuDepthEffect) */
+  gboolean stack_shadow;
+  gboolean stack_rotation;
+  gboolean stack_keep_aspect;
+  int      stack_fade;      /* % */
+  gboolean stack_card;      /* translucent card behind icon items */
+} DpPaneStyle;
+
+/* Restyles every pane (and re-renders shown stacks if their options changed). Main thread. */
+void dp_pane_set_style (const DpPaneStyle *style);
+
+/* VERTICAL = right of the view (one column); HORIZONTAL = the Windows 7 strip at the bottom (P14). */
+void dp_pane_set_layout (DpPane         *self,
+                         GtkOrientation  layout);
+
+/* Height the pane asks for at the bottom; the minimum is DP_PANE_MIN_HEIGHT. */
+#define DP_PANE_MIN_HEIGHT 120
+void dp_pane_set_preferred_height (DpPane *self,
+                                   int     height);
+
 /* Width the pane asks for (its natural width); the minimum is DP_PANE_MIN_WIDTH. */
 #define DP_PANE_MIN_WIDTH 260
 void dp_pane_set_preferred_width (DpPane *self,

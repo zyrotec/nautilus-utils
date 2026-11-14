@@ -11,13 +11,14 @@
 #include "config.h"
 #include "dp_format.h"
 #include "dp_meta.h"
+#include "dp_stack.h"
 #include "dp_thumb.h"
 
 #define PREVIEW_ICON_SIZE 128 /* px, logical: file icons in the preview */
 #define FOLDER_RENDER_SIZE 192 /* px, logical: folder previews in the preview area */
-#define STACK_CARD        112 /* px: one card of the multi-selection stack */
-#define STACK_STEP_X      28
-#define STACK_STEP_Y      12
+#define ICON_CARD_PX      256 /* px: an icon card of the multi-selection stack (PLAN.md §13.10 P11) */
+#define BOTTOM_PREVIEW_W  220 /* px, logical: the preview box at the bottom position */
+#define BOTTOM_GROUP_W    250 /* px, logical: one group column at the bottom position */
 #define HEADER_ICON_SIZE  32
 
 struct _DpPane
@@ -28,7 +29,8 @@ struct _DpPane
                                   * from the widget tree under it. */
   GtkWidget      *preview;       /* GtkOverlay */
   GtkWidget      *picture;       /* Single item */
-  GtkWidget      *stack;         /* GtkFixed: multiple selection */
+  GtkWidget      *content;       /* Box: [preview][info] — vertical at the right, horizontal at the bottom */
+  GtkWidget      *info_box;      /* Box: [header][groups] */
   GtkWidget      *play;          /* Play button over a video's thumbnail */
   GtkWidget      *controls;      /* Pause / sound buttons while playing */
   GtkWidget      *pause_button;
@@ -41,6 +43,8 @@ struct _DpPane
   GtkWidget      *perms_w;       /* Borrowed (in @groups) or NULL: the "Permissions" group */
 
   int             preferred_width;
+  int             preferred_height;
+  GtkOrientation  layout;        /* VERTICAL: right of the view; HORIZONTAL: Windows 7 strip at the bottom */
   GCancellable   *cancel;        /* Owned: the reads for what is shown now */
   guint           generation;    /* Bumped by every show */
   guint           pending;       /* Reads of this generation still running */
@@ -63,6 +67,13 @@ static DpPane          *playing;          /* Weak pointer: the one pane playing 
 static GtkCssProvider  *css;              /* Owned: added to the default display once. */
 static GHashTable      *count_cache;      /* Owned: "uri\nmtime" (owned) → DpFolderCount* (owned). */
 static gint64           max_main_us;      /* Longest main-thread step (dp_pane_get_max_main_us). */
+static DpPaneStyle      pane_style = {    /* Process-wide look (dp_pane_set_style); = the schema defaults */
+  .border = TRUE, .margin = 0, .padding = 18, .radius = 0, .preview_radius = 12, .preview_margin = 0,
+  .stack_depth = 1 /* blur */, .stack_shadow = TRUE, .stack_rotation = TRUE, .stack_keep_aspect = TRUE,
+  .stack_fade = 0, .stack_card = TRUE,
+};
+static GPtrArray       *panes;            /* Borrowed DpPane* (each removes itself in dispose): restyled live. */
+static GHashTable      *retiring;         /* Owned: GtkMediaStream* (owned ref) → its release timeout id. */
 
 /* Main-thread CPU time in µs (wall time also counts waiting for the CPU while workers/thumbnailers run). */
 static gint64
@@ -91,9 +102,15 @@ dp_pane_get_max_main_us (void)
 }
 
 static const char style_sheet[] =
-  ".dp-pane { }\n"
-  ".dp-preview { border-radius: 12px; background-color: alpha(currentColor, 0.05); }\n"
-  ".dp-preview picture.dp-video { border-radius: 12px; }\n"
+  ".dp-preview { background-color: alpha(currentColor, 0.05); }\n"
+  "dp-pane.dp-floating { background-color: var(--card-bg-color); }\n"
+  "dp-pane.dp-edge-start { border-left: 1px solid var(--border-color); }\n"
+  "dp-pane.dp-edge-top { border-top: 1px solid var(--border-color); }\n"
+  "dp-pane.dp-edge-all { border: 1px solid var(--border-color); }\n"
+  /* Our paned's own line is replaced by the pane's border (on/off, P13); the handle stays draggable. */
+  "paned.dp-paned > separator { background: none; background-image: none; box-shadow: none; }\n"
+  /* P15: a line under Files' content header bar while the pane is shown (class set by the hook). */
+  "headerbar.dp-header-line { box-shadow: inset 0 -1px var(--border-color); }\n"
   ".dp-play { min-width: 56px; min-height: 56px; -gtk-icon-size: 24px; }\n"
   ".dp-chip { border-radius: 9999px; padding: 3px 12px; background-color: alpha(currentColor, 0.08);"
   " font-size: 0.9em; }\n"
@@ -101,6 +118,19 @@ static const char style_sheet[] =
   ".dp-stack-card { border-radius: 8px; background-color: var(--card-bg-color);"
   " box-shadow: 0 1px 4px alpha(black, 0.25); }\n"
   ".dp-group-title { margin-bottom: 2px; }\n";
+
+/* The fixed sheet plus the sizes from the options. */
+static void
+load_css (void)
+{
+  g_autofree char *sizes = g_strdup_printf (
+    "dp-pane { margin: %dpx; border-radius: %dpx; }\n"
+    ".dp-preview, .dp-preview picture.dp-video { border-radius: %dpx; }\n"
+    ".dp-preview { margin: %dpx; }\n",
+    pane_style.margin, pane_style.radius, pane_style.preview_radius, pane_style.preview_margin);
+  g_autofree char *all = g_strconcat (style_sheet, sizes, NULL);
+  gtk_css_provider_load_from_string (css, all);
+}
 
 static void
 ensure_style (void)
@@ -111,7 +141,7 @@ ensure_style (void)
   if (display == NULL)
     return;
   css = gtk_css_provider_new ();
-  gtk_css_provider_load_from_string (css, style_sheet);
+  load_css ();
   gtk_style_context_add_provider_for_display (display, GTK_STYLE_PROVIDER (css),
                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 }
@@ -119,6 +149,19 @@ ensure_style (void)
 void
 dp_pane_unload_style (void)
 {
+  /* Feature shutdown: release retired players now. */
+  if (retiring != NULL)
+    {
+      GHashTableIter it;
+      gpointer media, id;
+      g_hash_table_iter_init (&it, retiring);
+      while (g_hash_table_iter_next (&it, &media, &id))
+        {
+          g_source_remove (GPOINTER_TO_UINT (id));
+          g_object_unref (media);
+        }
+      g_clear_pointer (&retiring, g_hash_table_unref);
+    }
   if (css != NULL)
     {
       GdkDisplay *display = gdk_display_get_default ();
@@ -205,6 +248,7 @@ static GtkWidget *
 build_group (const DpGroup *g)
 {
   GtkWidget *box = group_box (g->title);
+  gtk_widget_set_valign (box, GTK_ALIGN_START);
   GtkWidget *grid = gtk_grid_new ();
   gtk_grid_set_column_spacing (GTK_GRID (grid), 12);
   gtk_grid_set_row_spacing (GTK_GRID (grid), 6);
@@ -304,6 +348,17 @@ build_details (DpPane *self)
   return build_group (details);
 }
 
+/* Bottom layout: every group is a fixed-width column. */
+static void
+size_groups (DpPane *self)
+{
+  gboolean bottom = self->layout == GTK_ORIENTATION_HORIZONTAL;
+  for (GtkWidget *g = gtk_widget_get_first_child (self->groups); g != NULL; g = gtk_widget_get_next_sibling (g))
+    gtk_widget_set_size_request (g, bottom ? BOTTOM_GROUP_W : -1, -1);
+}
+
+static void apply_style (DpPane *self);
+
 /* Second half of render_info, one main-loop turn later (keeps each step under a frame, PLAN.md §4.4). */
 static gboolean
 render_perms_idle (gpointer data)
@@ -315,6 +370,7 @@ render_perms_idle (gpointer data)
   self->perms_w = build_permissions (self->info);
   if (self->perms_w != NULL)
     gtk_box_append (GTK_BOX (self->groups), self->perms_w); /* always last: extra groups go before it */
+  size_groups (self);
   TIME_END ("render (permissions)");
   return G_SOURCE_REMOVE;
 }
@@ -328,6 +384,7 @@ render_info (DpPane *self)
   self->details_w = build_details (self);
   gtk_box_append (GTK_BOX (self->groups), self->details_w);
   g_idle_add_full (G_PRIORITY_DEFAULT_IDLE, render_perms_idle, read_ctx (self), NULL);
+  size_groups (self);
   TIME_END ("render (info)");
 }
 
@@ -340,6 +397,7 @@ render_count (DpPane *self)
   gtk_box_insert_child_after (GTK_BOX (self->groups), fresh, self->details_w);
   gtk_box_remove (GTK_BOX (self->groups), self->details_w);
   self->details_w = fresh;
+  size_groups (self);
   TIME_END ("render (count)");
 }
 
@@ -355,6 +413,7 @@ render_extra (DpPane *self)
       gtk_box_insert_child_after (GTK_BOX (self->groups), g, after);
       after = g;
     }
+  size_groups (self);
   TIME_END ("render (extra)");
 }
 
@@ -364,6 +423,7 @@ render_summary (DpPane *self)
   TIME_BEGIN ();
   clear_box (self->groups);
   gtk_box_append (GTK_BOX (self->groups), build_group (self->summary->group));
+  size_groups (self);
   TIME_END ("render (summary)");
 }
 
@@ -412,44 +472,11 @@ on_thumb (GObject *src, GAsyncResult *res, gpointer data)
   set_still (self, GDK_PAINTABLE (texture), "thumbnail");
 }
 
-typedef struct
-{
-  ReadCtx *ctx;
-  guint    index; /* card of the stack */
-} CardCtx;
-
-static void
-on_card_thumb (GObject *src, GAsyncResult *res, gpointer data)
-{
-  (void) src;
-  CardCtx *cc = data;
-  guint index = cc->index;
-  g_autoptr (GError) error = NULL;
-  g_autoptr (GdkTexture) texture = dp_thumb_load_finish (res, &error);
-  g_autoptr (DpPane) self = take_pane (cc->ctx);
-  g_free (cc);
-  if (self == NULL || texture == NULL)
-    return;
-  /* Cards are added back to front: card @index is child (n - 1 - index). */
-  guint n = 0;
-  for (GtkWidget *c = gtk_widget_get_first_child (self->stack); c != NULL; c = gtk_widget_get_next_sibling (c))
-    n++;
-  guint i = 0;
-  for (GtkWidget *c = gtk_widget_get_first_child (self->stack); c != NULL; c = gtk_widget_get_next_sibling (c), i++)
-    if (i == n - 1 - index)
-      {
-        gtk_picture_set_paintable (GTK_PICTURE (c), GDK_PAINTABLE (texture));
-        gtk_picture_set_content_fit (GTK_PICTURE (c), GTK_CONTENT_FIT_COVER);
-      }
-}
-
 /* Shows the single item's preview: icon now, then the thumbnail or the folder preview. */
 static void
 start_preview (DpPane *self)
 {
   DpInfo *info = self->info;
-  gtk_widget_set_visible (self->picture, TRUE);
-  gtk_widget_set_visible (self->stack, FALSE);
   g_autoptr (GdkPaintable) icon = icon_paintable (self, info->icon, PREVIEW_ICON_SIZE);
   set_still (self, icon, icon != NULL ? "icon" : "none");
   if (info->is_dir)
@@ -471,37 +498,93 @@ start_preview (DpPane *self)
     dp_thumb_load_async (info->uri, info->content_type, info->mtime_s, TRUE, self->cancel, on_thumb, read_ctx (self));
 }
 
+/* New texture: @info's icon on a translucent card (P11: optional) for a stack card without a thumbnail. Main
+ * thread (icon theme). Drawn with cairo: icon paintables only produce texture/mask nodes, which it renders. */
+static GdkTexture *
+icon_card (DpPane *self, const DpInfo *info)
+{
+  const int px = ICON_CARD_PX;
+  int icon_px = pane_style.stack_card ? px * 3 / 5 : px * 4 / 5;
+  g_autoptr (GdkPaintable) icon = icon_paintable (self, info->icon, icon_px);
+  GtkSnapshot *snap = gtk_snapshot_new (); /* consumed below */
+  if (pane_style.stack_card)
+    {
+      GdkRGBA fg;
+      gtk_widget_get_color (GTK_WIDGET (self), &fg);
+      fg.alpha = 0.10f;
+      GskRoundedRect r;
+      gsk_rounded_rect_init_from_rect (&r, &GRAPHENE_RECT_INIT (0, 0, px, px), px / 10.0f);
+      gtk_snapshot_push_rounded_clip (snap, &r);
+      gtk_snapshot_append_color (snap, &fg, &r.bounds);
+      gtk_snapshot_pop (snap);
+    }
+  if (icon != NULL)
+    {
+      gtk_snapshot_save (snap);
+      gtk_snapshot_translate (snap, &GRAPHENE_POINT_INIT ((px - icon_px) / 2.0f, (px - icon_px) / 2.0f));
+      gdk_paintable_snapshot (icon, snap, icon_px, icon_px);
+      gtk_snapshot_restore (snap);
+    }
+  g_autoptr (GskRenderNode) node = gtk_snapshot_free_to_node (snap);
+  cairo_surface_t *surface = cairo_image_surface_create (CAIRO_FORMAT_ARGB32, px, px);
+  if (node != NULL)
+    {
+      cairo_t *cr = cairo_create (surface);
+      gsk_render_node_draw (node, cr);
+      cairo_destroy (cr);
+    }
+  cairo_surface_flush (surface);
+  int stride = cairo_image_surface_get_stride (surface);
+  g_autoptr (GBytes) bytes = g_bytes_new (cairo_image_surface_get_data (surface), (gsize) stride * px);
+  cairo_surface_destroy (surface);
+  /* GDK_MEMORY_DEFAULT = cairo's ARGB32 (gdkmemorytexture.h). */
+  return gdk_memory_texture_new (px, px, GDK_MEMORY_DEFAULT, bytes, (gsize) stride);
+}
+
+static void
+on_stack (GObject *src, GAsyncResult *res, gpointer data)
+{
+  (void) src;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GdkTexture) frame = dp_stack_render_finish (res, &error);
+  g_autoptr (DpPane) self = take_pane (data);
+  if (self == NULL || frame == NULL)
+    return;
+  set_still (self, GDK_PAINTABLE (frame), "stack");
+}
+
+/* Several selected: the folder-preview stack (P10) of the first items, rendered in a worker. */
 static void
 start_stack (DpPane *self)
 {
-  gtk_widget_set_visible (self->picture, FALSE);
-  gtk_widget_set_visible (self->stack, TRUE);
-  GtkWidget *child;
-  while ((child = gtk_widget_get_first_child (self->stack)) != NULL)
-    gtk_fixed_remove (GTK_FIXED (self->stack), child);
-  guint n = MIN (self->summary->infos->len, 3);
-  for (guint k = n; k > 0; k--) /* back to front */
+  guint n = MIN (self->summary->infos->len, DP_STACK_MAX);
+  DpStackItem items[DP_STACK_MAX] = { { NULL, 0, FALSE, NULL, 0 } };
+  GdkTexture *cards[DP_STACK_MAX] = { NULL }; /* owned, released below (the job takes its own refs) */
+  for (guint i = 0; i < n; i++)
     {
-      guint index = k - 1;
-      const DpInfo *info = g_ptr_array_index (self->summary->infos, index);
-      g_autoptr (GdkPaintable) icon = icon_paintable (self, info->icon, 96);
-      GtkWidget *card = gtk_picture_new_for_paintable (icon);
-      gtk_picture_set_content_fit (GTK_PICTURE (card), GTK_CONTENT_FIT_SCALE_DOWN);
-      gtk_widget_set_size_request (card, STACK_CARD, STACK_CARD);
-      gtk_widget_set_overflow (card, GTK_OVERFLOW_HIDDEN);
-      gtk_widget_add_css_class (card, "dp-stack-card");
-      double x = STACK_STEP_X * (double) (n - 1 - index), y = STACK_STEP_Y * (double) index;
-      gtk_fixed_put (GTK_FIXED (self->stack), card, x, y);
-      if (info->is_native && !info->is_dir)
-        {
-          CardCtx *cc = g_new0 (CardCtx, 1);
-          cc->ctx = read_ctx (self);
-          cc->index = index;
-          /* Existing thumbnails only: a selection of many files shouldn't start thumbnailers. */
-          dp_thumb_load_async (info->uri, info->content_type, info->mtime_s, FALSE, self->cancel, on_card_thumb, cc);
-        }
+      const DpInfo *info = g_ptr_array_index (self->summary->infos, i);
+      cards[i] = icon_card (self, info);
+      items[i].uri = info->uri;
+      items[i].mtime = info->mtime_s;
+      /* Existing thumbnails only: a selection of many files shouldn't start thumbnailers (D5). */
+      items[i].thumbnail = info->is_native && !info->is_dir;
+      items[i].fallback = cards[i];
+      items[i].seed = g_str_hash (info->uri);
     }
-  self->preview_kind = "stack";
+  FpStyle style;
+  dp_stack_style_init (&style, pane_style.stack_depth, pane_style.stack_shadow, pane_style.stack_rotation,
+                       pane_style.stack_keep_aspect, pane_style.stack_fade);
+  int scale = gtk_widget_get_scale_factor (GTK_WIDGET (self));
+  int logical = self->layout == GTK_ORIENTATION_HORIZONTAL
+                  ? BOTTOM_PREVIEW_W
+                  : CLAMP (self->preferred_width - 2 * (pane_style.padding + pane_style.preview_margin) - 20, 120, 300);
+  g_autoptr (GdkPaintable) placeholder = icon_paintable (self, ((DpInfo *) g_ptr_array_index (self->summary->infos, 0))->icon,
+                                                          PREVIEW_ICON_SIZE);
+  set_still (self, placeholder, "icon");
+  if (n > 0)
+    dp_stack_render_async (&style, items, n, (guint) (logical * scale), self->cancel, on_stack, read_ctx (self));
+  for (guint i = 0; i < n; i++)
+    g_clear_object (&cards[i]);
 }
 
 /* ------------------------------------------------------------------------------------------------ */
@@ -545,6 +628,26 @@ on_media_ended (GObject *media, GParamSpec *pspec, gpointer data)
     }
 }
 
+static gboolean
+release_media (gpointer media)
+{
+  g_hash_table_steal (retiring, media);
+  g_object_unref (media); /* the ref retire_media() took over */
+  return G_SOURCE_REMOVE;
+}
+
+/* Drops a stopped player a moment later: releasing GTK's GStreamer player right while it is still busy
+ * (e.g. seeking for our loop) crashed in GstPlay's own thread once in the smoke test (PLAN.md §13.11).
+ * Takes @media's reference. */
+static void
+retire_media (GtkMediaStream *media)
+{
+  if (retiring == NULL)
+    retiring = g_hash_table_new (NULL, NULL);
+  guint id = g_timeout_add (1500, release_media, media);
+  g_hash_table_insert (retiring, media, GUINT_TO_POINTER (id));
+}
+
 void
 dp_pane_stop_media (DpPane *self)
 {
@@ -553,7 +656,7 @@ dp_pane_stop_media (DpPane *self)
     {
       g_signal_handlers_disconnect_by_data (self->media, self);
       gtk_media_stream_pause (self->media);
-      g_clear_object (&self->media);
+      retire_media (g_steal_pointer (&self->media));
       gtk_widget_remove_css_class (self->picture, "dp-video");
       gtk_picture_set_paintable (GTK_PICTURE (self->picture), self->still);
     }
@@ -779,8 +882,6 @@ dp_pane_show (DpPane    *self,
       gtk_label_set_text (GTK_LABEL (self->title), base != NULL ? base : "");
       gtk_label_set_text (GTK_LABEL (self->subtitle), "");
       gtk_image_clear (GTK_IMAGE (self->icon));
-      gtk_widget_set_visible (self->picture, TRUE);
-      gtk_widget_set_visible (self->stack, FALSE);
       dp_info_read_async (single, self->cancel, on_info, read_ctx (self));
     }
   else if (files != NULL && files->len > 1)
@@ -846,6 +947,91 @@ dp_pane_describe (DpPane *self)
 /* ------------------------------------------------------------------------------------------------ */
 /* Widget                                                                                           */
 
+/* Classes, padding and layout of one pane from pane_style and its layout. */
+static void
+apply_style (DpPane *self)
+{
+  GtkWidget *w = GTK_WIDGET (self);
+  gboolean floating = pane_style.margin > 0;
+  gboolean bottom = self->layout == GTK_ORIENTATION_HORIZONTAL;
+  gtk_widget_remove_css_class (w, "dp-edge-start");
+  gtk_widget_remove_css_class (w, "dp-edge-top");
+  gtk_widget_remove_css_class (w, "dp-edge-all");
+  if (pane_style.border)
+    gtk_widget_add_css_class (w, floating ? "dp-edge-all" : bottom ? "dp-edge-top" : "dp-edge-start");
+  if (floating)
+    gtk_widget_add_css_class (w, "dp-floating");
+  else
+    gtk_widget_remove_css_class (w, "dp-floating");
+  gtk_widget_set_overflow (w, pane_style.radius > 0 ? GTK_OVERFLOW_HIDDEN : GTK_OVERFLOW_VISIBLE);
+  int p = pane_style.padding;
+  gtk_widget_set_margin_start (self->content, p);
+  gtk_widget_set_margin_end (self->content, p);
+  gtk_widget_set_margin_top (self->content, p);
+  gtk_widget_set_margin_bottom (self->content, p);
+
+  /* Right: one column. Bottom (Windows 7): preview | name + groups as columns (P14). */
+  GtkOrientation o = self->layout;
+  gtk_orientable_set_orientation (GTK_ORIENTABLE (self->content), o);
+  gtk_box_set_spacing (GTK_BOX (self->content), bottom ? 24 : 18);
+  gtk_orientable_set_orientation (GTK_ORIENTABLE (self->groups), o);
+  gtk_box_set_spacing (GTK_BOX (self->groups), bottom ? 32 : 18);
+  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (self->scroller), bottom ? GTK_POLICY_AUTOMATIC : GTK_POLICY_NEVER,
+                                  GTK_POLICY_AUTOMATIC);
+  gtk_widget_set_size_request (self->preview, bottom ? BOTTOM_PREVIEW_W : -1, bottom ? -1 : DP_PREVIEW_MAX_HEIGHT - 40);
+  gtk_widget_set_valign (self->preview, bottom ? GTK_ALIGN_START : GTK_ALIGN_FILL);
+  gtk_widget_set_size_request (self->picture, -1, bottom ? 120 : DP_PREVIEW_MAX_HEIGHT - 60);
+  size_groups (self);
+}
+
+void
+dp_pane_set_style (const DpPaneStyle *style)
+{
+  g_return_if_fail (style != NULL);
+  gboolean stack_changed = style->stack_depth != pane_style.stack_depth ||
+                           style->stack_shadow != pane_style.stack_shadow ||
+                           style->stack_rotation != pane_style.stack_rotation ||
+                           style->stack_keep_aspect != pane_style.stack_keep_aspect ||
+                           style->stack_fade != pane_style.stack_fade || style->stack_card != pane_style.stack_card;
+  pane_style = *style;
+  pane_style.padding = CLAMP (pane_style.padding, 0, 64);
+  if (css != NULL)
+    load_css ();
+  for (guint i = 0; panes != NULL && i < panes->len; i++)
+    {
+      DpPane *pane = g_ptr_array_index (panes, i);
+      apply_style (pane);
+      if (stack_changed && pane->summary != NULL)
+        start_stack (pane);
+    }
+}
+
+void
+dp_pane_set_layout (DpPane         *self,
+                    GtkOrientation  layout)
+{
+  g_return_if_fail (DP_IS_PANE (self));
+  if (self->layout == layout)
+    return;
+  self->layout = layout;
+  apply_style (self);
+  if (self->summary != NULL)
+    start_stack (self); /* its size depends on the layout */
+  gtk_widget_queue_resize (GTK_WIDGET (self));
+}
+
+void
+dp_pane_set_preferred_height (DpPane *self,
+                              int     height)
+{
+  g_return_if_fail (DP_IS_PANE (self));
+  height = MAX (height, DP_PANE_MIN_HEIGHT);
+  if (height == self->preferred_height)
+    return;
+  self->preferred_height = height;
+  gtk_widget_queue_resize (GTK_WIDGET (self));
+}
+
 void
 dp_pane_set_preferred_width (DpPane *self,
                              int     width)
@@ -864,10 +1050,15 @@ dp_pane_measure (GtkWidget *widget, GtkOrientation orientation, int for_size, in
 {
   DpPane *self = DP_PANE (widget);
   gtk_widget_measure (self->scroller, orientation, for_size, min, nat, min_baseline, nat_baseline);
-  if (orientation == GTK_ORIENTATION_HORIZONTAL)
+  if (self->layout == GTK_ORIENTATION_VERTICAL && orientation == GTK_ORIENTATION_HORIZONTAL)
     {
       *min = MAX (*min, DP_PANE_MIN_WIDTH);
       *nat = MAX (*min, self->preferred_width);
+    }
+  else if (self->layout == GTK_ORIENTATION_HORIZONTAL && orientation == GTK_ORIENTATION_VERTICAL)
+    {
+      *min = DP_PANE_MIN_HEIGHT; /* the content scrolls */
+      *nat = MAX (*min, self->preferred_height);
     }
 }
 
@@ -888,6 +1079,8 @@ static void
 dp_pane_dispose (GObject *object)
 {
   DpPane *self = DP_PANE (object);
+  if (panes != NULL)
+    g_ptr_array_remove (panes, self);
   if (self->scroller != NULL)
     {
       reset (self);
@@ -932,11 +1125,8 @@ dp_pane_init (DpPane *self)
   gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (self->scroller), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
   gtk_widget_set_parent (self->scroller, GTK_WIDGET (self));
 
-  GtkWidget *content = gtk_box_new (GTK_ORIENTATION_VERTICAL, 18);
-  gtk_widget_set_margin_start (content, 18);
-  gtk_widget_set_margin_end (content, 18);
-  gtk_widget_set_margin_top (content, 18);
-  gtk_widget_set_margin_bottom (content, 18);
+  self->content = gtk_box_new (GTK_ORIENTATION_VERTICAL, 18);
+  GtkWidget *content = self->content;
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (self->scroller), content);
 
   /* Preview area. */
@@ -957,12 +1147,6 @@ dp_pane_init (DpPane *self)
   gtk_widget_set_margin_end (self->picture, 10);
   gtk_accessible_update_property (GTK_ACCESSIBLE (self->picture), GTK_ACCESSIBLE_PROPERTY_LABEL, "Preview", -1);
   gtk_box_append (GTK_BOX (holder), self->picture);
-  self->stack = gtk_fixed_new ();
-  gtk_widget_set_halign (self->stack, GTK_ALIGN_CENTER);
-  gtk_widget_set_margin_top (self->stack, 20);
-  gtk_widget_set_margin_bottom (self->stack, 20);
-  gtk_widget_set_visible (self->stack, FALSE);
-  gtk_box_append (GTK_BOX (holder), self->stack);
   gtk_overlay_set_child (GTK_OVERLAY (self->preview), holder);
 
   self->play = osd_button ("media-playback-start-symbolic", "Play Preview");
@@ -1009,10 +1193,20 @@ dp_pane_init (DpPane *self)
   gtk_box_append (GTK_BOX (names), self->title);
   gtk_box_append (GTK_BOX (names), self->subtitle);
   gtk_box_append (GTK_BOX (header), names);
-  gtk_box_append (GTK_BOX (content), header);
+  self->info_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 18);
+  gtk_widget_set_hexpand (self->info_box, TRUE);
+  gtk_box_append (GTK_BOX (self->info_box), header);
+  gtk_box_append (GTK_BOX (content), self->info_box);
 
   self->groups = gtk_box_new (GTK_ORIENTATION_VERTICAL, 18);
-  gtk_box_append (GTK_BOX (content), self->groups);
+  gtk_box_append (GTK_BOX (self->info_box), self->groups);
+
+  self->layout = GTK_ORIENTATION_VERTICAL;
+  self->preferred_height = 220;
+  if (panes == NULL)
+    panes = g_ptr_array_new ();
+  g_ptr_array_add (panes, self);
+  apply_style (self);
 }
 
 GtkWidget *

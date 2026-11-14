@@ -26,14 +26,15 @@ dp_core_lib = static_library('dp-core',
 )
 
 # Plain GTK/libadwaita widgets: thumbnails and the pane itself (no Nautilus types; the demo links it too).
-dp_ui_deps = dp_core_deps + [gtk_dep, adw_dep, gnome_desktop_dep]
+dp_ui_deps = dp_core_deps + [gtk_dep, adw_dep, gnome_desktop_dep, cairo_dep]
 dp_ui_lib = static_library('dp-ui',
   'dp_thumb.c',
+  'dp_stack.c',
   'dp_pane.c',
   c_args: dp_c_args,
   dependencies: dp_ui_deps,
-  include_directories: dp_inc,
-  link_with: dp_core_lib,
+  include_directories: [dp_inc, include_directories('../folder-preview')], # composite.h (PLAN.md §13.10 P10)
+  link_with: [dp_core_lib, fp_core_lib],
   pic: true,
   gnu_symbol_visibility: 'hidden',
 )

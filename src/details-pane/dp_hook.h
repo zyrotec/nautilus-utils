@@ -21,7 +21,12 @@ void dp_hook_set_enabled (gboolean enabled);
 
 /* Shown/hidden and width, from the settings (PLAN.md §13.4); applied to every window. */
 void dp_hook_set_state (gboolean visible,
-                        int      width);
+                        int      width,
+                        int      height);
+
+/* Position (right / bottom) and the line under Files' header bar (PLAN.md §13.10). */
+void dp_hook_set_look (gboolean bottom,
+                       gboolean header_line);
 
 #ifdef DP_DEBUG_DRIVER
 /* Debug driver command (tools/smoke-nautilus.sh). Returns TRUE if @cmd was one of ours. */

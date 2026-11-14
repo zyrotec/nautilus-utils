@@ -18,13 +18,38 @@ static guint settings_listener; /* nu_settings listener id, 0 when not registere
 static guint debug_signal_id;
 #endif
 
+/* The look options (PLAN.md §13.10) to the pane and the hook. */
+static void
+apply_look (void)
+{
+  const NuConfig *c = nu_settings_get ();
+  DpPaneStyle st = {
+    .border = c->details_pane_border,
+    .margin = c->details_pane_margin,
+    .padding = c->details_pane_padding,
+    .radius = c->details_pane_radius,
+    .preview_radius = c->details_pane_preview_radius,
+    .preview_margin = c->details_pane_preview_margin,
+    .stack_depth = (int) c->details_pane_stack_depth, /* same values as FpDepth */
+    .stack_shadow = c->details_pane_stack_shadow,
+    .stack_rotation = c->details_pane_stack_rotation,
+    .stack_keep_aspect = c->details_pane_stack_keep_aspect,
+    .stack_fade = c->details_pane_stack_fade,
+    .stack_card = c->details_pane_stack_card,
+  };
+  dp_pane_set_style (&st);
+  dp_hook_set_look (c->details_pane_position == NU_PANE_BOTTOM, c->details_pane_header_border);
+}
+
 static void
 on_settings_changed (NuChanged changed, gpointer data)
 {
   (void) data;
   const NuConfig *c = nu_settings_get ();
+  if (changed & NU_CHANGED_DP_LOOK)
+    apply_look ();
   if (changed & NU_CHANGED_DP_STATE)
-    dp_hook_set_state (c->details_pane_visible, c->details_pane_width);
+    dp_hook_set_state (c->details_pane_visible, c->details_pane_width, c->details_pane_height);
   if (changed & NU_CHANGED_DETAILS_PANE)
     dp_hook_set_enabled (c->details_pane_enabled);
 }
@@ -51,6 +76,7 @@ dp_feature_initialize (GTypeModule *module)
   /* Folders in the pane get the folder-preview look (P4) when that feature draws them. */
   dp_pane_set_folder_renderer (fp_view_hook_render_folder);
   dp_hook_init (nu_settings_get ()->details_pane_enabled);
+  apply_look ();
   settings_listener = nu_settings_add_listener (on_settings_changed, NULL);
 #ifdef DP_DEBUG_DRIVER
   debug_signal_id = g_unix_signal_add (SIGUSR2, on_debug_signal, NULL);

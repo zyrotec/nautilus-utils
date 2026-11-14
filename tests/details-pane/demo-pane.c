@@ -4,6 +4,9 @@
  *   demo-pane --png OUT.png FILE…      renders the pane for FILE… (one or several) to OUT.png and exits
  *   demo-pane --stress N FILE…         N rounds of show / play / destroy over FILE… (for ASan/valgrind), exits
  *
+ * Look (--png): DP_DEMO_BOTTOM=1 (Windows 7 strip), DP_DEMO_STYLE="margin=8 radius=12 padding=18 border=1
+ * preview_radius=12 preview_margin=0 depth=1 shadow=1 rotation=1 keep_aspect=1 fade=0 card=1" (any subset).
+ *
  * Needs a display. Not run by `meson test`. */
 #include <adwaita.h>
 
@@ -41,13 +44,45 @@ files_from_args (int argc, char **argv)
   return files;
 }
 
+/* DP_DEMO_STYLE → dp_pane_set_style. */
+static void
+demo_style (void)
+{
+  DpPaneStyle st = { TRUE, 0, 18, 0, 12, 0, 1, TRUE, TRUE, TRUE, 0, TRUE };
+  g_auto (GStrv) parts = g_strsplit (g_getenv ("DP_DEMO_STYLE") != NULL ? g_getenv ("DP_DEMO_STYLE") : "", " ", -1);
+  for (guint i = 0; parts[i] != NULL; i++)
+    {
+      g_auto (GStrv) kv = g_strsplit (parts[i], "=", 2);
+      if (kv[0] == NULL || kv[1] == NULL)
+        continue;
+      int v = (int) g_ascii_strtoll (kv[1], NULL, 10);
+      if (g_str_equal (kv[0], "margin")) st.margin = v;
+      else if (g_str_equal (kv[0], "radius")) st.radius = v;
+      else if (g_str_equal (kv[0], "padding")) st.padding = v;
+      else if (g_str_equal (kv[0], "border")) st.border = v;
+      else if (g_str_equal (kv[0], "preview_radius")) st.preview_radius = v;
+      else if (g_str_equal (kv[0], "preview_margin")) st.preview_margin = v;
+      else if (g_str_equal (kv[0], "depth")) st.stack_depth = v;
+      else if (g_str_equal (kv[0], "shadow")) st.stack_shadow = v;
+      else if (g_str_equal (kv[0], "rotation")) st.stack_rotation = v;
+      else if (g_str_equal (kv[0], "keep_aspect")) st.stack_keep_aspect = v;
+      else if (g_str_equal (kv[0], "fade")) st.stack_fade = v;
+      else if (g_str_equal (kv[0], "card")) st.stack_card = v;
+    }
+  dp_pane_set_style (&st);
+}
+
 static int
 render_png (const char *out, int argc, char **argv)
 {
   g_autoptr (GPtrArray) files = files_from_args (argc, argv);
+  gboolean bottom = g_getenv ("DP_DEMO_BOTTOM") != NULL;
   GtkWidget *window = gtk_window_new ();
-  gtk_window_set_default_size (GTK_WINDOW (window), 340, 1300);
+  gtk_window_set_default_size (GTK_WINDOW (window), bottom ? 1100 : 340, bottom ? 260 : 1300);
   GtkWidget *pane = dp_pane_new ();
+  demo_style ();
+  if (bottom)
+    dp_pane_set_layout (DP_PANE (pane), GTK_ORIENTATION_HORIZONTAL);
   gtk_window_set_child (GTK_WINDOW (window), pane);
   gtk_window_present (GTK_WINDOW (window));
   g_autoptr (GFile) parent = files->len > 0 ? g_file_get_parent (g_ptr_array_index (files, 0)) : NULL;
