@@ -1753,7 +1753,7 @@ Unix modes (e.g. some network shares) show only the summary row. Each chip has a
 | Video playback | `GtkMediaFile` (GTK's GStreamer backend, in process) |
 
 New build dependencies: `gstreamer-pbutils-1.0` (devel installed), `poppler-glib` and `gexiv2`
-(`sudo dnf install poppler-glib-devel gexiv2-devel`; both runtime libraries are already installed on Fedora
+(`sudo dnf install poppler-glib-devel libgexiv2-devel`; both runtime libraries are already installed on Fedora
 Workstation). Each is optional at build time: a missing one only hides its rows (meson `required: false`).
 
 ### 13.3 Rules
