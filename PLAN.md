@@ -147,6 +147,7 @@ findings and the smoke test is clean.
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 5 | Folder icons by name — every folder with a given name (e.g. `node_modules`) gets a chosen icon, as Files' own custom icon (§12) | `src/folder-icons/` | **v1 done** (2026-11-14), pending the owner's final check |
+| 6 | Details pane — a pane right of the folder view with the selected item's preview and properties (media, image, PDF), toggled from the header bar (§13) | `src/details-pane/` | **planned** (2026-11-14), decisions P1–P9 taken; Phase 0 next |
 
 Open items:
 
@@ -1660,3 +1661,152 @@ Design refinements from the spike:
   0 errors, nothing left behind; previews 70/70, 0 wrong. Safety: strict, `-fanalyzer`, scan-build,
   ASan+UBSan, valgrind all PASS (Phase 2 fixes: a GCC -O2 null-dereference false positive in the fake
   backend, an -fanalyzer NULL check in a test — both fixed in code, not suppressed).
+
+---
+
+## 13. Feature 6 — Details pane
+
+Like Windows File Explorer's details pane (owner, 2026-11-14, with two Explorer screenshots as reference): a
+pane on the **right of the folder view** that shows a large preview of the selected file or folder and its
+properties. A toggle button **next to the View Options button** in the header bar shows and hides it. Prefix
+`dp_`, log domain `details-pane`, dir `src/details-pane/`, branch `dev-details-pane`.
+
+### 13.1 Behaviour
+
+#### 13.1.1 Toggle and placement
+
+- A `GtkToggleButton` (icon `sidebar-show-right-symbolic`, tooltip "Details Pane", accessible label the
+  same) placed directly **right of** Nautilus' view controls (`NautilusViewControls`) in the header bar. The
+  owner's View Options button (⋮) lives inside those view controls (another extension replaces the stock
+  split button with grid / list / columns / ⋮), so our button ends up right of ⋮; with stock Files it sits
+  right of the split button. It follows the view controls' visibility (hidden when Files moves them to the
+  bottom bar in a narrow window).
+- Keyboard shortcut **Ctrl+I** if Phase 0 confirms Files 51 doesn't use it (Alt+Return is Properties, F9 the
+  sidebar); otherwise no shortcut.
+- The pane sits between the folder view and the window's right edge, below the header bar (and the tab bar),
+  across all tabs of the window (it shows the active tab's selection). Default width 320 px, resizable by
+  dragging its left edge (260 – 480 px); the width is remembered.
+- Open/closed is **one global state** (P8), remembered across windows and restarts: opening it in
+  one window opens it in every window, like Explorer.
+- Narrow windows (Files' 682 sp breakpoint, sidebar collapsed): the pane is hidden while narrow and comes
+  back when the window is wide again.
+
+#### 13.1.2 What it shows
+
+Top to bottom (Explorer layout, GNOME look: libadwaita colours, no hard-coded colours, dim labels):
+
+1. **Preview** (fills the pane's width, max 260 px high, aspect kept, rounded corners):
+   - Images, videos, PDFs, documents, audio with cover art: the freedesktop thumbnail at **x-large
+     (512 px)** from the shared `~/.cache/thumbnails` (made in a worker by `GnomeDesktopThumbnailFactory` if
+     missing, so Files benefits too); while it loads, and if none can be made, the file's themed icon.
+   - **Folders:** when folder previews are on and the folder qualifies (§6.1.1, §11.1), the **same folder
+     preview rendering** (layout, style, custom folder SVGs) drawn large — never just the plain icon.
+     Otherwise the folder's icon (custom icons included).
+   - **Videos:** a round **play button** over the thumbnail. Clicking it plays the video inline in the
+     preview area (GTK's own `GtkVideo`/`GtkMediaFile`, GStreamer — Phase 0 confirmed GTK 4.24 links it),
+     **muted, looping**, with a small overlay: pause/play and a sound toggle. Changing the selection,
+     closing the pane or the window stops and frees it. Nothing plays until clicked.
+2. **Name** (title, wraps, selectable) with the small type icon, and the type description below it.
+3. **Details** group — label left (dim), value right, like Explorer:
+
+| Kind | Rows (only rows with a value are shown) |
+|---|---|
+| All | Type (description + MIME type), Size (human, plus exact bytes in the tooltip), Location (path; click opens the folder), Modified, Created, Accessed, Owner, Group, Permissions (§13.1.3), Link target (symlinks) |
+| Folder | **Items** (count of direct children, hidden files counted separately: "12 items, 3 hidden"), **Total size** (computed in the background, bounded — §13.3.4; "Calculating…" meanwhile) |
+| Image | **Dimensions** (W × H px), **Width**, **Height**, **Format** (e.g. "JPEG"), Colour depth / alpha, Camera (make + model), Date taken, Exposure, Aperture, ISO, Focal length, Orientation |
+| Video | **Duration**, **Width**, **Height**, Frame rate, **Video codec**, Video bitrate, **Audio codec**, Channels, Sample rate, Audio bitrate, **Container format**, Title (if tagged) |
+| Audio | **Duration**, Title, Artist, Album, Track, Year, Genre, **Codec**, Bitrate, **Sample rate**, **Channels**, **Format** |
+| PDF | **Pages**, Page size (e.g. "A4, 210 × 297 mm"), Title, Author, Subject, Keywords, Creator, Producer, PDF version, Document created/modified, Encrypted / Linearized |
+
+   Media/image/PDF rows appear as they are read (async); the general rows show at once.
+4. **Multiple selection:** preview = up to 3 stacked thumbnails; title "N items selected"; rows: total size,
+   counts by kind (e.g. "3 images, 1 folder"), common location (P7).
+5. **Nothing selected:** the **current folder's** details (as if it were selected) (P6).
+
+#### 13.1.3 Permissions as chips (owner: human readable, never `drwxr-xr-x`)
+
+Three rows — **Owner** (*name*), **Group** (*name*), **Others** — each with libadwaita-style pill chips
+(rounded, `card`-coloured background, dim text; screenshot 3 style) for what that class may do:
+
+| | read | write | execute |
+|---|---|---|---|
+| File | **Read** | **Write** | **Run** |
+| Folder | **List files** | **Create & delete** | **Open** |
+
+No rights → one chip **No access**. Extra bits as chips on their own row "Special" when set: **Set user ID**,
+**Set group ID**, **Sticky**. A "**You can:** Read · Write" summary row comes first (from
+`access::can-read/can-write/can-execute`, which also covers ACLs and read-only mounts). Locations without
+Unix modes (e.g. some network shares) show only the summary row. Each chip has an accessible label
+("Owner can read").
+
+### 13.2 Data sources (no new runtime processes)
+
+| What | Source (all in worker threads) |
+|---|---|
+| General | `g_file_query_info` (standard, time, unix, owner, access, thumbnail attributes) |
+| Folder items / total size | `GFileEnumerator` in a worker, bounded (§13.3.4) |
+| Image | `gdk_pixbuf_get_file_info` (header only: format, width, height) + **gexiv2** (EXIF) |
+| Video / audio | **GStreamer `GstDiscoverer`** (gstreamer-pbutils): duration, streams, caps → codec names via `gst_pb_utils_get_codec_description`, tags |
+| PDF | **poppler-glib** (`poppler_document_new_from_file`: pages, info dictionary, page size) |
+| Thumbnail | `GnomeDesktopThumbnailFactory` (x-large), shared cache |
+| Folder preview | the folder-preview feature's scan/thumb/cache pipeline, rendered at the pane size |
+| Video playback | `GtkMediaFile` (GTK's GStreamer backend, in process) |
+
+New build dependencies: `gstreamer-pbutils-1.0` (devel installed), `poppler-glib` and `gexiv2`
+(`sudo dnf install poppler-glib-devel gexiv2-devel`; both runtime libraries are already installed on Fedora
+Workstation). Each is optional at build time: a missing one only hides its rows (meson `required: false`).
+
+### 13.3 Rules
+
+1. All §4 rules. The main thread only builds widgets; every read (file info, folder counting, EXIF, discoverer,
+   poppler, thumbnails) runs in a worker with a `GCancellable`; a new selection cancels the previous reads.
+2. **Debounce:** selection changes are applied after 80 ms of quiet, so dragging a rubber band or holding an
+   arrow key through 10k files reads nothing until it stops. At most one read set in flight per window.
+3. **Hard limits:** discoverer timeout 3 s; poppler only for files ≤ 200 MB; EXIF only for images ≤ 200 MB;
+   network/FUSE (non-native) files get general rows only plus the thumbnail if it already exists (never
+   generated over the network).
+4. Folder totals: stop after 100 000 entries or 5 s ("more than 120 GB" / "at least …"), no symlink following,
+   no crossing mount points; cached per URI + mtime for the session (bounded LRU, 256 entries).
+5. Nautilus internals only in `dp_hook.c` (window tree, header bar, selection); widgets in `dp_pane.c`
+   (plain GTK/libadwaita); readers and formatting (`dp_meta.c`, `dp_format.c`) Nautilus-free and
+   unit-tested. If the hook doesn't find what it expects: one warning ("details pane disabled: …"), no
+   button, Files unchanged.
+6. Video playback never starts by itself; at most one player per process; stopped and freed on selection
+   change, pane close, tab switch, window close and feature shutdown.
+7. Never alter existing Nautilus UI: we only add the button and the pane; nothing of Files' is hidden,
+   moved (except reparenting the tab view into our paned, Phase 0) or repurposed.
+
+### 13.4 Settings keys (added to `io.github.zyrotec.NautilusUtils`)
+
+| Key | Type | Default |
+|---|---|---|
+| `details-pane-enabled` | b | true (feature on: the button exists) |
+| `details-pane-visible` | b | false (the pane itself starts closed) |
+| `details-pane-width` | i | 320 |
+
+Settings tab **"Details Pane"**: on/off switch (§9 style, Apply). Visible/width are UI state, written live.
+
+### 13.5 Decisions (owner, 2026-11-14)
+
+| # | Decision |
+|---|---|
+| P1 | Pane on the right of the folder view; toggle button next to View Options (screenshot 4). |
+| P2 | Video thumbnails play a small preview on a play-button click (if possible — it is: §13.2). |
+| P3 | Permissions human-readable, several rights shown as chips (screenshot 3). |
+| P4 | Folders with a folder preview show that rendering, not the plain icon. |
+| P5 | Must show: item count, modified, created, width, height, audio, media codec, file format, and video / image / PDF / audio properties. |
+| P6 | Nothing selected → the current folder's details. |
+| P7 | Several selected → a summary (count, stacked thumbnails, total size, counts by kind). |
+| P8 | Open/closed is global and remembered across windows and restarts. |
+| P9 | Add poppler-glib and gexiv2 as (optional) build dependencies; the owner installs the -devel packages. |
+
+### 13.6 Phases
+
+| Phase | Work | Acceptance |
+|---|---|---|
+| 0 Spike | Where the pane goes (reparent `AdwTabView` into a `GtkPaned` inside the content `AdwToolbarView`, or an alternative that keeps Files' tab view untouched); inserting the button after `NautilusViewControls` (stock and with the owner's View Options extension); **selection source** (slot/files-view property or signal, else the menu-provider trick); narrow breakpoint; Ctrl+I free; `GtkVideo` in process (codecs, teardown, no leaks under ASan); timings of discoverer / gexiv2 / poppler on the NTFS drive; rendering the folder preview at pane size. | Every question answered here; anything infeasible reported before building. |
+| 1 Core | Schema keys; `dp_format.c` (sizes, dates, durations, permission chips, codec/format names, page sizes); `dp_meta.c` readers (general, folder count/total, image, media, PDF) with cancellation and limits; fixtures (tiny JPEG with EXIF, PNG, WebM/MP4, OGG/MP3, PDF made by script); unit tests. | Tests + `check-safety.sh` pass. |
+| 2 Pane widget | `dp_pane.c`: preview, title, details groups, chips, multi/none states, video player overlay; a standalone demo binary (`tests/details-pane/demo-pane`) for the owner to look at without Files. | Owner reviews the look; ASan clean on create/destroy stress. |
+| 3 Hook | Button, pane per window, selection tracking with debounce, global visible/width state, tab switches, narrow windows, feature on/off; folder-preview rendering for folders; debug driver (`dp-toggle`, `dp-select`, `dp-dump`). | Works in an isolated Nautilus on grid + list views, many tabs/windows; smoke clean. |
+| 4 Settings tab | "Details Pane" tab (§13.4). | On/off via Apply. |
+| 5 Hardening & docs | Smoke round (toggle, select through a 10k-file folder, play/stop videos, close windows mid-read); latency probe while arrow-keying through 10k files (no frame > 16 ms late from us); `check-safety.sh`; README section + screenshot. | All PASS. |
