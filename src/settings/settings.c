@@ -18,6 +18,8 @@
  *   st-pending <key> <GVariant>    an unapplied change in the open dialog (as editing a control would)
  *   st-reset <key>                 back to the schema default
  *   st-size <width> <height>       resize the first window (narrow dialog layout)
+ *   st-diff                        log the keys the open dialog would change on Apply
+ *   st-maximize                    maximize the first window (README screenshots)
  *   st-open / st-close             open / close the settings dialog on the first window
  *   st-tab <name>                  show tab <name> of the open dialog (e.g. folder-icons)
  *   st-dump                        log the current settings */
@@ -134,6 +136,53 @@ debug_size (const char *text)
   g_message ("st: size %d x %d", w, h);
 }
 
+/* Logs every key whose pending value in the open dialog differs from the stored one. */
+static void
+debug_diff (void)
+{
+  GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+  for (guint i = 0; i < g_list_model_get_n_items (toplevels); i++)
+    {
+      g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
+      GtkWidget *dialog = st_settings_dialog_get (window);
+      GSettings *pending = dialog != NULL ? g_object_get_data (G_OBJECT (dialog), "st-settings") : NULL;
+      if (pending == NULL)
+        continue;
+      g_autoptr (GSettings) stored = nu_settings_new_delayed ();
+      g_autoptr (GSettingsSchema) schema = NULL;
+      g_object_get (pending, "settings-schema", &schema, NULL);
+      g_auto (GStrv) keys = g_settings_schema_list_keys (schema);
+      guint n = 0;
+      for (guint k = 0; keys[k] != NULL; k++)
+        {
+          g_autoptr (GVariant) a = g_settings_get_value (pending, keys[k]);
+          g_autoptr (GVariant) b = g_settings_get_value (stored, keys[k]);
+          if (!g_variant_equal (a, b))
+            {
+              g_autofree char *ta = g_variant_print (a, FALSE);
+              g_autofree char *tb = g_variant_print (b, FALSE);
+              g_message ("st: diff %s: pending %s, stored %s", keys[k], ta, tb);
+              n++;
+            }
+        }
+      g_message ("st: diff done (%u keys, has-unapplied=%d)", n, g_settings_get_has_unapplied (pending));
+      return;
+    }
+  g_message ("st: no open dialog");
+}
+
+/* Maximizes the first window (README screenshots). */
+static void
+debug_maximize (void)
+{
+  GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+  if (g_list_model_get_n_items (toplevels) == 0)
+    return;
+  g_autoptr (GtkWindow) window = g_list_model_get_item (toplevels, 0);
+  gtk_window_maximize (window);
+  g_message ("st: maximize");
+}
+
 static void
 debug_tab (const char *name)
 {
@@ -177,6 +226,10 @@ on_debug_signal (gpointer data)
     }
   else if (g_str_has_prefix (cmd, "st-size "))
     debug_size (cmd + 8);
+  else if (g_str_equal (cmd, "st-diff"))
+    debug_diff ();
+  else if (g_str_equal (cmd, "st-maximize"))
+    debug_maximize ();
   else if (g_str_has_prefix (cmd, "st-reset "))
     debug_reset (cmd + 9);
   else if (g_str_equal (cmd, "st-open"))

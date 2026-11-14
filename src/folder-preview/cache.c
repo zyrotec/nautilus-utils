@@ -599,6 +599,7 @@ build_frame (FpCache       *cache,
         n = exact ? MIN (slots, n_thumbs) : slots; /* when not exact, n_thumbs >= first + slots */
       else
         n = MIN (n_thumbs - first, slots);
+      n = MIN (n, G_N_ELEMENTS (items)); /* slots ≤ PREVIEW_SLOTS (composite.c); explicit for the analyzer */
       for (guint i = 0; i < n; i++)
         {
           FpThumb *t = g_ptr_array_index (resolved->thumbs, stacked ? (first + i) % n_thumbs : first + i);
