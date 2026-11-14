@@ -314,6 +314,46 @@ slider_row_d (GSettings  *settings,
 }
 
 /* A spin row for integer @key in [min, max] pixels (at the 64 × 64 icon size). */
+/* Snaps the slider to multiples of 16 while it moves (the icon size, PLAN.md §13.12 P16). */
+static void
+snap_16 (GtkRange *range, gpointer data)
+{
+  (void) data;
+  double v = gtk_range_get_value (range);
+  double snapped = CLAMP (round (v / 16.0) * 16.0, 16.0, 256.0);
+  if (fabs (v - snapped) > 0.01)
+    gtk_range_set_value (range, snapped);
+}
+
+/* A 16–256 px slider in steps of 16 (snapped while it moves), with a mark at every 64 px. */
+static GtkWidget *
+icon_size_row (GSettings  *settings,
+               const char *key,
+               const char *title,
+               const char *subtitle)
+{
+  GtkWidget *row = adw_action_row_new ();
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), title);
+  if (subtitle != NULL)
+    adw_action_row_set_subtitle (ADW_ACTION_ROW (row), subtitle);
+  GtkWidget *scale = gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL, 16, 256, 16);
+  gtk_scale_set_digits (GTK_SCALE (scale), 0);
+  gtk_scale_set_draw_value (GTK_SCALE (scale), TRUE);
+  gtk_scale_set_value_pos (GTK_SCALE (scale), GTK_POS_RIGHT);
+  gtk_scale_set_format_value_func (GTK_SCALE (scale), format_value, (gpointer) "px", NULL);
+  for (int v = 64; v <= 256; v += 64)
+    gtk_scale_add_mark (GTK_SCALE (scale), v, GTK_POS_BOTTOM, NULL);
+  gtk_range_set_increments (GTK_RANGE (scale), 16, 64);
+  gtk_widget_set_size_request (scale, 200, -1);
+  gtk_widget_set_valign (scale, GTK_ALIGN_CENTER);
+  gtk_accessible_update_property (GTK_ACCESSIBLE (scale), GTK_ACCESSIBLE_PROPERTY_LABEL, title, -1);
+  g_signal_connect (scale, "value-changed", G_CALLBACK (snap_16), NULL);
+  g_settings_bind_with_mapping (settings, key, gtk_range_get_adjustment (GTK_RANGE (scale)), "value",
+                                G_SETTINGS_BIND_DEFAULT, int_to_double, double_to_int, NULL, NULL);
+  adw_action_row_add_suffix (ADW_ACTION_ROW (row), scale);
+  return row;
+}
+
 static GtkWidget *
 px_row (GSettings  *settings,
         const char *key,
@@ -698,6 +738,10 @@ details_pane_page (GSettings *settings)
   adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (pane_group));
 
   GtkWidget *preview_group = group ("Preview", NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (preview_group),
+                             icon_size_row (settings, "details-pane-icon-size", "Icon Size",
+                                            "Files, folders and the front icon of a stack; pictures, videos and "
+                                            "documents fill the box"));
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (preview_group),
                              px_row (settings, "details-pane-preview-radius", "Corner Radius",
                                      "Of the box around the preview", 0, 32));
