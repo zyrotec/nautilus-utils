@@ -50,6 +50,14 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_cmpint (a->preview_stack_offset, ==, b->preview_stack_offset);
   g_assert_cmpint (a->preview_stack_padding, ==, b->preview_stack_padding);
   g_assert_cmpfloat (a->preview_border_width, ==, b->preview_border_width);
+  g_assert_cmpint (a->folder_icons_enabled, ==, b->folder_icons_enabled);
+  g_assert_cmpuint (a->n_icon_rules, ==, b->n_icon_rules);
+  for (guint i = 0; i < a->n_icon_rules; i++)
+    {
+      g_assert_cmpstr (a->icon_rules[i].name, ==, b->icon_rules[i].name);
+      g_assert_cmpstr (a->icon_rules[i].icon, ==, b->icon_rules[i].icon);
+    }
+  g_assert_cmpuint (g_strv_length ((char **) a->icon_rule_history), ==, g_strv_length ((char **) b->icon_rule_history));
   g_assert_cmpstr (a->preview_folder_icon, ==, b->preview_folder_icon);
   g_assert_cmpstr (a->preview_overlay_icon, ==, b->preview_overlay_icon);
 }
@@ -482,6 +490,51 @@ test_reset_folder_views (void)
   nu_settings_shutdown ();
 }
 
+/* Folder icon rules (PLAN.md §12.4): read as an array, one change group, history kept bounded. */
+static void
+test_icon_rules (void)
+{
+  g_autoptr (GSettingsBackend) backend = start ();
+  g_autoptr (GSettings) s = direct_settings (backend);
+  Counter counter = { 0 };
+  nu_settings_add_listener (count_listener, &counter);
+  g_assert_cmpuint (nu_settings_get ()->n_icon_rules, ==, 0);
+  g_assert_nonnull (nu_settings_get ()->icon_rule_history);
+  g_assert_null (nu_settings_get ()->icon_rule_history[0]);
+
+  g_settings_set_value (s, "folder-icon-rules",
+                        g_variant_new_parsed ("[('node_modules', '/icons/node.svg'), ('.git', '/icons/git.png')]"));
+  drain ();
+  g_assert_cmpuint (counter.last, ==, NU_CHANGED_FOLDER_ICONS);
+  const NuConfig *c = nu_settings_get ();
+  g_assert_cmpuint (c->n_icon_rules, ==, 2);
+  g_assert_cmpstr (c->icon_rules[0].name, ==, "node_modules");
+  g_assert_cmpstr (c->icon_rules[1].icon, ==, "/icons/git.png");
+  counter.calls = 0;
+  g_settings_set_boolean (s, "folder-icons-enabled", FALSE);
+  drain ();
+  g_assert_cmpuint (counter.last, ==, NU_CHANGED_FOLDER_ICONS);
+  g_assert_false (nu_settings_get ()->folder_icons_enabled);
+
+  /* History: duplicates and empty names skipped, written right away, newest NU_ICON_RULE_HISTORY_MAX kept. */
+  g_assert_true (nu_settings_remember_icon_rule_names ((const char *[]) { "a", "b", "a", "", NULL }));
+  drain ();
+  g_assert_cmpuint (g_strv_length ((char **) nu_settings_get ()->icon_rule_history), ==, 2);
+  g_assert_false (nu_settings_remember_icon_rule_names ((const char *[]) { "b", NULL }));
+  g_assert_false (nu_settings_remember_icon_rule_names (NULL));
+  for (int i = 0; i < 150; i++)
+    {
+      g_autofree char *n = g_strdup_printf ("name-%03d", i);
+      nu_settings_remember_icon_rule_names ((const char *[]) { n, NULL });
+    }
+  drain ();
+  const char *const *h = nu_settings_get ()->icon_rule_history;
+  g_assert_cmpuint (g_strv_length ((char **) h), ==, NU_ICON_RULE_HISTORY_MAX);
+  g_assert_cmpstr (h[NU_ICON_RULE_HISTORY_MAX - 1], ==, "name-149"); /* newest last */
+  g_assert_false (g_strv_contains (h, "a"));                          /* oldest dropped */
+  nu_settings_shutdown ();
+}
+
 static void
 test_missing_schema (void)
 {
@@ -493,6 +546,7 @@ test_missing_schema (void)
   NuFolderView v = { NU_VIEW_LIST, 0, 0 };
   g_assert_false (nu_settings_capture_folder_view_default (&v));
   g_assert_false (nu_settings_reset_folder_views ());
+  g_assert_false (nu_settings_remember_icon_rule_names ((const char *[]) { "x", NULL }));
   const NuConfig *d = nu_settings_defaults ();
   assert_config_equal (nu_settings_get (), d);
   /* Listeners can still be registered; they just never fire. */
@@ -611,6 +665,7 @@ main (int argc, char **argv)
   g_test_add_func ("/settings/folder-view-valid", test_folder_view_valid);
   g_test_add_func ("/settings/capture-folder-view-default", test_capture_folder_view_default);
   g_test_add_func ("/settings/reset-folder-views", test_reset_folder_views);
+  g_test_add_func ("/settings/icon-rules", test_icon_rules);
   g_test_add_func ("/settings/missing-schema", test_missing_schema);
   g_test_add_func ("/settings/without-init", test_without_init);
   g_test_add_func ("/settings/default-init-idempotent", test_default_init_idempotent);

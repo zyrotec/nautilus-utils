@@ -203,6 +203,25 @@
       <default>false</default>
       <summary>Slide the eject button in on hover or focus</summary>
     </key>
+    <!-- Folder icons by name (PLAN.md §12.4). -->
+    <key name="folder-icons-enabled" type="b">
+      <default>true</default>
+      <summary>Give folders with a rule's name the rule's icon</summary>
+    </key>
+
+    <key name="folder-icon-rules" type="a(ss)">
+      <default>[]</default>
+      <summary>Folder icon rules: (folder name, icon file path)</summary>
+      <description>Every folder whose name equals a rule's name exactly gets the rule's icon as its custom icon.
+        The path points at the copy in $XDG_DATA_HOME/nautilus-utils/folder-icons.</description>
+    </key>
+
+    <key name="folder-icon-rule-history" type="as">
+      <default>[]</default>
+      <summary>Names of removed folder icon rules (at most 100)</summary>
+      <description>Folders with these names are still checked, so icons set by a removed rule can be restored.</description>
+    </key>
+
     <key name="folder-views-enabled" type="b">
       <default>true</default>
       <summary>Remember the view type and icon size per folder</summary>

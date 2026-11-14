@@ -146,6 +146,7 @@ findings and the smoke test is clean.
 | 2 | Sidebar drives — usage bars on drive rows, OS drive named after the OS, network shares below a separator | `src/sidebar-drives/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **v1 done** (2026-11-12), pending the owner's final check |
+| 5 | Folder icons by name — every folder with a given name (e.g. `node_modules`) gets a chosen icon, as Files' own custom icon (§12) | `src/folder-icons/` | **v1 done** (2026-11-14), pending the owner's final check |
 
 Open items:
 
@@ -634,9 +635,11 @@ entry (the features keep working with their stored settings).
 
 #### 9.1.2 Settings window (GNOME HIG, libadwaita)
 
-An `AdwDialog` presented over the Nautilus window it was opened from: `AdwToolbarView` with an
-`AdwHeaderBar` holding an `AdwViewSwitcher` (one tab per feature, each an `AdwPreferencesPage`) and an
-**Apply** button (`.suggested-action`) at the header bar's end. Controls only change a pending copy of the
+An `AdwDialog` presented over the Nautilus window it was opened from: an `AdwNavigationSplitView` with an
+`AdwViewSwitcherSidebar` (one row per feature) beside the selected feature's `AdwPreferencesPage` (titled
+after it), and an **Apply** button (`.suggested-action`) at the end of the page's header bar (owner, 2026-11-14;
+was a header-bar view switcher beside Apply). Below 600 sp the
+split view collapses: the sidebar becomes a list page and picking a row opens that feature's page. Controls only change a pending copy of the
 settings (GSettings in delay-apply mode, `g_settings_delay`); **Apply** writes them
 (`g_settings_apply`) and every open Nautilus window then updates live (no restart). Apply is insensitive
 until something has changed (`has-unapplied`). Closing the dialog with unapplied changes discards them
@@ -1501,3 +1504,159 @@ xdg-document-portal unmounted the user's `/run/user/1000/doc` on exit, and every
 start ("bwrap: Can't find source path /run/user/1000/doc/by-app/…"; fixed for the user by restarting
 `xdg-document-portal.service`). Verified: after a smoke run the user's portal mount is intact and Flatpak
 apps start.
+
+
+---
+
+## 12. Feature 5 — Folder icons by name
+
+The owner (a web developer) has many `node_modules` folders and a custom icon for them; setting it on each
+folder by hand (Properties → custom icon) is a hassle. With this feature the user adds **rules**: a folder
+name and an icon. Every folder **everywhere** whose name matches a rule exactly gets that icon, applied
+**natively**: Files' own custom-icon setting is written on the folder, exactly as Properties does. Prefix
+`fi_`, log domain `folder-icons`, dir `src/folder-icons/`, branch `dev-path-icon`.
+
+### 12.1 Behaviour
+
+- **Matching:** the folder's name equals the rule's name exactly (case-sensitive, whole name):
+  `node_modules` matches `node_modules`, not `Node_Modules` or `node_modules_old`. Folders only, never files.
+  Any location Files lists (local disks, network shares, …); where a location can't store metadata (some
+  network shares, §10.7) the folder simply keeps its normal icon.
+- **Applying (native, owner I2):** Files calls our info provider for every file it lists. For a folder whose
+  name matches a rule, we read its custom icon and our marker in the background and, if needed, write
+  Files' custom icon (`metadata::custom-icon`, the attribute Properties writes; Phase 0 confirms the name
+  and format) plus our marker `metadata::nautilus-utils-icon-rule` (which rule and icon we set). Files then
+  shows the icon everywhere it shows custom icons (grid, list, path bar, Properties). It stays if the
+  extension is removed, like any custom icon.
+- **The user's own custom icons are never touched:** a folder with a custom icon but no marker of ours is
+  left alone. Only folders carrying our marker are ever updated or cleared.
+- **Changing rules:** when a rule's icon changes, is removed, or the feature is switched off, a folder we
+  marked is updated (new icon) or restored (custom icon and marker removed) the next time Files lists it.
+  Folders that are never listed again keep the last icon (they can't be found without scanning the disk).
+  If the user changed such a folder's icon by hand afterwards, only our marker is removed.
+- **Icons:** SVG or PNG files (owner I1), picked with a file chooser. The chosen file is **copied** into
+  `$XDG_DATA_HOME/nautilus-utils/folder-icons/` (content-hash name), so moving or deleting the original
+  doesn't break the folders; the custom icon points at the copy.
+- **Folder previews:** a folder with a custom icon gets no preview (§11.1 already), so rule folders show
+  only their icon.
+
+### 12.2 Settings tab "Folder Icons"
+
+- Switch row **"Icons by Folder Name"** (feature on/off).
+- Group "Rules": one row per rule — the folder name (editable entry), the icon (a preview; click to choose
+  another file), and a remove button — plus an **"Add Rule…"** button row. Duplicate names: the first rule
+  wins; the row shows a warning. Empty names are ignored.
+- Like every setting, changes wait for **Apply** (N5).
+
+### 12.3 Rules
+
+1. All §4 rules. Never block the main thread: metadata reads/writes are async (`g_file_query_info_async`,
+   `g_file_set_attributes_async`) with a `GCancellable`; the info provider only checks the name (a string
+   compare against a hash set) and queues work.
+2. Never write to a folder that doesn't match a rule or carry our marker. Never overwrite a custom icon
+   without our marker. Each folder is checked at most once per rule change (an in-memory set of handled
+   URIs, bounded) so listing a folder repeatedly costs nothing.
+3. Bounded concurrency for metadata I/O (a big tree with thousands of `node_modules` entries must not flood
+   gvfsd-metadata).
+4. Nautilus-free core (`fi_rules.c`: parsing, matching, the decide-what-to-do logic) with unit tests; the
+   GIO glue in `fi_apply.c`; the info provider in `fi_provider.c`.
+
+### 12.4 Settings keys (added to `io.github.zyrotec.NautilusUtils`)
+
+| Key | Type | Default |
+|---|---|---|
+| `folder-icons-enabled` | b | true |
+| `folder-icon-rules` | a(ss) — (folder name, stored icon file path) | [] |
+| `folder-icon-rule-history` | as — names of removed rules (restore only), max 100 | [] |
+
+### 12.5 Decisions (owner, 2026-11-14)
+
+| # | Decision |
+|---|---|
+| I1 | Icons are SVG or PNG files chosen with a file chooser. |
+| I2 | Applied **natively**: Files' own custom-icon metadata on each matching folder (not a display-time swap). |
+| I3 | Matches folders in every location Files lists (where metadata can be stored). |
+| I4 | Shown wherever Files shows custom icons (the owner asked for grid and list view; native icons also show in the path bar and Properties). |
+| I5 | Live update of folders on screen by a no-op access-time nudge (§12.7 item 3). |
+
+### 12.6 Phases
+
+| Phase | Work | Acceptance |
+|---|---|---|
+| 0 Spike | Which attribute and value format Files 51.1 reads for a folder's custom icon; whether Files picks up a custom icon written by another process while the folder is shown (or what makes it refresh); that the info provider is called for every listed folder (grid, list, search results) and how often; metadata read/write latency on ext4/btrfs, NTFS (`ntfs3`) and a network share. | Every question answered here; anything infeasible reported before building. |
+| 1 Core | Schema keys, `fi_rules.c` (parse, match, decide), icon copy store, unit tests. | Tests + `check-safety.sh` pass. |
+| 2 Apply | Info provider + async apply/restore with markers, bounded I/O, live rule changes. | Every matching folder gets the icon in grid and list view; own custom icons untouched; rule removal restores; smoke clean. |
+| 3 Settings tab | "Folder Icons" tab (§12.2). | Rules editable; Apply applies. |
+| 4 Hardening & docs | Smoke round (rules added/changed/removed while browsing a tree of many `node_modules`), `check-safety.sh`, README. | All PASS. |
+
+### 12.7 Phase 0 findings (2026-11-14, Nautilus 51.1 / GTK 4.24.1)
+
+Isolated Nautilus (own D-Bus session, private `XDG_RUNTIME_DIR`, own data/config/cache), test trees on ntfs3
+(the project drive) and tmpfs.
+
+1. **Attribute:** Files 51.1 reads `metadata::custom-icon` (a URI, e.g. `file:///…/icon.svg`; SVG works) and
+   `metadata::custom-icon-name` (a theme icon name). Writing `metadata::custom-icon` from another process
+   shows the icon natively the next time Files reads the folder's info.
+2. **No live pick-up on its own:** a folder already on screen keeps its old icon after an external metadata
+   write (gvfs metadata changes raise no file monitor event).
+3. **Refresh nudge (decision I5):** an inotify `IN_ATTRIB` event on the folder makes Files' directory
+   monitor re-read its info and show the new icon at once (verified on tmpfs and ntfs3). Measured which no-op
+   changes raise it (Phase 2, `inotifywait`): `utimensat` of **atime only** (same value, or +1 µs, with
+   `UTIME_OMIT` for mtime) raises **no** `IN_ATTRIB` (the kernel reports atime-only changes as `IN_ACCESS`,
+   which GIO ignores — the first Phase 0 run's success came from setting both times); setting atime **and**
+   mtime to their current values does, but races with concurrent writes (`npm install` filling
+   `node_modules` could see its new mtime reverted). **Chosen: `chmod` to the folder's current mode** — raises
+   `IN_ATTRIB`, changes neither times nor mode (only the inode's ctime, as with any metadata change), and is
+   only racy against a concurrent chmod. Folders we may not chmod (not ours) and non-local folders get no
+   nudge: their icon appears the next time Files lists them.
+4. **Revisiting** a folder re-reads metadata: an icon written while the folder was off screen shows on the
+   next visit.
+5. **Calls:** the info provider is called for every file Files lists (D3), so matching folders are seen in
+   grid, list and search results; `nautilus_file_info_invalidate_extension_info()` (public) makes Files call
+   it again for a file, which is how a rule change reaches folders already listed (they are tracked by weak
+   reference, bounded).
+6. The inotify nudge needs no Nautilus internals: the whole feature uses only public API
+   (`NautilusInfoProvider`, `NautilusFileInfo`, GIO metadata) — no view hook.
+
+Design refinements from the spike:
+
+- **Which folders are checked:** names in the current rules **plus** names of removed rules (kept in a
+  bounded `folder-icon-rule-history` key, max 100), so a folder we marked under a since-removed rule is
+  still found and restored. Other folder names cost one hash lookup and no I/O.
+- **Decision** (pure function, `fi_rules.c`): rule R matches the name (and the feature is on) · marker M
+  (`1;<icon uri>`) · current custom icon C / icon name N:
+  - M present, C ≠ M's icon → the user changed it: remove only M.
+  - M present, C = M's icon: R with the same icon → nothing; R with another icon → set R's icon + M;
+    no R → remove C and M (restore).
+  - No M: R and no C and no N → set R's icon + M; otherwise nothing (no rule, or the user's own icon).
+- After a write, the nudge (3) runs in a worker thread; at most `FI_MAX_INFLIGHT` (4) folders are processed
+  at once, duplicates are merged.
+- Stored icons are never deleted automatically: folders not visited since may still point at them.
+
+### 12.8 Phase results (2026-11-14)
+
+- **Phase 1:** schema keys + `nu_settings` (rules as `a(ss)`, bounded history written right away),
+  `fi_rules.c` (snapshot, markers, decision table), `nu_icon_store.c` (content-hash copies). Tests: rules,
+  markers, every row of the decision table, store (copy, dedupe, refused types/sizes, async), settings.
+  scan-build flagged the test's 4 MiB buffer as a possible leak on an assertion path; the test now writes a
+  sparse file (no buffer) instead of suppressing it. Safety: all PASS.
+- **Phase 2:** `fi_apply.c` (bounded queue, worker-thread jobs, generation per rule set, backend table with
+  the GIO implementation), `fi_provider.c`, `folder_icons.c` (settings, removed names → history, re-check of
+  recently listed folders via `nautilus_file_info_invalidate_extension_info`). The nudge was corrected to a
+  same-mode `chmod` (§12.7 item 3). Tests with an in-memory backend: apply, user icons untouched, rule icon
+  change, removal restore, feature off, hand-changed icons (marker only), errors, bounded concurrency (≤ 3
+  of 3), rule change and free while jobs run; the GIO backend without gvfs. Verified in an isolated Nautilus:
+  adding a rule turns the on-screen `node_modules` into the custom icon within ~0.1 s (grid and list view),
+  removing it restores the plain folder and leaves no metadata behind.
+- **Phase 3:** "Folder Icons" tab (§12.2): on/off, rule rows (icon preview, editable name, Choose Icon…,
+  Remove), Add Rule in the group header, invalid / duplicate names marked red; chosen icons are copied into
+  the store in a worker thread. The dialog is 720 px wide so the four tab titles fit (600 px truncated
+  them). Debug driver `st-tab <name>`.
+- **Phase 4:** smoke `icons_round` (rules added, icon changed, a second rule, feature off/on, rules removed,
+  on a tree of nested `node_modules` folders); the smoke fails unless icons were set and restored without
+  errors and **no folder keeps a custom icon or our marker** afterwards (read from the test session's own
+  gvfs metadata). `folder-icons` added to the smoke's warning check. README section.
+- Smoke (ASan, every round): `smoke-20261114-025331` **PASS** — folder icons set 7 / restored 6 (an icon change re-sets),
+  0 errors, nothing left behind; previews 70/70, 0 wrong. Safety: strict, `-fanalyzer`, scan-build,
+  ASan+UBSan, valgrind all PASS (Phase 2 fixes: a GCC -O2 null-dereference false positive in the fake
+  backend, an -fanalyzer NULL check in a test — both fixed in code, not suppressed).

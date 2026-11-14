@@ -1105,9 +1105,13 @@ debug_save_png (void)
 {
   const char *dir = g_getenv ("FP_DEBUG_DIR");
   GtkWidget *grid = first_mapped_grid ();
-  if (dir == NULL || grid == NULL)
+  /* No grid (e.g. list view): the first window of this (isolated test) instance. */
+  g_autoptr (GtkWidget) window = grid == NULL && g_list_model_get_n_items (gtk_window_get_toplevels ()) > 0
+                                   ? g_list_model_get_item (gtk_window_get_toplevels (), 0)
+                                   : NULL;
+  if (dir == NULL || (grid == NULL && window == NULL))
     return;
-  GtkRoot *root = gtk_widget_get_root (grid);
+  GtkRoot *root = grid != NULL ? gtk_widget_get_root (grid) : GTK_ROOT (window);
   GdkSurface *surface = gtk_native_get_surface (GTK_NATIVE (root)); /* borrowed */
   GdkToplevelState state = GDK_IS_TOPLEVEL (surface) ? gdk_toplevel_get_state (GDK_TOPLEVEL (surface)) : 0;
   g_message ("debug: window state suspended=%d minimized=%d focused=%d",

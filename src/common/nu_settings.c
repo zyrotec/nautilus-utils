@@ -37,6 +37,10 @@ static const NuConfig defaults = {
   .preview_stack_offset = 0,
   .preview_folder_icon = "",
   .preview_overlay_icon = "",
+  .folder_icons_enabled = TRUE,
+  .icon_rules = NULL,
+  .n_icon_rules = 0,
+  .icon_rule_history = (const char *const[]) { NULL },
 };
 
 /* Key name → group reported to listeners. */
@@ -77,6 +81,9 @@ static const struct
   { "folder-preview-stack-position", NU_CHANGED_PREVIEW_ICONS },
   { "folder-preview-stack-offset", NU_CHANGED_PREVIEW_ICONS },
   { "folder-preview-cycle", NU_CHANGED_PREVIEW_ICONS },
+  { "folder-icons-enabled", NU_CHANGED_FOLDER_ICONS },
+  { "folder-icon-rules", NU_CHANGED_FOLDER_ICONS },
+  { "folder-icon-rule-history", NU_CHANGED_FOLDER_ICONS },
   { "folder-preview-folder-icon", NU_CHANGED_PREVIEW_ICONS },
   { "folder-preview-overlay-icon", NU_CHANGED_PREVIEW_ICONS },
 };
@@ -97,6 +104,9 @@ typedef struct
   NuConfig          config;     /* Current values */
   char             *folder_icon;  /* Owned: storage of config.preview_folder_icon (freed by read_all/shutdown) */
   char             *overlay_icon; /* Owned: storage of config.preview_overlay_icon */
+  GVariant         *rules_value;  /* Owned: folder-icon-rules; config.icon_rules points into its strings */
+  NuIconRule       *rules;        /* Owned array (strings borrowed from @rules_value) = config.icon_rules */
+  char            **history;      /* Owned strv = config.icon_rule_history */
   GArray           *listeners;  /* Owned; of Listener */
   guint             next_id;
   NuChanged         pending;    /* Groups changed since the last notification */
@@ -221,6 +231,21 @@ read_all (void)
   g_free (ns->overlay_icon);
   ns->overlay_icon = g_settings_get_string (s, "folder-preview-overlay-icon");
   c->preview_overlay_icon = ns->overlay_icon;
+
+  c->folder_icons_enabled = g_settings_get_boolean (s, "folder-icons-enabled");
+  /* Replace the owned rule storage; the config borrows it. */
+  g_clear_pointer (&ns->rules, g_free);
+  g_clear_pointer (&ns->rules_value, g_variant_unref);
+  ns->rules_value = g_settings_get_value (s, "folder-icon-rules");
+  gsize n = g_variant_n_children (ns->rules_value);
+  ns->rules = n > 0 ? g_new0 (NuIconRule, n) : NULL;
+  for (gsize i = 0; i < n; i++)
+    g_variant_get_child (ns->rules_value, i, "(&s&s)", &ns->rules[i].name, &ns->rules[i].icon);
+  c->icon_rules = ns->rules;
+  c->n_icon_rules = (guint) n;
+  g_strfreev (ns->history);
+  ns->history = g_settings_get_strv (s, "folder-icon-rule-history");
+  c->icon_rule_history = (const char *const *) ns->history;
 }
 
 static gboolean
@@ -310,6 +335,9 @@ nu_settings_shutdown (void)
   g_clear_pointer (&ns->listeners, g_array_unref);
   g_clear_pointer (&ns->folder_icon, g_free);
   g_clear_pointer (&ns->overlay_icon, g_free);
+  g_clear_pointer (&ns->rules, g_free);
+  g_clear_pointer (&ns->rules_value, g_variant_unref);
+  g_clear_pointer (&ns->history, g_strfreev);
   g_clear_pointer (&ns, g_free);
 }
 
@@ -372,6 +400,34 @@ nu_settings_capture_folder_view_default (const NuFolderView *files_default)
   g_settings_set_enum (batch, "folder-views-default-list-zoom", d->list_zoom);
   g_settings_set_boolean (batch, "folder-views-defaults-captured", TRUE);
   g_settings_apply (batch);
+  return TRUE;
+}
+
+gboolean
+nu_settings_remember_icon_rule_names (const char *const *names)
+{
+  if (!nu_settings_available () || names == NULL)
+    return FALSE;
+  g_auto (GStrv) old = g_settings_get_strv (ns->settings, "folder-icon-rule-history");
+  g_autoptr (GPtrArray) next = g_ptr_array_new (); /* borrowed strings from @old / @names */
+  gboolean added = FALSE;
+  for (gsize i = 0; old[i] != NULL; i++)
+    g_ptr_array_add (next, old[i]);
+  for (gsize i = 0; names[i] != NULL; i++)
+    {
+      gboolean known = *names[i] == '\0';
+      for (guint k = 0; k < next->len && !known; k++)
+        known = g_str_equal (g_ptr_array_index (next, k), names[i]);
+      if (known)
+        continue;
+      g_ptr_array_add (next, (gpointer) names[i]);
+      added = TRUE;
+    }
+  if (!added)
+    return FALSE;
+  guint drop = next->len > NU_ICON_RULE_HISTORY_MAX ? next->len - NU_ICON_RULE_HISTORY_MAX : 0;
+  g_ptr_array_add (next, NULL);
+  g_settings_set_strv (ns->settings, "folder-icon-rule-history", (const char *const *) next->pdata + drop);
   return TRUE;
 }
 

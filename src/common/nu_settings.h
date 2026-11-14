@@ -51,6 +51,15 @@ typedef enum
   NU_STACK_STEP_THREE = 1,
 } NuStackStep;
 
+/* Folder icons by name (PLAN.md §12): one rule. Strings are owned by the settings service. */
+typedef struct
+{
+  const char *name; /* Folder name to match exactly. */
+  const char *icon; /* Icon file path (the stored copy). */
+} NuIconRule;
+
+#define NU_ICON_RULE_HISTORY_MAX 100
+
 /* Folder views (PLAN.md §10). Values equal Nautilus' own view ids and zoom enums. */
 typedef enum
 {
@@ -85,6 +94,7 @@ typedef enum
                                        * -stack-padding, -border-width */
   NU_CHANGED_PREVIEW_ICONS  = 1 << 9, /* folder-preview-cycle, -folder-icon, -overlay-icon, -stack-position,
                                        * -stack-offset (nothing that changes the pictures themselves) */
+  NU_CHANGED_FOLDER_ICONS   = 1 << 10, /* folder-icons-enabled, folder-icon-rules, folder-icon-rule-history */
 } NuChanged;
 
 typedef struct
@@ -122,6 +132,10 @@ typedef struct
   const char     *preview_folder_icon;  /* Never NULL ("" = theme icon); owned by the service, valid until
                                          * the next change notification or shutdown. */
   const char     *preview_overlay_icon; /* Never NULL ("" = none); same ownership. */
+  gboolean        folder_icons_enabled;
+  const NuIconRule *icon_rules;         /* n_icon_rules entries (NULL when 0); same ownership. */
+  guint           n_icon_rules;
+  const char *const *icon_rule_history; /* NULL-terminated, never NULL; same ownership. */
 } NuConfig;
 
 typedef void (*NuSettingsListener) (NuChanged changed, gpointer user_data);
@@ -175,6 +189,11 @@ gboolean nu_settings_capture_folder_view_default (const NuFolderView *files_defa
 /* "Reset All Folder Views" (PLAN.md §10.1.3): increments folder-views-generation right away (not a pending
  * dialog setting). Returns FALSE without schema. */
 gboolean nu_settings_reset_folder_views (void);
+
+/* Adds @names (NULL-terminated; empty and duplicate names skipped) to folder-icon-rule-history right away
+ * (not a pending dialog setting), keeping the newest NU_ICON_RULE_HISTORY_MAX. Returns FALSE without
+ * schema or if nothing was added. */
+gboolean nu_settings_remember_icon_rule_names (const char *const *names);
 
 /* The built-in defaults (static, never freed). */
 const NuConfig *nu_settings_defaults (void);
