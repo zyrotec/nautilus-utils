@@ -21,6 +21,7 @@ static const char *const layout_nicks[] = { "grid", "stacked", NULL };
 static const char *const stack_step_nicks[] = { "one", "three", NULL };
 static const char *const depth_nicks[] = { "none", "blur", "transparency", "darken", NULL };
 static const char *const position_nicks[] = { "top", "centre", "bottom", NULL };
+static const char *const pane_position_nicks[] = { "right", "bottom", NULL };
 
 /* ---- GSettings ↔ property mappings (all return TRUE when @value was set) ------------------------------ */
 
@@ -663,8 +664,8 @@ folder_views_page (GSettings *settings)
   return page;
 }
 
-/* Details pane (PLAN.md §13.4): only the on/off switch; shown/hidden and width are UI state, kept as the user
- * leaves them. */
+/* Details pane (PLAN.md §13.4, §13.10). Shown/hidden and width/height are UI state, kept as the user leaves
+ * them. */
 static GtkWidget *
 details_pane_page (GSettings *settings)
 {
@@ -673,8 +674,65 @@ details_pane_page (GSettings *settings)
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (main_group),
                              switch_row (settings, "details-pane-enabled", "Details Pane",
                                          "A button next to View Options (or Alt+Shift+P) shows the selected "
-                                         "item’s preview and properties right of the folder view"));
+                                         "item’s preview and properties next to the folder view"));
   adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (main_group));
+
+  GtkWidget *pane_group = group ("Pane", NULL);
+  GtkWidget *position = enum_row (settings, "details-pane-position", "Position",
+                                  (const char *[]) { "Right", "Bottom", NULL }, pane_position_nicks);
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (position), "Bottom shows a wide strip, like Windows 7");
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group), position);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group),
+                             switch_row (settings, "details-pane-border", "Border",
+                                         "A line between the folder view and the pane"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group),
+                             px_row (settings, "details-pane-margin", "Margin",
+                                     "Space around the pane; above 0 it floats as a card", 0, 24));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group),
+                             px_row (settings, "details-pane-padding", "Padding", "Space inside the pane", 6, 36));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group),
+                             px_row (settings, "details-pane-radius", "Corner Radius", NULL, 0, 24));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group),
+                             switch_row (settings, "details-pane-header-border", "Line Under the Header Bar",
+                                         "While the pane is shown; not under the sidebar’s header"));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (pane_group));
+
+  GtkWidget *preview_group = group ("Preview", NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (preview_group),
+                             px_row (settings, "details-pane-preview-radius", "Corner Radius",
+                                     "Of the box around the preview", 0, 32));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (preview_group),
+                             px_row (settings, "details-pane-preview-margin", "Margin",
+                                     "Space around the box", 0, 32));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (preview_group));
+
+  /* The folder preview's stacked look for several selected items (P10), without border / corner radius. */
+  GtkWidget *stack_group = group ("Several Selected", "Shown as a stack, like the stacked folder previews.");
+  GtkWidget *depth = enum_row (settings, "details-pane-stack-depth-effect", "Depth Effect",
+                               (const char *[]) { "None", "Blur", "Transparency", "Darken", NULL }, depth_nicks);
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (depth), "How the cards further back look");
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group), depth);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             switch_row (settings, "details-pane-stack-shadow", "Shadow", NULL));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             switch_row (settings, "details-pane-stack-keep-aspect", "Keep Aspect Ratio",
+                                         "Show whole pictures in their own shape instead of filling the card, "
+                                         "cropped"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             switch_row (settings, "details-pane-stack-rotation", "Random Rotation",
+                                         "Tilt the cards behind the front one by a small angle"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             slider_row (settings, "details-pane-stack-fade", "Bottom Fade",
+                                         "Fade the cards out towards the bottom", 0, 100, "%"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             switch_row (settings, "details-pane-stack-card", "Card Behind Icons",
+                                         "A translucent card behind items that have no thumbnail"));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (stack_group));
+
+  /* Options of a switched-off feature can't be edited (follows the pending switch). */
+  g_settings_bind (settings, "details-pane-enabled", pane_group, "sensitive", G_SETTINGS_BIND_GET);
+  g_settings_bind (settings, "details-pane-enabled", preview_group, "sensitive", G_SETTINGS_BIND_GET);
+  g_settings_bind (settings, "details-pane-enabled", stack_group, "sensitive", G_SETTINGS_BIND_GET);
   return page;
 }
 
