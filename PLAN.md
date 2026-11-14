@@ -147,7 +147,7 @@ findings and the smoke test is clean.
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 5 | Folder icons by name — every folder with a given name (e.g. `node_modules`) gets a chosen icon, as Files' own custom icon (§12) | `src/folder-icons/` | **v1 done** (2026-11-14), pending the owner's final check |
-| 6 | Details pane — a pane right of the folder view with the selected item's preview and properties (media, image, PDF), toggled from the header bar (§13) | `src/details-pane/` | **planned** (2026-11-14), decisions P1–P9 taken; Phase 0 next |
+| 6 | Details pane — a pane right of the folder view with the selected item's preview and properties (media, image, PDF), toggled from the header bar (§13) | `src/details-pane/` | **Phase 0 done** (2026-11-14), findings §13.7; Phase 1 next |
 
 Open items:
 
@@ -1681,8 +1681,8 @@ properties. A toggle button **next to the View Options button** in the header ba
   split button with grid / list / columns / ⋮), so our button ends up right of ⋮; with stock Files it sits
   right of the split button. It follows the view controls' visibility (hidden when Files moves them to the
   bottom bar in a narrow window).
-- Keyboard shortcut **Ctrl+I** if Phase 0 confirms Files 51 doesn't use it (Alt+Return is Properties, F9 the
-  sidebar); otherwise no shortcut.
+- Keyboard shortcut **Alt+Shift+P** (Explorer's own details-pane shortcut; free in Files 51 — Ctrl+I, Alt+Return
+  are Properties, F9 the sidebar: §13.7 item 6).
 - The pane sits between the folder view and the window's right edge, below the header bar (and the tab bar),
   across all tabs of the window (it shows the active tab's selection). Default width 320 px, resizable by
   dragging its left edge (260 – 480 px); the width is remembered.
@@ -1745,7 +1745,7 @@ Unix modes (e.g. some network shares) show only the summary row. Each chip has a
 |---|---|
 | General | `g_file_query_info` (standard, time, unix, owner, access, thumbnail attributes) |
 | Folder items / total size | `GFileEnumerator` in a worker, bounded (§13.3.4) |
-| Image | `gdk_pixbuf_get_file_info` (header only: format, width, height) + **gexiv2** (EXIF) |
+| Image | **gexiv2** (width, height, MIME type and EXIF in one read, ~0.2 ms); `gdk_pixbuf_get_file_info` only for formats exiv2 can't read (SVG, …): it goes through glycin's sandboxed loaders, 7–130 ms (§13.7 item 8) |
 | Video / audio | **GStreamer `GstDiscoverer`** (gstreamer-pbutils): duration, streams, caps → codec names via `gst_pb_utils_get_codec_description`, tags |
 | PDF | **poppler-glib** (`poppler_document_new_from_file`: pages, info dictionary, page size) |
 | Thumbnail | `GnomeDesktopThumbnailFactory` (x-large), shared cache |
@@ -1810,3 +1810,67 @@ Settings tab **"Details Pane"**: on/off switch (§9 style, Apply). Visible/width
 | 3 Hook | Button, pane per window, selection tracking with debounce, global visible/width state, tab switches, narrow windows, feature on/off; folder-preview rendering for folders; debug driver (`dp-toggle`, `dp-select`, `dp-dump`). | Works in an isolated Nautilus on grid + list views, many tabs/windows; smoke clean. |
 | 4 Settings tab | "Details Pane" tab (§13.4). | On/off via Apply. |
 | 5 Hardening & docs | Smoke round (toggle, select through a 10k-file folder, play/stop videos, close windows mid-read); latency probe while arrow-keying through 10k files (no frame > 16 ms late from us); `check-safety.sh`; README section + screenshot. | All PASS. |
+
+### 13.7 Phase 0 findings (2026-11-14, Nautilus 51.1 / GTK 4.24.1 / libadwaita 1.10)
+
+Throwaway spike module run in an isolated Nautilus (own D-Bus session, private `XDG_RUNTIME_DIR`, own
+data/config, memory GSettings; the owner's nautilus-python extensions loaded as usual), plus a standalone
+timing program on the project drive (NTFS via `ntfs3`).
+
+1. **Header bar:** the header's `NautilusViewControls` (inside `NautilusToolbar` → `AdwHeaderBar`) sits in a
+   plain `GtkBox` (the header bar's end box). `gtk_widget_insert_after (button, box, view_controls)` puts our
+   button directly right of it (x 810 vs. view controls 658–804 at 890 px). The owner's View Options (⋮) is
+   inside the view controls (the other extension adds `MyComputerToggleButton` + a ⋮ `GtkMenuButton` and
+   hides the stock `AdwSplitButton`), so the button lands right of ⋮ as asked. A second
+   `NautilusViewControls` lives in the bottom `GtkActionBar` (narrow mode): we only use the one inside
+   `NautilusToolbar`.
+2. **Narrow windows:** binding the button's `visible` to the header view controls' `visible` hides it at
+   560 px and shows it again at 1200 px (Files' breakpoint toggles `show-view-controls`). The pane follows the
+   same flag.
+3. **Pane placement:** the window's content `AdwToolbarView` has the `AdwTabView` as its content. Moving the tab
+   view into a `GtkPaned` [tab view | pane] (ref, `adw_toolbar_view_set_content (NULL)`, set the paned) works:
+   the tab bar and header stay full width above, the pane starts below them (y 46 = header height), new tab /
+   switch / close tabs, view-mode switch and selection keep working, no warnings. Moving it back (feature off)
+   also works. Files' views get `notify::root` during the move, so it is done **once per window** (and undone
+   once on feature off); showing/hiding the pane only hides the paned's end child.
+4. **Selection source:** `NautilusWindowSlot` has a `selection` property (`gpointer`, a list of unknown
+   ownership — not read) that notifies on every change, once per change (select one, select all, unselect,
+   tab close). We use that notification as the **trigger** and read the selection from the files view's
+   `GtkSelectionModel` (public GTK API): `NautilusListBase:model` (a `NautilusViewModel`, the same object
+   across grid ↔ list switches) → selected `GtkTreeListRow` → `NautilusViewItem:file` → a `NautilusFile`,
+   which implements the public `NautilusFileInfo`. Active tab: `NautilusWindow:active-slot` (notify).
+5. **Owner's Column View:** the other extension's Miller columns are its own widgets inside the slot
+   (`MillerCanvas`, `MyComputerColumn` list views), not Nautilus' model. While it is shown, the pane shows what
+   Files' own selection reports (that extension mirrors some of it, `native_selection.py`); anything else is
+   that extension's view and out of scope.
+6. **Shortcut:** Ctrl+I is taken (`view.properties`, like Alt+Return), F9 is the sidebar, Shift+Ctrl+I invert
+   selection. **Alt+Shift+P** is free (no app accelerator, no shortcut controller in the window) → chosen.
+7. **Video:** `GtkMediaFile` + `GtkPicture` in the pane, muted + looping: prepared and playing after 2 s at the
+   real 1920 × 1080 (H.264 + AAC, MP4), no errors; pausing and removing it is clean. GTK links GStreamer
+   directly, so nothing extra is needed. Leak check under ASan follows in the Phase 5 smoke.
+8. **Readers (NTFS, second run, worker thread):**
+
+| Reader | File | Time | Result |
+|---|---|---|---|
+| gexiv2 | 4000 × 3000 JPEG with EXIF | 0.2 ms | size, MIME, Canon EOS R6, 1/250 s, F2.8, ISO 400 |
+| gexiv2 | 800 × 600 PNG | 0.1 ms | size, MIME |
+| gexiv2 | SVG | — | not supported → pixbuf |
+| gdk-pixbuf `get_file_info` | JPEG / PNG / SVG | 80–130 / 7 / 86 ms | glycin's sandboxed loaders: fallback only |
+| poppler | 1-page PDF | 1.2 ms | pages, 595 × 842 pt (A4), producer, PDF-1.4 |
+| GstDiscoverer | 5 s WebM (VP8 + Vorbis) | 32–89 ms | WebM, VP8 1280 × 720 30 fps, Vorbis 1 ch 44.1 kHz 80 kb/s |
+| GstDiscoverer | 6 s MP4 (H.264 + AAC) | 221–333 ms | Quicktime, H.264 (Constrained Baseline) 1920 × 1080 25 fps 7.06 Mb/s, AAC |
+| GstDiscoverer | 7 s OGG Vorbis | 6–8 ms | Ogg, Vorbis |
+
+   Codec names come straight from `gst_pb_utils_get_codec_description` ("H.264 (Constrained Baseline
+   Profile)", "MPEG-4 AAC"); the container "Quicktime" is shown as the file's format from the MIME type
+   ("MP4 video") instead. VP8 in WebM reports bitrate 0 → the row is hidden (or estimated from size ÷
+   duration, marked "≈"). All well inside the 3 s discoverer limit; one discoverer per worker, reused.
+9. **Folder preview at pane size:** `fp_cache_get_frame_async` takes any `frame_px`, and the decor/eligibility
+   code is in folder-preview's view hook; the pane needs one new folder-preview entry point
+   (`fp_view_hook_render_folder (GFile *, GtkIconPaintable *, int size, int scale)` → an `FpFolderPaintable`
+   that fills itself) so it uses exactly the grid's look. Source thumbnails are 256 px ("large"), so a
+   single photo at the pane's ~256 px logical size on a 2× screen is slightly soft; acceptable (folder
+   thumbnails stay small in Explorer too). Verified visually in Phase 3.
+
+Nothing infeasible. Plan changes from the spike: shortcut Alt+Shift+P (item 6), gexiv2 for image size (item
+8), selection trigger + model (item 4), reparent once per window (item 3).
