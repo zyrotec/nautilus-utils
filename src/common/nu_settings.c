@@ -44,6 +44,21 @@ static const NuConfig defaults = {
   .details_pane_enabled = TRUE,
   .details_pane_visible = FALSE,
   .details_pane_width = 320,
+  .details_pane_height = 220,
+  .details_pane_position = NU_PANE_RIGHT,
+  .details_pane_border = TRUE,
+  .details_pane_margin = 0,
+  .details_pane_padding = 18,
+  .details_pane_radius = 0,
+  .details_pane_header_border = FALSE,
+  .details_pane_preview_radius = 12,
+  .details_pane_preview_margin = 0,
+  .details_pane_stack_depth = NU_DEPTH_BLUR,
+  .details_pane_stack_shadow = TRUE,
+  .details_pane_stack_rotation = TRUE,
+  .details_pane_stack_keep_aspect = TRUE,
+  .details_pane_stack_fade = 0,
+  .details_pane_stack_card = TRUE,
 };
 
 /* Key name → group reported to listeners. */
@@ -92,6 +107,21 @@ static const struct
   { "details-pane-enabled", NU_CHANGED_DETAILS_PANE },
   { "details-pane-visible", NU_CHANGED_DP_STATE },
   { "details-pane-width", NU_CHANGED_DP_STATE },
+  { "details-pane-height", NU_CHANGED_DP_STATE },
+  { "details-pane-position", NU_CHANGED_DP_LOOK },
+  { "details-pane-border", NU_CHANGED_DP_LOOK },
+  { "details-pane-margin", NU_CHANGED_DP_LOOK },
+  { "details-pane-padding", NU_CHANGED_DP_LOOK },
+  { "details-pane-radius", NU_CHANGED_DP_LOOK },
+  { "details-pane-header-border", NU_CHANGED_DP_LOOK },
+  { "details-pane-preview-radius", NU_CHANGED_DP_LOOK },
+  { "details-pane-preview-margin", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-depth-effect", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-shadow", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-rotation", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-keep-aspect", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-fade", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-card", NU_CHANGED_DP_LOOK },
 };
 
 typedef struct
@@ -257,6 +287,26 @@ read_all (void)
   c->details_pane_visible = g_settings_get_boolean (s, "details-pane-visible");
   c->details_pane_width = CLAMP (g_settings_get_int (s, "details-pane-width"), NU_DETAILS_PANE_WIDTH_MIN,
                                  NU_DETAILS_PANE_WIDTH_MAX);
+  c->details_pane_height = CLAMP (g_settings_get_int (s, "details-pane-height"), NU_DETAILS_PANE_HEIGHT_MIN,
+                                  NU_DETAILS_PANE_HEIGHT_MAX);
+  int pane_position = g_settings_get_enum (s, "details-pane-position");
+  c->details_pane_position = pane_position == NU_PANE_BOTTOM ? NU_PANE_BOTTOM : NU_PANE_RIGHT;
+  c->details_pane_border = g_settings_get_boolean (s, "details-pane-border");
+  /* The schema ranges keep the integers in range. */
+  c->details_pane_margin = g_settings_get_int (s, "details-pane-margin");
+  c->details_pane_padding = g_settings_get_int (s, "details-pane-padding");
+  c->details_pane_radius = g_settings_get_int (s, "details-pane-radius");
+  c->details_pane_header_border = g_settings_get_boolean (s, "details-pane-header-border");
+  c->details_pane_preview_radius = g_settings_get_int (s, "details-pane-preview-radius");
+  c->details_pane_preview_margin = g_settings_get_int (s, "details-pane-preview-margin");
+  int sdepth = g_settings_get_enum (s, "details-pane-stack-depth-effect");
+  c->details_pane_stack_depth = (sdepth >= NU_DEPTH_NONE && sdepth <= NU_DEPTH_DARKEN)
+                                  ? (NuDepthEffect) sdepth : defaults.details_pane_stack_depth;
+  c->details_pane_stack_shadow = g_settings_get_boolean (s, "details-pane-stack-shadow");
+  c->details_pane_stack_rotation = g_settings_get_boolean (s, "details-pane-stack-rotation");
+  c->details_pane_stack_keep_aspect = g_settings_get_boolean (s, "details-pane-stack-keep-aspect");
+  c->details_pane_stack_fade = g_settings_get_int (s, "details-pane-stack-fade");
+  c->details_pane_stack_card = g_settings_get_boolean (s, "details-pane-stack-card");
 }
 
 static gboolean
@@ -463,6 +513,17 @@ nu_settings_set_details_pane_state (gboolean visible,
     g_settings_set_boolean (ns->settings, "details-pane-visible", visible);
   if (g_settings_get_int (ns->settings, "details-pane-width") != width)
     g_settings_set_int (ns->settings, "details-pane-width", width);
+  return TRUE;
+}
+
+gboolean
+nu_settings_set_details_pane_height (int height)
+{
+  if (!nu_settings_available ())
+    return FALSE;
+  height = CLAMP (height, NU_DETAILS_PANE_HEIGHT_MIN, NU_DETAILS_PANE_HEIGHT_MAX);
+  if (g_settings_get_int (ns->settings, "details-pane-height") != height)
+    g_settings_set_int (ns->settings, "details-pane-height", height);
   return TRUE;
 }
 

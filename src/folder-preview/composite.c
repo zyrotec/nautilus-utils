@@ -123,14 +123,11 @@ fp_composite_tilt (guint seed)
   return unit (seed, 0x9e3779b9U) * FRAME_MAX_TILT_DEG;
 }
 
-/* Decodes @path with GTK's thread-safe loader into a new cairo image surface (caller owns; destroy with
- * cairo_surface_destroy), or NULL if it can't be read, decoded, or is unreasonably large. */
+/* Copies @texture (borrowed) into a new cairo image surface (caller owns; destroy with cairo_surface_destroy),
+ * or NULL if it is unreasonably large. */
 static cairo_surface_t *
-load_surface (const char *path)
+texture_surface (GdkTexture *texture)
 {
-  g_autoptr (GdkTexture) texture = gdk_texture_new_from_filename (path, NULL);
-  if (texture == NULL)
-    return NULL;
   int w = gdk_texture_get_width (texture);
   int h = gdk_texture_get_height (texture);
   if (w <= 0 || h <= 0 || w > MAX_SOURCE_PX || h > MAX_SOURCE_PX)
@@ -150,6 +147,15 @@ load_surface (const char *path)
                                         (gsize) cairo_image_surface_get_stride (surface));
   cairo_surface_mark_dirty (surface);
   return surface;
+}
+
+/* Decodes @path with GTK's thread-safe loader into a new cairo image surface (caller owns; destroy with
+ * cairo_surface_destroy), or NULL if it can't be read, decoded, or is unreasonably large. */
+static cairo_surface_t *
+load_surface (const char *path)
+{
+  g_autoptr (GdkTexture) texture = gdk_texture_new_from_filename (path, NULL);
+  return texture != NULL ? texture_surface (texture) : NULL;
 }
 
 void
@@ -511,7 +517,8 @@ fp_composite_frame (const FpStyle         *style,
   for (guint k = 0; k < n_items; k++)
     {
       guint i = stacked ? n_items - 1 - k : k;
-      cairo_surface_t *img = items[i].path != NULL ? load_surface (items[i].path) : NULL; /* owned */
+      cairo_surface_t *img = items[i].texture != NULL ? texture_surface (items[i].texture)
+                             : items[i].path != NULL ? load_surface (items[i].path) : NULL; /* owned */
       if (items[i].path != NULL && img == NULL && n_unreadable != NULL)
         (*n_unreadable)++;
       double sx, sy, sw, sh;

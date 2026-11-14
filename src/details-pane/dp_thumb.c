@@ -100,6 +100,17 @@ dp_thumb_load_finish (GAsyncResult  *result,
   return g_task_propagate_pointer (G_TASK (result), error);
 }
 
+char *
+dp_thumb_find_existing (const char *uri,
+                        guint64     mtime)
+{
+  Job job = { .uri = (char *) uri, .content_type = NULL, .mtime = (time_t) mtime, .allow_generate = FALSE };
+  g_mutex_lock (&lock);
+  char *path = best_path (&job, NULL); /* allow_generate FALSE: lookups only */
+  g_mutex_unlock (&lock);
+  return path;
+}
+
 void
 dp_thumb_shutdown (void)
 {

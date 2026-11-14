@@ -22,6 +22,11 @@ void        dp_thumb_load_async  (const char          *uri,
 GdkTexture *dp_thumb_load_finish (GAsyncResult  *result,
                                   GError       **error);
 
+/* Worker threads only (takes the factory lock): path of an existing x-large or large thumbnail of @uri, or NULL.
+ * Never generates. Caller owns the string. */
+char *dp_thumb_find_existing (const char *uri,
+                              guint64     mtime);
+
 /* Drops the factories (running loads keep their own refs). Main thread. */
 void dp_thumb_shutdown (void);
 

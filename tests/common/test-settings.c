@@ -61,6 +61,21 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_cmpint (a->details_pane_enabled, ==, b->details_pane_enabled);
   g_assert_cmpint (a->details_pane_visible, ==, b->details_pane_visible);
   g_assert_cmpint (a->details_pane_width, ==, b->details_pane_width);
+  g_assert_cmpint (a->details_pane_height, ==, b->details_pane_height);
+  g_assert_cmpint (a->details_pane_position, ==, b->details_pane_position);
+  g_assert_cmpint (a->details_pane_border, ==, b->details_pane_border);
+  g_assert_cmpint (a->details_pane_margin, ==, b->details_pane_margin);
+  g_assert_cmpint (a->details_pane_padding, ==, b->details_pane_padding);
+  g_assert_cmpint (a->details_pane_radius, ==, b->details_pane_radius);
+  g_assert_cmpint (a->details_pane_header_border, ==, b->details_pane_header_border);
+  g_assert_cmpint (a->details_pane_preview_radius, ==, b->details_pane_preview_radius);
+  g_assert_cmpint (a->details_pane_preview_margin, ==, b->details_pane_preview_margin);
+  g_assert_cmpint (a->details_pane_stack_depth, ==, b->details_pane_stack_depth);
+  g_assert_cmpint (a->details_pane_stack_shadow, ==, b->details_pane_stack_shadow);
+  g_assert_cmpint (a->details_pane_stack_rotation, ==, b->details_pane_stack_rotation);
+  g_assert_cmpint (a->details_pane_stack_keep_aspect, ==, b->details_pane_stack_keep_aspect);
+  g_assert_cmpint (a->details_pane_stack_fade, ==, b->details_pane_stack_fade);
+  g_assert_cmpint (a->details_pane_stack_card, ==, b->details_pane_stack_card);
   g_assert_cmpstr (a->preview_folder_icon, ==, b->preview_folder_icon);
   g_assert_cmpstr (a->preview_overlay_icon, ==, b->preview_overlay_icon);
 }
@@ -269,6 +284,12 @@ test_each_group (void)
     { "folder-preview-cycle", NU_CHANGED_PREVIEW_ICONS },
     { "details-pane-enabled", NU_CHANGED_DETAILS_PANE },
     { "details-pane-visible", NU_CHANGED_DP_STATE },
+    { "details-pane-border", NU_CHANGED_DP_LOOK },
+    { "details-pane-header-border", NU_CHANGED_DP_LOOK },
+    { "details-pane-stack-shadow", NU_CHANGED_DP_LOOK },
+    { "details-pane-stack-rotation", NU_CHANGED_DP_LOOK },
+    { "details-pane-stack-keep-aspect", NU_CHANGED_DP_LOOK },
+    { "details-pane-stack-card", NU_CHANGED_DP_LOOK },
   };
   g_autoptr (GSettingsBackend) backend = start ();
   g_autoptr (GSettings) s = direct_settings (backend);
@@ -564,6 +585,22 @@ test_details_pane_state (void)
   g_assert_true (nu_settings_set_details_pane_state (FALSE, 1));
   drain ();
   g_assert_cmpint (nu_settings_get ()->details_pane_width, ==, NU_DETAILS_PANE_WIDTH_MIN);
+
+  /* v2 (§13.10): bottom height; position and look values are read. */
+  counter.calls = 0;
+  g_assert_true (nu_settings_set_details_pane_height (5000));
+  drain ();
+  g_assert_cmpuint (counter.last, ==, NU_CHANGED_DP_STATE);
+  g_assert_cmpint (nu_settings_get ()->details_pane_height, ==, NU_DETAILS_PANE_HEIGHT_MAX);
+  g_autoptr (GSettings) s = direct_settings (backend);
+  g_settings_set_enum (s, "details-pane-position", NU_PANE_BOTTOM);
+  g_settings_set_int (s, "details-pane-margin", 8);
+  g_settings_set_enum (s, "details-pane-stack-depth-effect", NU_DEPTH_DARKEN);
+  drain ();
+  g_assert_cmpuint (counter.last, ==, NU_CHANGED_DP_LOOK);
+  g_assert_cmpint (nu_settings_get ()->details_pane_position, ==, NU_PANE_BOTTOM);
+  g_assert_cmpint (nu_settings_get ()->details_pane_margin, ==, 8);
+  g_assert_cmpint (nu_settings_get ()->details_pane_stack_depth, ==, NU_DEPTH_DARKEN);
   nu_settings_shutdown ();
 }
 
@@ -580,6 +617,7 @@ test_missing_schema (void)
   g_assert_false (nu_settings_reset_folder_views ());
   g_assert_false (nu_settings_remember_icon_rule_names ((const char *[]) { "x", NULL }));
   g_assert_false (nu_settings_set_details_pane_state (TRUE, 300));
+  g_assert_false (nu_settings_set_details_pane_height (300));
   const NuConfig *d = nu_settings_defaults ();
   assert_config_equal (nu_settings_get (), d);
   /* Listeners can still be registered; they just never fire. */
