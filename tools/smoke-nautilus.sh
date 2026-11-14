@@ -300,11 +300,18 @@ dp_round() {
   dp_expect 'preview=stack'
   cmd "st-set details-pane-margin 10" 0.5; cmd "st-set details-pane-radius 14" 0.5
   cmd "st-set details-pane-header-border true" 1; cmd dp-dump 0.3; cmd "dp-png $LOG/dp-floating.png" 1
+  # v3 (§13.12): icon size, snug media box, the Windows 7 summary at the bottom.
+  cmd "st-set details-pane-icon-size 64" 1; dp_pick notes.txt 2; dp_expect 'box=icon'
+  cmd "dp-select all" 2.5; dp_expect 'preview=stack'; cmd "dp-png $LOG/dp-stack.png" 1
+  cmd "st-set details-pane-icon-size 256" 1.5; dp_expect 'preview=stack'
+  # (Snug media boxes need thumbnails, which can't be made in this session, D8: checked with the demo.)
   dp_pick photo.jpg; cmd "st-set details-pane-position 'bottom'" 2; cmd dp-dump 0.3
-  dp_expect 'Camera=Canon EOS R6'; cmd "dp-png $LOG/dp-bottom.png" 1
+  dp_expect '[Summary: Dimensions=120 × 80 px;'; dp_expect 'Camera=Canon EOS R6;'; cmd "dp-png $LOG/dp-bottom.png" 1
+  dp_pick clip.webm 2; dp_expect 'Codec=VP8;'; dp_pick pics 2; dp_expect 'Contents=2 items;'
+  cmd "dp-select all" 2.5; dp_expect '[Summary: Size='; dp_pick photo.jpg
   cmd "st-set details-pane-position 'right'" 2; cmd dp-dump 0.3
   for k in details-pane-stack-depth-effect details-pane-stack-card details-pane-margin details-pane-radius \
-           details-pane-header-border details-pane-position; do cmd "st-reset $k" 0.4; done
+           details-pane-header-border details-pane-position details-pane-icon-size; do cmd "st-reset $k" 0.4; done
   cmd "dp-png $LOG/dp-right.png" 1
   cmd "st-set details-pane-enabled false" 1; cmd dp-dump 0.3
   cmd "st-set details-pane-enabled true" 2; cmd dp-dump 0.3; dp_expect 'title="photo.jpg"'

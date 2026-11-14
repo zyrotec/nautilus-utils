@@ -1995,3 +1995,40 @@ Phases: 1 settings + compositor textures + stack renderer (tests); 2 pane look +
   - The sidebar-drives OS-menu popover leak (`gdk_popup_layout_new` under `show_os_menu`) appeared in 1 of 3 full
     runs (also once in v1): intermittent, GTK-owned, from that feature's test step — not changed here.
 - **Final:** `check-safety.sh` all PASS; full smoke `smoke-20261115-002449` **PASS** (details pane 29/29).
+
+### 13.12 v3 — icon size, snug media, a real stack, Windows 7 summary (owner, 2026-11-15)
+
+Owner (with 4 screenshots): icons and folders have different sizes → an **icon size** option (slider 16–256 px,
+steps of 16); **media fit snug** in the preview box (no inner padding); in the stack, **icons get smaller towards
+the back like media**, scaling with the icon size; **the front item sits at the bottom** (a tall picture behind
+hung below it); the **bottom position must be a short summary** like Windows 7 (small thumbnail, name, type, a
+few properties) instead of the full columns. The owner was away; Claude decided the details below (marked C).
+
+| # | Decision |
+|---|---|
+| P16 | `details-pane-icon-size` (i, 16–256, steps of 16, default 128) sizes every icon in the preview box: file icons, plain folders and folder previews, and icons in the stack (the front one; the 2nd and 3rd scale with it). |
+| P17 (C) | "Media" = anything with a thumbnail (pictures, videos, audio covers, PDFs, documents): the **box takes the thumbnail's shape** and the thumbnail fills it edge to edge (rounded by the box's radius), up to the box's maximum height; icons keep the fixed-height box. |
+| P18 | Stack: pictures sit on their card's **bottom edge** (`FpStyle.bottom_align`, pane only — folder previews and their cache keys unchanged); icon items are drawn smaller per step back (× 0.85, like the cards' inset), so they look stacked too. |
+| P19 (C) | Bottom position = **Windows 7 summary**: thumbnail box as tall as the strip, name (bold) and type next to it, then the key properties as "Label  value" pairs in columns (rows = what fits the height); no group headings, no chips (your access as one "You can" pair). Default strip height 112 px (range 72–400). Pairs by kind: size / contents, modified; image: dimensions, taken, camera; video: duration, dimensions, codec; audio: duration, artist, album; PDF: pages, title, author; several: size, contains, location. |
+
+#### 13.12 results (2026-11-15)
+
+- **Settings:** `details-pane-icon-size` (rounded to steps of 16 when read; the slider snaps); the bottom strip's
+  height range is now 72–400 px, default 112 (a summary strip, not the full columns).
+- **Compositor:** `FpStyle.bottom_align` (stacked + keep aspect: pictures sit on their card's bottom edge); test
+  `/composite/bottom-align` (front on the bottom edge, nothing below it; off = old look; separate cache key only
+  when set).
+- **Pane:** `dp_box.c` (media in their own shape, icons in a fixed box of icon size + 48 px); no inner padding
+  around media; icons, plain folders and folder previews at the icon size. Stack: front icon at the icon size,
+  each one behind ×0.85 and lifted so its top peeks out ~7 % of a card above the one in front (the folder-preview
+  cards behind are only raised 4 %, which hid smaller icons completely — seen in the first render); icon textures
+  have their card's own shape, so they aren't stretched with "Keep Aspect Ratio" off; a stack of only icons
+  (no pictures, videos, PDFs) gets a frame sized from the icon size and a box of its own height instead of being
+  stretched to the pane's width (it looked blurry). Bottom: the Windows 7 summary (`render_pairs`).
+- **Bug found in Files:** switching right → bottom stored a width as the strip's height (the paned's position
+  changed while it was still laid out the old way and counted as a drag) → ~300 px tall strip. Position changes
+  are ignored from the switch until the stored size is applied.
+- Demo renders reviewed (icon sizes 64/128/256, mixed stacks, snug photo and PDF, the strip); Files renders
+  `dp-stack.png`, `dp-bottom.png` from the smoke. The smoke's snug-media check needs thumbnails, which can't be
+  made in that session (D8): covered by the demo.
+- **Final:** `check-safety.sh` all PASS; full smoke `smoke-20261115-012226` **PASS** (details pane 35/35).
