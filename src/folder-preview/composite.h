@@ -60,6 +60,9 @@ typedef struct
   guint    view_top_radius;  /* Stacked: the stack area clips all pictures with these corner radii (px at */
   guint    view_bottom_radius; /* 64 × 64); both 0 = no clipping. */
   guint    stack_padding;    /* Stacked: space to the icon's left and right edges, px at 64 × 64 (max 20). */
+  gboolean bottom_align;     /* Stacked, keep_aspect: each picture sits on its card's bottom edge instead of its
+                              * top, so nothing behind hangs below the front card (details pane, PLAN.md §13.12;
+                              * folder previews keep FALSE). */
 } FpStyle;
 
 /* The default look: grid, white border, shadow, rotation, aspect ratio kept, 2 px corners; stacked: blur

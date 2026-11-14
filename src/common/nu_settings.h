@@ -159,6 +159,7 @@ typedef struct
   gboolean        details_pane_header_border;
   int             details_pane_preview_radius;
   int             details_pane_preview_margin;
+  int             details_pane_icon_size;   /* px, 16 … 256, a multiple of 16 */
   NuDepthEffect   details_pane_stack_depth;
   gboolean        details_pane_stack_shadow;
   gboolean        details_pane_stack_rotation;
@@ -169,8 +170,8 @@ typedef struct
 
 #define NU_DETAILS_PANE_WIDTH_MIN 260
 #define NU_DETAILS_PANE_WIDTH_MAX 480
-#define NU_DETAILS_PANE_HEIGHT_MIN 120
-#define NU_DETAILS_PANE_HEIGHT_MAX 600
+#define NU_DETAILS_PANE_HEIGHT_MIN 72
+#define NU_DETAILS_PANE_HEIGHT_MAX 400
 
 typedef void (*NuSettingsListener) (NuChanged changed, gpointer user_data);
 

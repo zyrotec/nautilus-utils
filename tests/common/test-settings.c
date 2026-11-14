@@ -70,6 +70,7 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_cmpint (a->details_pane_header_border, ==, b->details_pane_header_border);
   g_assert_cmpint (a->details_pane_preview_radius, ==, b->details_pane_preview_radius);
   g_assert_cmpint (a->details_pane_preview_margin, ==, b->details_pane_preview_margin);
+  g_assert_cmpint (a->details_pane_icon_size, ==, b->details_pane_icon_size);
   g_assert_cmpint (a->details_pane_stack_depth, ==, b->details_pane_stack_depth);
   g_assert_cmpint (a->details_pane_stack_shadow, ==, b->details_pane_stack_shadow);
   g_assert_cmpint (a->details_pane_stack_rotation, ==, b->details_pane_stack_rotation);
@@ -595,11 +596,13 @@ test_details_pane_state (void)
   g_autoptr (GSettings) s = direct_settings (backend);
   g_settings_set_enum (s, "details-pane-position", NU_PANE_BOTTOM);
   g_settings_set_int (s, "details-pane-margin", 8);
+  g_settings_set_int (s, "details-pane-icon-size", 70); /* rounded to a step of 16 */
   g_settings_set_enum (s, "details-pane-stack-depth-effect", NU_DEPTH_DARKEN);
   drain ();
   g_assert_cmpuint (counter.last, ==, NU_CHANGED_DP_LOOK);
   g_assert_cmpint (nu_settings_get ()->details_pane_position, ==, NU_PANE_BOTTOM);
   g_assert_cmpint (nu_settings_get ()->details_pane_margin, ==, 8);
+  g_assert_cmpint (nu_settings_get ()->details_pane_icon_size, ==, 64);
   g_assert_cmpint (nu_settings_get ()->details_pane_stack_depth, ==, NU_DEPTH_DARKEN);
   nu_settings_shutdown ();
 }

@@ -234,8 +234,8 @@
     </key>
 
     <key name="details-pane-height" type="i">
-      <range min="120" max="600"/>
-      <default>220</default>
+      <range min="72" max="400"/>
+      <default>112</default>
       <summary>Details pane height in pixels when at the bottom (UI state)</summary>
     </key>
 
@@ -265,6 +265,12 @@
     <key name="details-pane-header-border" type="b">
       <default>false</default>
       <summary>Draw a line under Files' header bar while the details pane is shown</summary>
+    </key>
+
+    <key name="details-pane-icon-size" type="i">
+      <range min="16" max="256"/>
+      <default>128</default>
+      <summary>Size in pixels of icons in the preview (files, folders, and the front icon of a stack); steps of 16</summary>
     </key>
 
     <key name="details-pane-preview-radius" type="i">

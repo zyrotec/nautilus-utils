@@ -44,7 +44,7 @@ static const NuConfig defaults = {
   .details_pane_enabled = TRUE,
   .details_pane_visible = FALSE,
   .details_pane_width = 320,
-  .details_pane_height = 220,
+  .details_pane_height = 112,
   .details_pane_position = NU_PANE_RIGHT,
   .details_pane_border = TRUE,
   .details_pane_margin = 0,
@@ -53,6 +53,7 @@ static const NuConfig defaults = {
   .details_pane_header_border = FALSE,
   .details_pane_preview_radius = 12,
   .details_pane_preview_margin = 0,
+  .details_pane_icon_size = 128,
   .details_pane_stack_depth = NU_DEPTH_BLUR,
   .details_pane_stack_shadow = TRUE,
   .details_pane_stack_rotation = TRUE,
@@ -117,6 +118,7 @@ static const struct
   { "details-pane-preview-radius", NU_CHANGED_DP_LOOK },
   { "details-pane-preview-margin", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-depth-effect", NU_CHANGED_DP_LOOK },
+  { "details-pane-icon-size", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-shadow", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-rotation", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-keep-aspect", NU_CHANGED_DP_LOOK },
@@ -299,6 +301,8 @@ read_all (void)
   c->details_pane_header_border = g_settings_get_boolean (s, "details-pane-header-border");
   c->details_pane_preview_radius = g_settings_get_int (s, "details-pane-preview-radius");
   c->details_pane_preview_margin = g_settings_get_int (s, "details-pane-preview-margin");
+  /* Steps of 16 (a hand-edited value in between is rounded to the nearest step). */
+  c->details_pane_icon_size = CLAMP ((g_settings_get_int (s, "details-pane-icon-size") + 8) / 16 * 16, 16, 256);
   int sdepth = g_settings_get_enum (s, "details-pane-stack-depth-effect");
   c->details_pane_stack_depth = (sdepth >= NU_DEPTH_NONE && sdepth <= NU_DEPTH_DARKEN)
                                   ? (NuDepthEffect) sdepth : defaults.details_pane_stack_depth;

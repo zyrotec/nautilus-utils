@@ -396,6 +396,40 @@ test_texture_items (void)
   g_assert_true (g_bytes_equal (pa, pc));
 }
 
+/* bottom_align (details pane, PLAN.md §13.12): a short front picture sits on the stack's bottom edge, and a
+ * tall picture behind it never reaches below it. Off: the old top alignment (folder previews unchanged). */
+static void
+test_bottom_align (void)
+{
+  FpStyle st = grid_style;
+  st.layout = FP_LAYOUT_STACKED;
+  st.rotation = FALSE;
+  st.border = FALSE;
+  st.shadow = FALSE;
+  st.depth = FP_DEPTH_NONE;
+  st.keep_aspect = TRUE;
+  guint w = 300;
+  double fx, fy, fw, fh;
+  fp_composite_card_rect (0, w, &fx, &fy, &fw, &fh);
+  FpCompositeItem items[] = { { wide_png, 1, NULL }, { blue_png, 2, NULL } }; /* front wide (short), back square */
+  st.bottom_align = TRUE;
+  g_autoptr (GdkTexture) on = fp_composite_frame (&st, items, 2, w, NULL);
+  debug_save (on, "bottom-align-on.png");
+  /* Just above the front card's bottom edge: the front picture; just below it: nothing (no blue below). */
+  assert_colour (on, fx + fw / 2, fy + fh - 3, RED, "front picture on the bottom edge");
+  assert_clear (on, fx + fw / 2, fy + fh + 3, "nothing below the front card");
+  g_autofree char *key_on = fp_style_key (&st);
+  st.bottom_align = FALSE;
+  g_autoptr (GdkTexture) off = fp_composite_frame (&st, items, 2, w, NULL);
+  assert_colour (off, fx + fw / 2, fy + 3, RED, "off: front picture at the card's top");
+  g_autofree char *key_off = fp_style_key (&st);
+  g_assert_cmpstr (key_on, !=, key_off);
+  g_assert_null (strstr (key_off, "-B"));
+  FpStyle copy = st;
+  copy.bottom_align = TRUE;
+  g_assert_false (fp_style_equal (&st, &copy));
+}
+
 static void
 test_stacked (void)
 {
@@ -792,6 +826,7 @@ main (int argc, char **argv)
   g_test_add_func ("/composite/drop-shadow-shape", test_drop_shadow_shape);
   g_test_add_func ("/composite/stress", test_stress);
   g_test_add_func ("/composite/texture-items", test_texture_items);
+  g_test_add_func ("/composite/bottom-align", test_bottom_align);
   int ret = g_test_run ();
 
   g_clear_pointer (&red_png, g_free);
