@@ -41,3 +41,15 @@
    fun:g_malloc
    fun:g_quark_init
 }
+
+# glycin (gdk-pixbuf's loader, used for SVG sizes in test-dp-meta) runs a rayon thread pool; a worker's
+# crossbeam-epoch thread-local handle is still registered when the test exits (seen intermittently).
+{
+   glycin-rayon-crossbeam-epoch-local
+   Memcheck:Leak
+   match-leak-kinds: definite
+   ...
+   fun:*crossbeam_epoch*Collector*register*
+   ...
+   fun:*rayon_core*
+}

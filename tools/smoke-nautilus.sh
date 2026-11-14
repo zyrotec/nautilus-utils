@@ -28,6 +28,9 @@
 # never changes your real settings. It also gets its own XDG_DATA_HOME (exported before dbus-run-session, so
 # gvfsd-metadata uses it too): the folder views it saves never reach your real gvfs metadata.
 #
+# Audio: the private session has no sound server, and opening ALSA's PipeWire device there hangs, which froze the
+# test Nautilus when the details pane stopped a video (PLAN.md §13.11). GStreamer uses its fake audio sink.
+#
 # Isolation: the test Nautilus runs in its own D-Bus session (dbus-run-session), so your own Nautilus
 # windows are NOT closed and the scripted driver only acts on DIR (FP_DEBUG_ROOT). A test window does
 # appear on screen. Nautilus loads build/libnautilus-utils.so via the dev symlink (README.md); the script
@@ -120,6 +123,7 @@ cp "$ROOT"/tests/details-pane/data/{photo.jpg,pic.png} "$DP_TREE/pics/"
     LSAN_OPTIONS="suppressions='$ROOT/tools/lsan.supp':print_suppressions=0" \
     G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings folder-views folder-icons details-pane" \
     GSETTINGS_BACKEND=memory GSETTINGS_SCHEMA_DIR="$ROOT/build/data" \
+    GST_PLUGIN_FEATURE_RANK="fakeaudiosink:MAX" \
     SD_DEBUG_FAKE_NETWORK="${SMOKE_FAKE_NETWORK:-}" \
     FP_DEBUG_DIR="$CMD_DIR" FP_DEBUG_ROOT="$DIR" ${SMOKE_XDG_CACHE:+"XDG_CACHE_HOME=$SMOKE_XDG_CACHE"} \
     nautilus --new-window "$DIR" >"$LOG/nautilus.log" 2>&1 &
@@ -290,6 +294,18 @@ dp_round() {
   cmd fv-new-tab 2; cmd dp-dump 0.3; cmd "dp-tab 0" 1.5; cmd dp-dump 0.3; dp_expect 'title="photo.jpg"'
   cmd "dp-width 400" 1; cmd dp-dump 0.3; cmd "dp-width 320" 1
   cmd st-open 1; cmd "st-tab details-pane" 1; cmd st-dump 0.3; cmd st-close 0.5
+  # v2 look (PLAN.md §13.10): stack options, a floating card, the header line, the bottom strip.
+  cmd "dp-select all" 2; dp_expect 'preview=stack'
+  cmd "st-set details-pane-stack-depth-effect 'darken'" 1; cmd "st-set details-pane-stack-card false" 1.5
+  dp_expect 'preview=stack'
+  cmd "st-set details-pane-margin 10" 0.5; cmd "st-set details-pane-radius 14" 0.5
+  cmd "st-set details-pane-header-border true" 1; cmd dp-dump 0.3; cmd "dp-png $LOG/dp-floating.png" 1
+  dp_pick photo.jpg; cmd "st-set details-pane-position 'bottom'" 2; cmd dp-dump 0.3
+  dp_expect 'Camera=Canon EOS R6'; cmd "dp-png $LOG/dp-bottom.png" 1
+  cmd "st-set details-pane-position 'right'" 2; cmd dp-dump 0.3
+  for k in details-pane-stack-depth-effect details-pane-stack-card details-pane-margin details-pane-radius \
+           details-pane-header-border details-pane-position; do cmd "st-reset $k" 0.4; done
+  cmd "dp-png $LOG/dp-right.png" 1
   cmd "st-set details-pane-enabled false" 1; cmd dp-dump 0.3
   cmd "st-set details-pane-enabled true" 2; cmd dp-dump 0.3; dp_expect 'title="photo.jpg"'
   # Holding an arrow key through a big folder: a selection change every 20 ms, then it settles.
@@ -471,6 +487,15 @@ if [ -n "$AUTO" ] && [ "$n_fv_checked" -eq 0 ]; then echo "FINDING: folder views
 # Details pane: every expectation held; the button was shown; nothing of ours stays while switched off.
 dp_fail="$(grep -E 'dp expect FAIL|dp: (no window|unknown command)' "$LOG/nautilus.log" || true)"
 [ -z "$dp_fail" ] || { echo "FINDING: details pane:"; echo "$dp_fail" | head -10 | sed 's/^/    | /'; fail=1; }
+dp_look_bad="$(grep -E 'dp png: FAILED' "$LOG/nautilus.log" || true)"
+n_dp_bottom="$(grep -c 'dp look: bottom=1 paned-vertical=1' "$LOG/nautilus.log" || true)"
+n_dp_line="$(grep -c 'dp look: .* header-line=1' "$LOG/nautilus.log" || true)"
+if [ -n "$AUTO" ] && { [ -n "$dp_look_bad" ] || [ "$n_dp_bottom" -eq 0 ] || [ "$n_dp_line" -eq 0 ]; }; then
+  echo "FINDING: details pane look: bottom=$n_dp_bottom header-line=$n_dp_line $dp_look_bad"; fail=1
+fi
+# Nothing of ours on Files' header bar once the pane is back to defaults (line off).
+dp_line_left="$(grep 'dp look: bottom=0' "$LOG/nautilus.log" | tail -1 | grep 'header-line=1' || true)"
+[ -z "$dp_line_left" ] || { echo "FINDING: header line left after it was switched off"; fail=1; }
 dp_off_bad="$(grep 'dp dump: enabled=0' "$LOG/nautilus.log" | grep -v 'windows=0' || true)"
 [ -z "$dp_off_bad" ] || { echo "FINDING: details pane left traces while switched off:"; echo "$dp_off_bad" | sed 's/^/    | /'; fail=1; }
 n_dp_ok="$(grep -c 'dp expect ok' "$LOG/nautilus.log" || true)"

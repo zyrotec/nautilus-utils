@@ -1928,3 +1928,70 @@ Nothing infeasible. Plan changes from the spike: shortcut Alt+Shift+P (item 6), 
   Safety: all PASS.
 - Not covered by unit tests (needs a display / Files): `dp_pane.c`, `dp_hook.c`, `dp_thumb.c` — exercised by the
   smoke round and the ASan demo stress instead.
+
+### 13.10 v2 — look options, bottom position (owner, 2026-11-14)
+
+Owner: "lets perfect it and add some settings" + screenshot of the preview box. Decisions (asked):
+
+| # | Decision |
+|---|---|
+| P10 | **Multi-selection stack = the folder-preview stacked look** (same renderer, `fp_composite_frame`), with the pane's **own copies** of its options: depth effect, shadow, rotation, keep aspect ratio, bottom fade. Not copied: border (off) and corner radius (fixed default). |
+| P11 | The translucent **card behind each stacked item** (icons of files without a thumbnail) is optional. |
+| P12 | **Preview box:** corner radius and **margin = space around the box**. |
+| P13 | "Sidebar" = **the details pane**: border on/off; margin (space around the pane, which then floats as a card), padding (inside), corner radius. |
+| P14 | **Position: right or bottom**; bottom = Windows 7 style: a wide strip, preview left, name/type next to it, the groups as columns (permissions as chips), height draggable and remembered. |
+| P15 | Optional **line under Files' header bar while the pane is shown**, only under the content header (not the navigation sidebar's). |
+
+Settings keys (pending + Apply, except the height, which is UI state like the width):
+
+| Key | Type | Default |
+|---|---|---|
+| `details-pane-position` | enum right / bottom | right |
+| `details-pane-height` | i 120–600 | 220 (UI state) |
+| `details-pane-border` | b | true |
+| `details-pane-margin` | i 0–24 | 0 |
+| `details-pane-padding` | i 6–36 | 18 |
+| `details-pane-radius` | i 0–24 | 0 |
+| `details-pane-header-border` | b | false |
+| `details-pane-preview-radius` | i 0–32 | 12 |
+| `details-pane-preview-margin` | i 0–32 | 0 |
+| `details-pane-stack-depth-effect` | enum (folder preview's) | blur |
+| `details-pane-stack-shadow` / `-rotation` / `-keep-aspect` | b | true / true / true |
+| `details-pane-stack-fade` | i 0–100 | 0 |
+| `details-pane-stack-card` | b | true |
+
+Implementation: `FpCompositeItem` gets an optional borrowed texture (used instead of a path), so icons go through
+the same renderer; the stack is rendered in a worker. The pane's look is CSS generated from the settings (one
+provider); its border replaces the paned's separator line (the paned is ours). The header line is a CSS class
+on Nautilus' content `AdwHeaderBar` (inside `NautilusToolbar`), added only while the pane is shown and removed on
+hide / feature off. Bottom: our paned turns vertical; DpPane switches to a horizontal layout.
+
+Phases: 1 settings + compositor textures + stack renderer (tests); 2 pane look + bottom layout (demo renders);
+3 hook (position, height, header line, border); 4 settings tab; 5 smoke round, safety, docs.
+
+### 13.11 v2 results (2026-11-15)
+
+- **Phase 1:** 15 schema keys (+ `nu_settings_set_details_pane_height`); `FpCompositeItem.texture` (test: a
+  texture draws exactly like its file); `dp_stack.c` renders the pane's stack with `fp_composite_frame` in a
+  worker (existing thumbnails, else the icon card made on the main thread). Settings tests pass.
+- **Phase 2:** `DpPaneStyle` (one CSS provider generated from the options; the pane draws the border that
+  replaces our paned's own line), right/bottom layouts (`dp_pane_set_layout`), demo `DP_DEMO_STYLE` /
+  `DP_DEMO_BOTTOM` renders.
+- **Phase 3:** hook: paned orientation per position, height saved, `dp-header-line` CSS class on Nautilus' content
+  `AdwHeaderBar` only while the pane is shown and the option is on (removed on hide / off / uninstall); driver
+  `dp-png` renders the test window (reviewed: floating card, bottom strip, stack).
+- **Phase 4:** Details Pane tab: groups Pane, Preview, Several Selected.
+- **Phase 5, found by the smoke:**
+  - A video stopped right after selecting another one: once a SEGV inside GstPlay's own thread, once a
+    **hang** (main thread in `gst_play_dispose` → `g_thread_join`; GstPlay's thread waiting for playsink's lock,
+    held by a thread opening ALSA's PipeWire device, which never returns in the private test session without a
+    sound server; stacks taken with `eu-stack`). The smoke session now uses GStreamer's `fakeaudiosink`
+    (`GST_PLUGIN_FEATURE_RANK`): 5 of 5 rounds clean afterwards. The pane also releases a stopped player 1.5 s
+    later instead of at once (and at once on feature shutdown). **Real-world note:** if the audio system
+    hangs, GTK's video player can freeze Files when a preview is stopped; the preview starts muted, but GTK
+    still opens the audio output.
+  - `-fanalyzer`: stack bounds made explicit; valgrind: a glycin (rayon/crossbeam) thread-local at exit,
+    suppressed as third-party.
+  - The sidebar-drives OS-menu popover leak (`gdk_popup_layout_new` under `show_os_menu`) appeared in 1 of 3 full
+    runs (also once in v1): intermittent, GTK-owned, from that feature's test step — not changed here.
+- **Final:** `check-safety.sh` all PASS; full smoke `smoke-20261115-002449` **PASS** (details pane 29/29).

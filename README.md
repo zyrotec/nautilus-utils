@@ -215,8 +215,14 @@ file or folder and its properties. Drag its left edge to resize it.
 - 🔐 **Permissions** in words, as chips: what *you* can do, then the owner, group and others —
   **Read / Write / Run** for files, **List files / Create & delete / Open** for folders — instead of
   `drwxr-xr-x`.
-- 🗂️ **Several selected:** how many, small stacked previews, total size and what kinds of files. **Nothing
-  selected:** the folder you are in.
+- 🗂️ **Several selected:** how many, a stack of the first pictures in the same look as the stacked folder
+  previews (with its own depth effect, shadow, rotation, aspect ratio and fade options), total size and what
+  kinds of files. **Nothing selected:** the folder you are in.
+- ↔️ **Right or bottom:** at the bottom it becomes a wide strip like Windows 7 — preview on the left, the
+  details in columns; drag its top edge to change the height.
+- 🎨 **Look:** border on/off, margin (the pane then floats as a card), padding and corner radius; the preview
+  box's corner radius and margin; an optional line under Files' header bar while the pane is shown (not under
+  the sidebar's header).
 - 🪟 Shown or hidden in every window at once, and remembered (also its width). Hidden while the window is too
   narrow for the header's view buttons.
 
@@ -256,7 +262,7 @@ press **Apply**; closing the window without Apply discards them.
 | 💽 **Sidebar Drives** | On/off, bar colour (accent colour, a custom colour, or a two-colour gradient), show/hide the usage bars and the size labels, slide the eject button in only on hover. |
 | 👁️ **Folder Views** | Remember the view per folder (on/off) and **Reset All Folder Views…**, which asks for confirmation and acts right away (it isn't a setting waiting for Apply). |
 | 🎨 **Folder Icons** | Icons by folder name (on/off) and the rules: folder name, icon (Choose Icon…), remove; add a rule with **+**. Invalid or duplicate names are marked red. |
-| 📋 **Details Pane** | Details pane (on/off). Whether the pane is shown and its width are kept as you leave them. |
+| 📋 **Details Pane** | On/off; position (right or bottom); border, margin, padding, corner radius; line under the header bar; preview box corner radius and margin; several selected: depth effect, shadow, keep aspect ratio, rotation, bottom fade, card behind icons. Whether the pane is shown, its width and its height are kept as you leave them. |
 
 The settings are stored with GSettings (schema `io.github.zyrotec.NautilusUtils`; inspect them with
 `gsettings list-recursively io.github.zyrotec.NautilusUtils`). If the schema isn't installed, the features
@@ -567,7 +573,8 @@ build/tests/folder-preview/bench-core DIR  # per-stage timings of the pipeline o
 | `src/details-pane/dp_format.c` | Sizes, dates, durations, media values, page sizes, permission chips |
 | `src/details-pane/dp_meta.c` | Reads general info, image (gexiv2), video/audio (GStreamer), PDF (poppler) details and folder sizes |
 | `src/details-pane/dp_thumb.c` | Large thumbnails from the shared cache (made if missing) |
-| `src/details-pane/dp_pane.c` | The pane itself (preview, video player, details, chips) |
+| `src/details-pane/dp_pane.c` | The pane itself (preview, video player, details, chips, right/bottom layouts, look) |
+| `src/details-pane/dp_stack.c` | Several selected: the folder-preview stack, rendered in a worker |
 | `src/details-pane/dp_hook.c` | **Unsupported**: hooks into Nautilus' private window (button, pane next to the tabs, selection) |
 | `src/details-pane/config.h` | Tunable constants |
 | `src/common/nu_settings.c` | Shared settings service (GSettings snapshot + change notifications) |
