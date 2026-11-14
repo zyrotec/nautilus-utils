@@ -637,8 +637,8 @@ entry (the features keep working with their stored settings).
 
 An `AdwDialog` presented over the Nautilus window it was opened from: an `AdwNavigationSplitView` with an
 `AdwViewSwitcherSidebar` (one row per feature) beside the selected feature's `AdwPreferencesPage` (titled
-after it), and an **Apply** button (`.suggested-action`, `.pill`) centred in a bottom bar under the page
-(owner, 2026-11-14; was a header-bar view switcher with Apply at the header bar's end). Below 600 sp the
+after it), and an **Apply** button (`.suggested-action`) at the end of the page's header bar (owner, 2026-11-14;
+was a header-bar view switcher beside Apply). Below 600 sp the
 split view collapses: the sidebar becomes a list page and picking a row opens that feature's page. Controls only change a pending copy of the
 settings (GSettings in delay-apply mode, `g_settings_delay`); **Apply** writes them
 (`g_settings_apply`) and every open Nautilus window then updates live (no restart). Apply is insensitive

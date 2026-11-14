@@ -1,7 +1,7 @@
 /* "Nautilus Utils Settings" dialog (PLAN.md §9.1.2, decision N5).
  *
  * AdwDialog > AdwNavigationSplitView: a sidebar (AdwViewSwitcherSidebar, one row per feature) beside the
- * selected feature's page, with an Apply button centred at the bottom. The controls are bound to a *delayed*
+ * selected feature's page, with an Apply button in its header bar. The controls are bound to a *delayed*
  * GSettings (nu_settings_new_delayed), so nothing changes until Apply (g_settings_apply). Closing with
  * unapplied changes reverts them. Narrow dialogs collapse the split view (AdwBreakpoint): the sidebar becomes
  * a list page that opens each feature. Every control has an accessible label; colours come from the theme. */
@@ -777,23 +777,18 @@ st_settings_dialog_present (GtkWidget *parent)
       adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (side_toolbar), sidebar);
       AdwNavigationPage *side_page = adw_navigation_page_new (side_toolbar, "Nautilus Utils");
 
-      /* Content pane: the selected feature's page, titled after it, with Apply centred at the bottom. */
+      /* Content pane: the selected feature's page, titled after it, with Apply at the header bar's end. */
       GtkWidget *toolbar = adw_toolbar_view_new ();
-      adw_toolbar_view_add_top_bar (ADW_TOOLBAR_VIEW (toolbar), adw_header_bar_new ());
+      GtkWidget *header = adw_header_bar_new ();
+      adw_toolbar_view_add_top_bar (ADW_TOOLBAR_VIEW (toolbar), header);
       adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar), stack);
       GtkWidget *apply = gtk_button_new_with_mnemonic ("_Apply");
       gtk_widget_add_css_class (apply, "suggested-action");
-      gtk_widget_add_css_class (apply, "pill");
       gtk_widget_set_tooltip_text (apply, "Apply the changes");
       g_object_bind_property (settings, "has-unapplied", apply, "sensitive", G_BINDING_SYNC_CREATE);
       /* The dialog keeps @settings alive (qdata below), so plain handlers with it as data are safe. */
       g_signal_connect (apply, "clicked", G_CALLBACK (on_apply), settings);
-      GtkWidget *apply_bar = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
-      gtk_widget_set_halign (apply_bar, GTK_ALIGN_CENTER);
-      gtk_widget_set_margin_top (apply_bar, 12);
-      gtk_widget_set_margin_bottom (apply_bar, 12);
-      gtk_box_append (GTK_BOX (apply_bar), apply);
-      adw_toolbar_view_add_bottom_bar (ADW_TOOLBAR_VIEW (toolbar), apply_bar);
+      adw_header_bar_pack_end (ADW_HEADER_BAR (header), apply);
       adw_dialog_set_default_widget (dialog, apply);
       AdwNavigationPage *content_page = adw_navigation_page_new (toolbar, "Folder Preview");
       g_signal_connect_object (stack, "notify::visible-child", G_CALLBACK (on_tab_changed), content_page, 0);

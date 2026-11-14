@@ -144,7 +144,7 @@ Properties → custom icon), so it shows in the grid and list view, the path bar
 
 Files' main menu (☰) gets a **Nautilus Utils Settings** entry above *Preferences*. It opens a dialog with
 a sidebar listing the features; every feature's page can switch it on or off. Changes only take effect when
-you press **Apply** (centred at the bottom); closing the dialog without Apply discards them.
+you press **Apply**; closing the dialog without Apply discards them.
 
 - **Folder Preview**: show previews on folder icons (on/off), layout (Grid or Stacked), cycle on hover,
   pictures per step and depth effect (Stacked), border, border colour, border width, shadow, keep aspect ratio, corner
