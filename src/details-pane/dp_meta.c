@@ -495,6 +495,14 @@ tag_year (const GstTagList *tags)
   return NULL;
 }
 
+static guint discover_timeout_s = DP_DISCOVER_TIMEOUT_S; /* set before any read (tests) */
+
+void
+dp_meta_set_discover_timeout (guint seconds)
+{
+  discover_timeout_s = seconds > 0 ? seconds : DP_DISCOVER_TIMEOUT_S;
+}
+
 static gpointer
 init_gst (gpointer data)
 {
@@ -508,15 +516,21 @@ read_media (DpInfo *info, GCancellable *cancellable)
   static GOnce once = G_ONCE_INIT;
   if (!GPOINTER_TO_INT (g_once (&once, init_gst, NULL)))
     return NULL;
-  g_autoptr (GstDiscoverer) dc = gst_discoverer_new (DP_DISCOVER_TIMEOUT_S * GST_SECOND, NULL);
+  g_autoptr (GstDiscoverer) dc = gst_discoverer_new (discover_timeout_s * GST_SECOND, NULL);
   if (dc == NULL || g_cancellable_is_cancelled (cancellable))
     return NULL;
-  g_autoptr (GstDiscovererInfo) di = gst_discoverer_discover_uri (dc, info->uri, NULL);
-  if (di == NULL || g_cancellable_is_cancelled (cancellable))
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GstDiscovererInfo) di = gst_discoverer_discover_uri (dc, info->uri, &error);
+  if (g_cancellable_is_cancelled (cancellable))
     return NULL;
-  GstDiscovererResult result = gst_discoverer_info_get_result (di);
+  GstDiscovererResult result = di != NULL ? gst_discoverer_info_get_result (di) : GST_DISCOVERER_ERROR;
   if (result != GST_DISCOVERER_OK && result != GST_DISCOVERER_MISSING_PLUGINS)
-    return NULL;
+    {
+      g_debug ("cannot read %s: result %d: %s", info->uri, result, error != NULL ? error->message : "-");
+      if (di == NULL || result != GST_DISCOVERER_TIMEOUT)
+        return NULL;
+      /* A timeout may still have found the streams (slow disks, valgrind): use what is there. */
+    }
 
   GList *video = gst_discoverer_info_get_video_streams (di);
   GList *audio = gst_discoverer_info_get_audio_streams (di);
@@ -800,9 +814,7 @@ dp_summary_read (GPtrArray     *files,
                  GCancellable  *cancellable,
                  GError       **error)
 {
-  g_autoptr (DpSummary) s = g_new0 (DpSummary, 1);
-  s->n_selected = n_selected;
-  s->infos = g_ptr_array_new_with_free_func ((GDestroyNotify) dp_info_unref);
+  g_autoptr (GPtrArray) infos = g_ptr_array_new_with_free_func ((GDestroyNotify) dp_info_unref);
   guint counts[DP_KIND_DOCUMENT + 1] = { 0 };
   guint64 total = 0;
   g_autofree char *location = NULL;
@@ -814,18 +826,22 @@ dp_summary_read (GPtrArray     *files,
       DpInfo *info = dp_info_read (g_ptr_array_index (files, i), cancellable, NULL);
       if (info == NULL)
         continue;
-      s->n_read++;
       counts[info->kind]++;
       if (!info->is_dir)
         total += info->size;
-      if (location == NULL && same_location)
+      if (infos->len == 0)
         location = g_strdup (info->location);
       else if (g_strcmp0 (location, info->location) != 0)
         same_location = FALSE;
-      g_ptr_array_add (s->infos, info); /* takes the ref */
+      g_ptr_array_add (infos, info); /* takes the ref */
     }
   if (g_cancellable_set_error_if_cancelled (cancellable, error))
     return NULL;
+
+  DpSummary *s = g_new0 (DpSummary, 1); /* returned: caller owns it */
+  s->n_selected = n_selected;
+  s->n_read = infos->len;
+  s->infos = g_steal_pointer (&infos);
   s->group = dp_group_new ("Selection");
   /* Partial: more were selected than read (DP_MULTI_MAX); unreadable files don't count as partial. */
   gboolean partial = MIN (files->len, DP_MULTI_MAX) < n_selected;
@@ -843,7 +859,7 @@ dp_summary_read (GPtrArray     *files,
                  partial ? g_strdup_printf ("Counted the first %u of %u", s->n_read, n_selected) : NULL);
   dp_group_take (s->group, "Location", same_location ? g_steal_pointer (&location) : g_strdup ("Several folders"),
                  NULL);
-  return g_steal_pointer (&s);
+  return s;
 }
 
 /* ------------------------------------------------------------------------------------------------ */

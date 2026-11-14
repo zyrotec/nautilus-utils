@@ -105,6 +105,10 @@ GPtrArray *dp_extra_read (DpInfo        *info,
                           GCancellable  *cancellable,
                           GError       **error);
 
+/* Time limit for reading one video/audio file (default DP_DISCOVER_TIMEOUT_S; 0 = default). Tests under
+ * valgrind need far more. Call before any read starts. */
+void dp_meta_set_discover_timeout (guint seconds);
+
 /* Folder contents (PLAN.md §13.3 rule 4). */
 typedef struct
 {

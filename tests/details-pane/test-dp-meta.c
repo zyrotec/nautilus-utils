@@ -463,6 +463,7 @@ main (int argc, char **argv)
 {
   setlocale (LC_ALL, "");
   g_test_init (&argc, &argv, NULL);
+  dp_meta_set_discover_timeout (120); /* valgrind runs ~20× slower than the 3 s production limit */
   work = tu_make_tmpdir_in (g_getenv ("G_TEST_BUILDDIR"), "dp-meta");
   const char *src = g_test_get_dir (G_TEST_DIST);
   g_autofree char *data = g_build_filename (src, "data", NULL);
