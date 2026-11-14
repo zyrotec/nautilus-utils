@@ -591,6 +591,26 @@ test_missing_schema (void)
   nu_settings_shutdown ();
 }
 
+/* Installed schema older than the module (a key missing): like a missing schema, never an abort. Only runs
+ * in the "settings-outdated-schema" test, whose GSETTINGS_SCHEMA_DIR holds such a schema. */
+static void
+test_outdated_schema (void)
+{
+  if (g_getenv ("NU_TEST_OUTDATED_SCHEMA") == NULL)
+    {
+      g_test_skip ("needs the out-of-date schema (meson test settings-outdated-schema)");
+      return;
+    }
+  g_test_expect_message ("settings", G_LOG_LEVEL_WARNING, "*is out of date (no key \"details-pane-width\")*");
+  nu_settings_init_full (NU_SETTINGS_SCHEMA_ID, NULL);
+  g_test_assert_expected_messages ();
+  g_assert_false (nu_settings_available ());
+  g_assert_null (nu_settings_new_delayed ());
+  g_assert_false (nu_settings_set_details_pane_state (TRUE, 300));
+  assert_config_equal (nu_settings_get (), nu_settings_defaults ());
+  nu_settings_shutdown ();
+}
+
 static void
 test_without_init (void)
 {
@@ -701,6 +721,7 @@ main (int argc, char **argv)
   g_test_add_func ("/settings/reset-folder-views", test_reset_folder_views);
   g_test_add_func ("/settings/icon-rules", test_icon_rules);
   g_test_add_func ("/settings/missing-schema", test_missing_schema);
+  g_test_add_func ("/settings/outdated-schema", test_outdated_schema);
   g_test_add_func ("/settings/without-init", test_without_init);
   g_test_add_func ("/settings/default-init-idempotent", test_default_init_idempotent);
   g_test_add_func ("/settings/listener-reentrancy", test_listener_reentrancy);

@@ -1921,5 +1921,10 @@ Nothing infeasible. Plan changes from the spike: shortcut Alt+Shift+P (item 6), 
   shared with the worker threads). **Open item.**
 - **Final:** `tools/check-safety.sh` all PASS (strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind,
   coverage); full smoke `smoke-20261114-201555` **PASS** (all features; details pane 26/26).
+- **Owner's first run (2026-11-14):** Files aborted at start ("schema … does not contain a key named
+  'details-pane-enabled'"): the home-folder schema (README: Development) was older than the module. Fixed for
+  everyone: `nu_settings` now checks that the installed schema has every key it reads and otherwise behaves like a
+  missing schema (defaults + one warning) — test `settings-outdated-schema` with a schema missing one key.
+  Safety: all PASS.
 - Not covered by unit tests (needs a display / Files): `dp_pane.c`, `dp_hook.c`, `dp_thumb.c` — exercised by the
   smoke round and the ASan demo stress instead.

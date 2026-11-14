@@ -327,6 +327,16 @@ nu_settings_init_full (const char       *schema_id,
       g_warning ("settings schema %s is not installed; using the defaults (see README: Settings)", schema_id);
       return;
     }
+  /* An older installed schema (module updated, schema not): reading a missing key would abort Files, so behave
+   * as if the schema were missing. */
+  for (gsize i = 0; i < G_N_ELEMENTS (key_groups); i++)
+    if (!g_settings_schema_has_key (ns->schema, key_groups[i].key))
+      {
+        g_warning ("settings schema %s is out of date (no key \"%s\"); using the defaults until it is "
+                   "reinstalled (see README: Settings)", schema_id, key_groups[i].key);
+        g_clear_pointer (&ns->schema, g_settings_schema_unref);
+        return;
+      }
   ns->settings = g_settings_new_full (ns->schema, ns->backend, NULL);
   read_all ();
   ns->changed_id = g_signal_connect (ns->settings, "changed", G_CALLBACK (on_changed), NULL);
