@@ -115,6 +115,7 @@ info_clear (DpInfo *info)
   g_clear_pointer (&info->uri, g_free);
   g_clear_pointer (&info->display_name, g_free);
   g_clear_pointer (&info->content_type, g_free);
+  g_clear_pointer (&info->mime_type, g_free);
   g_clear_pointer (&info->description, g_free);
   g_clear_pointer (&info->symlink_target, g_free);
   g_clear_object (&info->icon);
@@ -219,6 +220,7 @@ dp_info_read (GFile         *file,
   if (ct == NULL)
     ct = g_file_info_get_attribute_string (fi, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE);
   info->content_type = g_strdup (ct);
+  info->mime_type = ct != NULL ? g_content_type_get_mime_type (ct) : NULL;
   info->kind = dp_kind_for_content_type (ct, info->is_dir);
   info->description = info->is_dir ? g_strdup ("Folder") : ct != NULL ? g_content_type_get_description (ct) : NULL;
   const char *target = g_file_info_get_attribute_byte_string (fi, G_FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET);
@@ -259,8 +261,7 @@ dp_details_group (const DpInfo        *info,
   DpGroup *g = dp_group_new ("Details");
   if (info->description != NULL)
     {
-      g_autofree char *mime = info->content_type != NULL ? g_content_type_get_mime_type (info->content_type) : NULL;
-      dp_group_take (g, "Type", g_strdup (info->description), info->is_dir ? NULL : g_steal_pointer (&mime));
+      dp_group_take (g, "Type", g_strdup (info->description), info->is_dir ? NULL : g_strdup (info->mime_type));
     }
   if (info->is_dir)
     {

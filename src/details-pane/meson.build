@@ -25,8 +25,32 @@ dp_core_lib = static_library('dp-core',
   gnu_symbol_visibility: 'hidden',
 )
 
-feature_libs += [dp_core_lib]
-feature_deps += dp_core_deps
+# Plain GTK/libadwaita widgets: thumbnails and the pane itself (no Nautilus types; the demo links it too).
+dp_ui_deps = dp_core_deps + [gtk_dep, adw_dep, gnome_desktop_dep]
+dp_ui_lib = static_library('dp-ui',
+  'dp_thumb.c',
+  'dp_pane.c',
+  c_args: dp_c_args,
+  dependencies: dp_ui_deps,
+  include_directories: dp_inc,
+  link_with: dp_core_lib,
+  pic: true,
+  gnu_symbol_visibility: 'hidden',
+)
+
+# Feature entry points + the hook (the only file using Nautilus internals, PLAN.md §13.3 rule 5).
+dp_feature_lib = static_library('dp-feature',
+  'details_pane.c',
+  'dp_hook.c',
+  c_args: dp_c_args + (get_option('debug_driver') ? ['-DDP_DEBUG_DRIVER'] : []),
+  dependencies: ext_deps + dp_ui_deps,
+  include_directories: [dp_inc, nu_common_inc, include_directories('..', '../folder-preview')],
+  pic: true,
+  gnu_symbol_visibility: 'hidden',
+)
+
+feature_libs += [dp_feature_lib, dp_ui_lib, dp_core_lib]
+feature_deps += dp_ui_deps
 
 summary({
   'gexiv2 (EXIF)': gexiv2_dep.found(),

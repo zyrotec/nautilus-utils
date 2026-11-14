@@ -22,3 +22,10 @@ test_dp_meta = executable('test-dp-meta', 'test-dp-meta.c',
 )
 test('dp-meta', test_dp_meta, env: dp_test_env, protocol: 'tap', args: ['--tap'], suite: 'details-pane',
      timeout: 120)
+
+# Not a test: the pane on its own for a look (needs a display). See demo-pane.c.
+executable('demo-pane', 'demo-pane.c',
+  link_with: [dp_ui_lib, dp_core_lib],
+  dependencies: dp_ui_deps,
+  include_directories: dp_inc,
+)

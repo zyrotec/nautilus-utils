@@ -69,6 +69,8 @@ typedef struct
   char      *uri;             /* Owned. */
   char      *display_name;    /* Owned, never NULL. */
   char      *content_type;    /* Owned or NULL. */
+  char      *mime_type;       /* Owned or NULL: @content_type's MIME type (looked up in the worker: GIO's MIME
+                               * database lock can be held by other workers, PLAN.md §13.9 Phase 5). */
   char      *description;     /* Owned or NULL: "JPEG image", "Folder". */
   DpKind     kind;
   gboolean   is_dir;
