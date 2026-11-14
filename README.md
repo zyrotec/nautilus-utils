@@ -2,7 +2,7 @@
 
 # 🗂️ nautilus-utils
 
-**Extra features for GNOME Files (Nautilus): folder previews, drive usage bars, per-folder views and folder icons by name.**
+**Extra features for GNOME Files (Nautilus): folder previews, drive usage bars, per-folder views, folder icons by name and a details pane.**
 
 Shipped as one native C extension module (`libnautilus-utils.so`) with its own settings window.
 
@@ -25,6 +25,7 @@ Shipped as one native C extension module (`libnautilus-utils.so`) with its own s
   - [💽 Sidebar drives](#-sidebar-drives)
   - [👁️ Folder views](#️-folder-views)
   - [🎨 Folder icons by name](#-folder-icons-by-name)
+  - [📋 Details pane](#-details-pane)
   - [⚙️ Settings](#️-settings)
 - [📦 Installation](#-installation)
   - [✅ Requirements](#-requirements)
@@ -47,6 +48,7 @@ Shipped as one native C extension module (`libnautilus-utils.so`) with its own s
 | 💽 | **Sidebar drives** | Drives in the sidebar get a usage bar and "X free of Y", plus a row for your OS drive and your mounted network shares. |
 | 👁️ | **Folder views** | Every folder remembers its own view (grid or list) and icon size. |
 | 🎨 | **Folder icons by name** | Give every folder with a certain name (e.g. `node_modules`) its own icon, everywhere. |
+| 📋 | **Details pane** | A pane right of the folder view with the selected item's preview and properties, like Windows File Explorer. |
 | ⚙️ | **Settings** | One settings window for all features, opened from Files' main menu. |
 
 Every feature can be switched off on its own. Files keeps working normally if a Nautilus update changes
@@ -194,6 +196,43 @@ Properties.
 - 🧹 Like any custom icon, the icons stay if the extension is uninstalled: remove the rules first to restore
   the folders.
 
+### 📋 Details pane
+
+Like File Explorer's details pane: a **Details Pane** button right of *View Options* (or <kbd>Alt</kbd>
+<kbd>Shift</kbd> <kbd>P</kbd>) shows a pane right of the folder view with a large preview of the selected
+file or folder and its properties. Drag its left edge to resize it.
+
+- 🖼️ **Preview:** the file's thumbnail (made if missing, in the shared thumbnail cache, so Files benefits too),
+  or its icon. Folders show their **folder preview** (same look as in the grid) when folder previews are on.
+- ▶️ **Videos:** a play button plays a small, muted, looping preview right in the pane, with pause and sound
+  buttons. Nothing plays until you click; selecting something else stops it.
+- 📄 **Details:** type, size, location, modified, created and accessed; for folders the number of items and
+  the total size (counted in the background).
+- 🎞️ **Media:** images (width, height, format, camera, date taken, exposure, aperture, ISO, focal length),
+  video (duration, width, height, frame rate, video and audio codecs, bitrates, sample rate, channels, format),
+  audio (title, artist, album, track, year, genre, codec, bitrate, sample rate, channels) and PDF (pages, page
+  size, title, author, subject, keywords, creator, producer, PDF version, dates).
+- 🔐 **Permissions** in words, as chips: what *you* can do, then the owner, group and others —
+  **Read / Write / Run** for files, **List files / Create & delete / Open** for folders — instead of
+  `drwxr-xr-x`.
+- 🗂️ **Several selected:** how many, small stacked previews, total size and what kinds of files. **Nothing
+  selected:** the folder you are in.
+- 🪟 Shown or hidden in every window at once, and remembered (also its width). Hidden while the window is too
+  narrow for the header's view buttons.
+
+<details>
+<summary><b>⚠️ Known limitations</b></summary>
+
+- **Nautilus updates may switch the feature off.** It relies on Nautilus' private window, header bar and view
+  widgets (verified on Nautilus 51.1). If they change, it logs one warning ("details pane disabled: …") and Files
+  looks as before.
+- Network and other non-local files show the general details only (no media details, no new thumbnails).
+- EXIF details need gexiv2 0.16 and PDF details poppler-glib at build time; without them those rows are missing.
+- Another extension's own views (e.g. a column view drawn by a Python extension) only update the pane as far as
+  that extension reports its selection to Files.
+
+</details>
+
 ### ⚙️ Settings
 
 Files' main menu (☰) gets a **Nautilus Utils Settings** entry above *Preferences*. The window lists the
@@ -217,6 +256,7 @@ press **Apply**; closing the window without Apply discards them.
 | 💽 **Sidebar Drives** | On/off, bar colour (accent colour, a custom colour, or a two-colour gradient), show/hide the usage bars and the size labels, slide the eject button in only on hover. |
 | 👁️ **Folder Views** | Remember the view per folder (on/off) and **Reset All Folder Views…**, which asks for confirmation and acts right away (it isn't a setting waiting for Apply). |
 | 🎨 **Folder Icons** | Icons by folder name (on/off) and the rules: folder name, icon (Choose Icon…), remove; add a rule with **+**. Invalid or duplicate names are marked red. |
+| 📋 **Details Pane** | Details pane (on/off). Whether the pane is shown and its width are kept as you leave them. |
 
 The settings are stored with GSettings (schema `io.github.zyrotec.NautilusUtils`; inspect them with
 `gsettings list-recursively io.github.zyrotec.NautilusUtils`). If the schema isn't installed, the features
@@ -260,7 +300,8 @@ schema, so no extra step is needed for it.
 ```bash
 # 1. Build tools and libraries
 sudo dnf install git meson ninja-build gcc nautilus-devel glib2-devel gtk4-devel libadwaita-devel \
-                 gnome-desktop4-devel gdk-pixbuf2-devel cairo-devel gst-thumbnailers
+                 gnome-desktop4-devel gdk-pixbuf2-devel cairo-devel gstreamer1-plugins-base-devel \
+                 poppler-glib-devel libgexiv2-devel gst-thumbnailers
 
 # 2. Get the source and build it
 git clone https://github.com/zyrotec/nautilus-utils.git
@@ -292,7 +333,8 @@ Needs **Ubuntu 26.10** or **Debian testing / unstable** (see [Requirements](#-re
 sudo apt update
 sudo apt install git meson ninja-build gcc pkg-config \
                  libnautilus-extension-dev libglib2.0-dev libgtk-4-dev libadwaita-1-dev \
-                 libgnome-desktop-4-dev libgdk-pixbuf-2.0-dev libcairo2-dev shared-mime-info
+                 libgnome-desktop-4-dev libgdk-pixbuf-2.0-dev libcairo2-dev libgstreamer-plugins-base1.0-dev \
+                 libpoppler-glib-dev libgexiv2-dev shared-mime-info
 sudo apt install gst-thumbnailers    # optional: album covers (skip if your release doesn't have it)
 
 # 2. Get the source and build it
@@ -319,7 +361,7 @@ On Manjaro, first check that `pacman -Q nautilus` shows 51 or newer.
 # 1. Build tools and libraries (libnautilus-extension holds the extension headers on Arch)
 sudo pacman -Syu --needed base-devel git meson ninja \
                  nautilus libnautilus-extension glib2 gtk4 libadwaita gnome-desktop-4 \
-                 gdk-pixbuf2 cairo gst-thumbnailers
+                 gdk-pixbuf2 cairo gst-plugins-base poppler-glib libgexiv2 gst-thumbnailers
 
 # 2. Get the source and build it
 git clone https://github.com/zyrotec/nautilus-utils.git
@@ -521,6 +563,13 @@ build/tests/folder-preview/bench-core DIR  # per-stage timings of the pipeline o
 | `src/folder-views/fv_state.c` | Saved-value format, location kinds, zoom levels, in-memory cache |
 | `src/folder-views/view_mode_hook.c` | **Unsupported**: hooks into Nautilus' private tabs and views (switch view, zoom, detect the user's changes) |
 | `src/folder-views/config.h` | Tunable constants |
+| `src/details-pane/details_pane.c` | Details pane: set-up, tear-down, follows the settings |
+| `src/details-pane/dp_format.c` | Sizes, dates, durations, media values, page sizes, permission chips |
+| `src/details-pane/dp_meta.c` | Reads general info, image (gexiv2), video/audio (GStreamer), PDF (poppler) details and folder sizes |
+| `src/details-pane/dp_thumb.c` | Large thumbnails from the shared cache (made if missing) |
+| `src/details-pane/dp_pane.c` | The pane itself (preview, video player, details, chips) |
+| `src/details-pane/dp_hook.c` | **Unsupported**: hooks into Nautilus' private window (button, pane next to the tabs, selection) |
+| `src/details-pane/config.h` | Tunable constants |
 | `src/common/nu_settings.c` | Shared settings service (GSettings snapshot + change notifications) |
 | `src/settings/settings_dialog.c` | The "Nautilus Utils Settings" window |
 | `src/settings/folder_icons_page.c` | Its "Folder Icons" page |

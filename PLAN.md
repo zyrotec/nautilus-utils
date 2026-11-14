@@ -147,7 +147,7 @@ findings and the smoke test is clean.
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 5 | Folder icons by name — every folder with a given name (e.g. `node_modules`) gets a chosen icon, as Files' own custom icon (§12) | `src/folder-icons/` | **v1 done** (2026-11-14), pending the owner's final check |
-| 6 | Details pane — a pane right of the folder view with the selected item's preview and properties (media, image, PDF), toggled from the header bar (§13) | `src/details-pane/` | **Phase 0 done** (2026-11-14), findings §13.7; Phase 1 next |
+| 6 | Details pane — a pane right of the folder view with the selected item's preview and properties (media, image, PDF), toggled from the header bar (§13) | `src/details-pane/` | **v1 done** (2026-11-14), pending the owner's final check |
 
 Open items:
 
@@ -1874,3 +1874,52 @@ timing program on the project drive (NTFS via `ntfs3`).
 
 Nothing infeasible. Plan changes from the spike: shortcut Alt+Shift+P (item 6), gexiv2 for image size (item
 8), selection trigger + model (item 4), reparent once per window (item 3).
+
+### 13.8 Decisions during the build (deviations from §13.1–§13.4)
+
+| # | Decision |
+|---|---|
+| D1 | **Location is plain (selectable) text**, not a link: opening a folder from the pane would need more of Files' internals than the one hook file; copy works. |
+| D2 | **No colour depth / alpha row** for images: neither gexiv2 nor a header read reports it without decoding the image. |
+| D3 | **The video preview loops by hand** (seek to 0 on "ended"): `gtk_media_stream_set_loop()` leaks a GstStructure in GTK 4.24's GStreamer backend on every call (`gtk_gst_media_file_update_loop` → `gst_play_get_config`), found by the ASan stress run. |
+| D4 | **Format row = the file type's description** ("MPEG-4 video", "WebM video"); GStreamer's container name says "Quicktime" for MP4. Codecs come from `gst_pb_utils_get_codec_description`. |
+| D5 | **Several selected: stacked previews use existing thumbnails only** (no thumbnailer runs for a multi-selection); icons otherwise. |
+| D6 | Folder totals are cached per URI + mtime for the session (256 entries, cleared when full); a direct-children count is capped by the same 100 000 limit ("more than …"). |
+| D7 | **Smoke filter: fontconfig allocations count as third-party** (like Python's, §10.8): Pango caches one FcPattern per font style for the process, created by whichever label first uses it — one block per run before this feature (Files' own labels), the pane's title now. |
+| D8 | Thumbnails can't be generated inside the smoke session (the thumbnailer children inherit the ASan `LD_PRELOAD` and exit with code 1, which also writes "failed" records for the smoke's test files). The thumbnail path is verified with the demo instead (§13.9 Phase 2). |
+| D9 | `details-pane-visible` / `-width` are written right away by `nu_settings_set_details_pane_state()` (UI state, not a pending dialog setting); the dialog only has the on/off switch. |
+| D11 | **Smoke filter: Mesa's EGL allocations count as third-party**: GTK initialises EGL for the display once, the first time something needs GL — in the smoke that is the pane's first video sink (`gtk_gst_paintable_video_renderer_create_video_sink` → `eglInitialize`) — and never terminates it at exit. |
+| D12 | **Main-thread budget:** a selection's rows are built in steps — details when the info arrives, permissions one main-loop turn later, media/PDF rows and folder totals each touching only their own group — instead of rebuilding everything per read; the MIME type is looked up in the worker (GIO's MIME database lock is held by other workers while they sniff content). |
+| D13 | **Value labels aren't selectable** (only the name is): every selectable label adds focus and gesture handling, which made building the rows slow; values stay readable in tooltips where exact (sizes). |
+| D10 | Nautilus registers `NautilusFilesView` / `NautilusListBase` when it builds its first view, after the window exists: the hook looks them up when it reads a selection, not when it scans windows (found by the smoke: "no selection model" until the feature was switched off and on). |
+
+### 13.9 Phase results (2026-11-14)
+
+- **Phase 1 (core):** schema keys + `nu_settings_set_details_pane_state`; `dp_format.c` (100 % covered) and
+  `dp_meta.c` (92 %) with committed fixtures (`tests/details-pane/data/make-fixtures.sh`: JPEG with EXIF, PNG,
+  SVG, WebM, MP4, tagged OGG, 2-page PDF, broken PDF). Safety: scan-build flagged an early return holding the
+  summary (restructured); under valgrind the 3 s discoverer limit ran out (tests now set 120 s; a timed-out
+  discovery still uses the streams it found). First `tools/valgrind.supp`, third-party only (GStreamer VA
+  probing the GPU, glibc `dlopen`, GLib's quark table).
+- **Phase 2 (widget):** `dp_thumb.c`, `dp_pane.c`, `fp_view_hook_render_folder` (folder preview at pane size,
+  same look). `demo-pane` shows the pane alone, renders it to PNG (`--png`) and stress-tests it (`--stress`).
+  ASan stress (8 rounds × 10 files, show / play / destroy): no errors; one leak attributable to us found and
+  fixed (D3, GTK's `set_loop`); everything left is fontconfig/Mesa process caches.
+- **Phase 3 (hook):** `dp_hook.c`, `details_pane.c`. Found by the smoke: Nautilus' view types are registered
+  after the window exists (D10). Smoke round `dp_round` (26 checks): every file kind, play/stop/auto-stop,
+  folder preview in the pane, several / nothing selected, list view, a second tab and back, width, feature
+  off/on (nothing left), the settings tab, 150 selection changes 20 ms apart in a 10 000-file folder.
+- **Phase 4 (settings):** "Details Pane" tab with the on/off switch (D9).
+- **Phase 5 (hardening):** smoke filter refined for third-party allocations (fontconfig D7, Mesa EGL D11,
+  libc/libgirepository frames under the owner's Python extension); the round no longer closes a tab (closing
+  one makes that extension keep GTK objects alive at exit). `SMOKE_PERF=1` runs the smoke on an optimised
+  build without sanitizers for timings. README section, build dependencies (Fedora/Debian/Arch, RPM spec).
+- **Main-thread timings** (`SMOKE_PERF=1`, debug log "slow main-thread step", 4 runs): a selection update takes
+  ≤ 14 ms wall; building rows ≤ 7 ms of main-thread **CPU** per step. 0–3 steps per run (of ~60) took 17–21 ms
+  **wall** time while using only 4–7 ms of CPU — the main thread was waiting, also with thumbnail generation
+  switched off; the cause is not identified (not our CPU work; candidates: allocator or other library locks
+  shared with the worker threads). **Open item.**
+- **Final:** `tools/check-safety.sh` all PASS (strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind,
+  coverage); full smoke `smoke-20261114-201555` **PASS** (all features; details pane 26/26).
+- Not covered by unit tests (needs a display / Files): `dp_pane.c`, `dp_hook.c`, `dp_thumb.c` — exercised by the
+  smoke round and the ASan demo stress instead.

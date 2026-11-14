@@ -14,6 +14,9 @@
 # SMOKE_XDG_CACHE=DIR: give the test Nautilus its own cache dir (thumbnails + frames), e.g. the benchmark's.
 # SMOKE_FAKE_NETWORK=LABEL: show that local drive as a network share in the sidebar (exercises the network
 #   list; the smoke test never ejects anything).
+# SMOKE_PERF=1: an optimised build WITHOUT sanitizers (timings only, e.g. the details pane's main-thread steps,
+#   PLAN.md §13.9 Phase 5); sanitizer checks then find nothing by construction.
+# SMOKE_ONLY=dp (--auto only): run just the details-pane round (fast iteration on that feature).
 # SMOKE_TOGGLES=N (--auto only, default 25): switch each feature off and on N times through the settings
 #   (PLAN.md §9) and check that nothing of ours is left while off and everything comes back when on.
 #
@@ -66,18 +69,26 @@ cleanup_runtime() {
 restore_build() {
   cleanup_runtime
   echo "Restoring normal build in build/ ..."
-  meson configure build -Db_sanitize=none -Ddebug_driver=false >/dev/null && ninja -C build >/dev/null ||
-    echo "WARNING: could not restore build/; run: meson configure build -Db_sanitize=none -Ddebug_driver=false && ninja -C build" >&2
+  meson configure build -Db_sanitize=none -Ddebug_driver=false -Dbuildtype=debug >/dev/null && ninja -C build >/dev/null ||
+    echo "WARNING: could not restore build/; run: meson configure build -Db_sanitize=none -Ddebug_driver=false -Dbuildtype=debug && ninja -C build" >&2
 }
 trap restore_build EXIT
 
-echo "Building build/ with address,undefined sanitizers + debug driver ..."
 [ -f build/build.ninja ] || meson setup build >/dev/null || exit 2
-meson configure build -Db_sanitize=address,undefined -Db_lundef=false -Ddebug_driver=true >/dev/null || exit 2
+if [ -n "${SMOKE_PERF:-}" ]; then
+  echo "Building build/ optimised (no sanitizers) + debug driver, for timings ..."
+  meson configure build -Db_sanitize=none -Dbuildtype=debugoptimized -Ddebug_driver=true >/dev/null || exit 2
+else
+  echo "Building build/ with address,undefined sanitizers + debug driver ..."
+  meson configure build -Db_sanitize=address,undefined -Db_lundef=false -Ddebug_driver=true >/dev/null || exit 2
+fi
 ninja -C build >"$LOG/build.log" 2>&1 || { tail -30 "$LOG/build.log"; exit 2; }
 
-ASAN_RT="$(ldd build/libnautilus-utils.so | awk '/libasan\.so/ {print $3}')"
-[ -f "$ASAN_RT" ] || { echo "cannot find ASan runtime (dnf install libasan)"; exit 2; }
+ASAN_RT=""
+if [ -z "${SMOKE_PERF:-}" ]; then
+  ASAN_RT="$(ldd build/libnautilus-utils.so | awk '/libasan\.so/ {print $3}')"
+  [ -f "$ASAN_RT" ] || { echo "cannot find ASan runtime (dnf install libasan)"; exit 2; }
+fi
 
 echo "Starting an isolated Nautilus on $DIR (logs: $LOG)"
 FV_TREE="$LOG/fvtree"
@@ -85,6 +96,12 @@ FV_TREE="$LOG/fvtree"
 FI_TREE="$LOG/fitree"
 for p in web-a web-b web-c; do mkdir -p "$FI_TREE/$p/node_modules/dep/node_modules" "$FI_TREE/$p/src"; done
 for f in A B C D; do mkdir -p "$FV_TREE/$f/sub"; for i in 1 2 3 4 5 6; do : > "$FV_TREE/$f/$f-$i.txt"; done; done
+# Details pane (PLAN.md §13): the fixtures, a picture folder (folder preview in the pane) and a big folder.
+DP_TREE="$LOG/dptree"
+mkdir -p "$DP_TREE/pics" "$DP_TREE/big"
+cp "$ROOT"/tests/details-pane/data/{photo.jpg,pic.png,clip.webm,clip.mp4,tone.ogg,doc.pdf,notes.txt} "$DP_TREE/"
+cp "$ROOT"/tests/details-pane/data/{photo.jpg,pic.png} "$DP_TREE/pics/"
+(cd "$DP_TREE/big" && for i in $(seq -w 1 10000); do : > "f$i.txt"; done)
 (
   cd "$LOG" || exit 1
   # Own gvfs metadata + data dir for the whole private session (daemons included).
@@ -101,7 +118,7 @@ for f in A B C D; do mkdir -p "$FV_TREE/$f/sub"; for i in 1 2 3 4 5 6; do : > "$
     ASAN_OPTIONS="log_path='$LOG/asan':detect_leaks=1:verify_asan_link_order=0" \
     UBSAN_OPTIONS="log_path='$LOG/ubsan':print_stacktrace=1" \
     LSAN_OPTIONS="suppressions='$ROOT/tools/lsan.supp':print_suppressions=0" \
-    G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings folder-views folder-icons" \
+    G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings folder-views folder-icons details-pane" \
     GSETTINGS_BACKEND=memory GSETTINGS_SCHEMA_DIR="$ROOT/build/data" \
     SD_DEBUG_FAKE_NETWORK="${SMOKE_FAKE_NETWORK:-}" \
     FP_DEBUG_DIR="$CMD_DIR" FP_DEBUG_ROOT="$DIR" ${SMOKE_XDG_CACHE:+"XDG_CACHE_HOME=$SMOKE_XDG_CACHE"} \
@@ -245,8 +262,50 @@ icons_round() {
   cmd "sd-open $DIR_URI" 2
 }
 
-if [ -n "$AUTO" ]; then
+# Details pane (PLAN.md §13): toggle, every kind of file, video play/stop, folder preview, several selected,
+# nothing selected, list view, a second tab, width, feature off/on, a fast "arrow key" run through a big folder.
+DP_URI="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$DP_TREE")"
+dp_expect() { cmd "dp-expect $1" 0.3; }
+dp_pick() { cmd "dp-select none" 0.3; cmd "dp-select name $1" "${2:-1.5}"; }
+dp_round() {
+  cmd "sd-open $DP_URI" 2; cmd "fv-view 2" 1.5
+  cmd dp-dump 0.3
+  cmd dp-toggle 1.5; cmd dp-dump 0.3
+  dp_expect 'title="dptree"'; dp_expect 'Contents=9 items'
+  dp_pick photo.jpg; dp_expect 'Camera=Canon EOS R6'; dp_expect 'Dimensions=120 × 80 px'
+  dp_expect '[Permissions: You=Read,Write,;'
+  dp_pick clip.webm 2.5; dp_expect 'Video codec=VP8'; dp_expect 'Audio codec=Vorbis'
+  cmd dp-play 2.5; cmd dp-dump 0.3; dp_expect 'playing=1'
+  cmd dp-stop 0.5; dp_expect 'playing=0'
+  cmd dp-play 1.5; dp_pick clip.mp4 2.5; dp_expect 'playing=0'; dp_expect 'Video codec=H.264'
+  cmd dp-play 2; cmd dp-toggle 1; cmd dp-dump 0.3; cmd dp-toggle 1.5; dp_expect 'playing=0'
+  dp_pick tone.ogg; dp_expect 'Codec=Vorbis'; dp_expect 'Title=Test Tone'
+  dp_pick doc.pdf; dp_expect 'Pages=2'; dp_expect 'Page size=A4'
+  dp_pick pics 3; dp_expect 'Contents=2 items'; dp_expect 'preview=folder-preview'
+  cmd "dp-select all" 2; dp_expect 'items selected'; dp_expect 'preview=stack'
+  cmd "dp-select none" 1.5; dp_expect 'title="dptree"'
+  cmd "fv-view 1" 2; dp_pick photo.jpg; dp_expect 'Camera=Canon EOS R6'; cmd "fv-view 2" 2
+  # A second tab, then back to the first (not closed: closing a tab makes the owner's Python extension keep GTK
+  # objects alive at exit, which LeakSanitizer reports under our test driver's frame — PLAN.md §13.9 Phase 5).
+  cmd fv-new-tab 2; cmd dp-dump 0.3; cmd "dp-tab 0" 1.5; cmd dp-dump 0.3; dp_expect 'title="photo.jpg"'
+  cmd "dp-width 400" 1; cmd dp-dump 0.3; cmd "dp-width 320" 1
+  cmd st-open 1; cmd "st-tab details-pane" 1; cmd st-dump 0.3; cmd st-close 0.5
+  cmd "st-set details-pane-enabled false" 1; cmd dp-dump 0.3
+  cmd "st-set details-pane-enabled true" 2; cmd dp-dump 0.3; dp_expect 'title="photo.jpg"'
+  # Holding an arrow key through a big folder: a selection change every 20 ms, then it settles.
+  cmd "sd-open $DP_URI/big" 3
+  for i in $(seq 0 150); do cmd "dp-select $i" 0.02; done
+  cmd "dp-select 151" 2; cmd dp-dump 0.3; dp_expect 'title="f00152.txt"'; dp_expect 'pending=0'
+  cmd "sd-open $DP_URI" 2; cmd dp-toggle 1; cmd dp-dump 0.3
+  cmd "st-reset details-pane-visible" 0.5; cmd "st-reset details-pane-width" 0.5
+  cmd "sd-open $DIR_URI" 2
+}
+
+if [ -n "$AUTO" ] && [ "${SMOKE_ONLY:-}" = dp ]; then
+  dp_round
+elif [ -n "$AUTO" ]; then
   end=$(( $(date +%s) + AUTO ))
+  dp_round
   icons_round
   look_round
   style_round
@@ -298,7 +357,12 @@ ours_pattern="libnautilus-utils[.]so|src/(${our_files})[.]c:"
 # A leak whose allocation was made by another extension's Python runtime (pygi/libpython) is that extension's,
 # even when our code is further down the stack (e.g. our GSettings write ran its "changed" handler,
 # PLAN.md §10.8 Phase 2). Decided by the first frame below the allocator and GLib/GObject/GIO.
-third_party_alloc='_gi[.]cpython|libpython|pygi_'
+# Likewise fontconfig: Pango's font map caches one FcPattern per font style for the whole process, created by
+# whichever label first uses that style (before the details pane: one block per run, from Files' own labels;
+# with it: one from the pane's title). Never memory we own (PLAN.md §13.8 D7). And Mesa's EGL display: GTK
+# initialises GL once per process the first time something needs it (here: the details pane's first video
+# sink) and never terminates EGL at exit (D11).
+third_party_alloc='_gi[.]cpython|libpython|pygi_|libfontconfig|libEGL_mesa'
 for r in "${reports[@]}"; do
   hits="$(awk -v RS= -v pat="$ours_pattern" -v tp="$third_party_alloc" '
     $0 !~ pat { next }
@@ -306,7 +370,9 @@ for r in "${reports[@]}"; do
       n = split($0, lines, "\n")
       for (i = 1; i <= n; i++) {
         if (lines[i] !~ /^ *#[0-9]+ /) continue
-        if (lines[i] ~ /libasan|libglib-2[.]0|libgobject-2[.]0|libgio-2[.]0/) continue
+        # Skip the allocator, GLib, libc (vasprintf…) and libgirepository (PyGObject builds its GI info
+        # cache through it, PLAN.md §13.9 Phase 5) to find who asked for the memory.
+        if (lines[i] ~ /libasan|libglib-2[.]0|libgobject-2[.]0|libgio-2[.]0|libc[.]so|libgirepository-2[.]0/) continue
         if (lines[i] ~ tp) next
         break
       }
@@ -319,7 +385,7 @@ for r in "${reports[@]}"; do
   fi
 done
 
-ours_warnings="$(grep -E '(nautilus-utils|folder-preview|sidebar-drives|settings|folder-views|folder-icons)-(WARNING|CRITICAL)' "$LOG/nautilus.log" || true)"
+ours_warnings="$(grep -E '(nautilus-utils|folder-preview|sidebar-drives|settings|folder-views|folder-icons|details-pane)-(WARNING|CRITICAL)' "$LOG/nautilus.log" || true)"
 if [ -n "$ours_warnings" ]; then
   echo "FINDING: warnings/criticals from our log domain:"
   echo "$ours_warnings" | sed 's/^/    | /'
@@ -402,6 +468,17 @@ n_fv_off="$(grep -c 'fv dump: off' "$LOG/nautilus.log" || true)"
 n_fv_trans="$(grep -c 'transition: done' "$LOG/nautilus.log" || true)"
 if [ -n "$AUTO" ] && [ "$n_fv_checked" -eq 0 ]; then echo "FINDING: folder views never checked a tab"; fail=1; fi
 
+# Details pane: every expectation held; the button was shown; nothing of ours stays while switched off.
+dp_fail="$(grep -E 'dp expect FAIL|dp: (no window|unknown command)' "$LOG/nautilus.log" || true)"
+[ -z "$dp_fail" ] || { echo "FINDING: details pane:"; echo "$dp_fail" | head -10 | sed 's/^/    | /'; fail=1; }
+dp_off_bad="$(grep 'dp dump: enabled=0' "$LOG/nautilus.log" | grep -v 'windows=0' || true)"
+[ -z "$dp_off_bad" ] || { echo "FINDING: details pane left traces while switched off:"; echo "$dp_off_bad" | sed 's/^/    | /'; fail=1; }
+n_dp_ok="$(grep -c 'dp expect ok' "$LOG/nautilus.log" || true)"
+n_dp_button="$(grep -c 'dp dump: enabled=1 windows=[1-9].* button=1' "$LOG/nautilus.log" || true)"
+if [ -n "$AUTO" ] && { [ "$n_dp_ok" -eq 0 ] || [ "$n_dp_button" -eq 0 ]; }; then
+  echo "FINDING: details pane never checked (expectations ok: $n_dp_ok, button shown: $n_dp_button)"; fail=1
+fi
+
 loaded="$(grep -c 'folder-preview loaded' "$LOG/nautilus.log" || true)"
 sidebar_ok="$(grep -c 'sd dump: .*OS-ROW' "$LOG/nautilus.log" || true)"
 [ "$sidebar_ok" -gt 0 ] || { echo "FINDING: the sidebar-drives hook never showed its OS row"; fail=1; }
@@ -417,6 +494,7 @@ echo "  style dumps:            $n_style"
 echo "  OS drive menus:         $n_menu"
 echo "  settings toggles:       sidebar off-dumps $n_off, preview off-states $n_fp_off, preview re-hooked $n_fp_on"
 echo "  folder views:           tab checks $n_fv_checked, named checks $n_fv_expect, off-dumps $n_fv_off, smooth transitions $n_fv_trans, wrong: $([ -z "$fv_bad" ] && echo 0 || echo SOME)"
+echo "  details pane:           expectations ok $n_dp_ok, failed: $([ -z "$dp_fail" ] && echo 0 || echo SOME), button shown in $n_dp_button dumps"
 echo "  sanitizer report files: ${#reports[@]} (only blocks mentioning our code count)"
 echo "  result:                 $([ $fail -eq 0 ] && [ "$loaded" -gt 0 ] && echo PASS || echo FAIL)"
 [ "$loaded" -gt 0 ] || fail=1

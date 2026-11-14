@@ -20,6 +20,9 @@ BuildRequires:  pkgconfig(libadwaita-1) >= 1.9
 BuildRequires:  pkgconfig(gnome-desktop-4)
 BuildRequires:  pkgconfig(gdk-pixbuf-2.0)
 BuildRequires:  pkgconfig(cairo) >= 1.14
+BuildRequires:  pkgconfig(gstreamer-pbutils-1.0) >= 1.20
+BuildRequires:  pkgconfig(poppler-glib)
+BuildRequires:  pkgconfig(gexiv2-0.16)
 # For %check: the natural-order test pins LC_ALL=en_US.utf8; type guessing by name needs the MIME database.
 BuildRequires:  glibc-langpack-en
 BuildRequires:  shared-mime-info
