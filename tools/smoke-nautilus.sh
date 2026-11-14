@@ -79,7 +79,6 @@ ninja -C build >"$LOG/build.log" 2>&1 || { tail -30 "$LOG/build.log"; exit 2; }
 ASAN_RT="$(ldd build/libnautilus-utils.so | awk '/libasan\.so/ {print $3}')"
 [ -f "$ASAN_RT" ] || { echo "cannot find ASan runtime (dnf install libasan)"; exit 2; }
 
-before_pids="$(pgrep -x nautilus | sort)"
 echo "Starting an isolated Nautilus on $DIR (logs: $LOG)"
 FV_TREE="$LOG/fvtree"
 # Folder icons by name (PLAN.md §12): projects with node_modules folders (and one "mine" with its own icon).
@@ -109,18 +108,30 @@ for f in A B C D; do mkdir -p "$FV_TREE/$f/sub"; for i in 1 2 3 4 5 6; do : > "$
     nautilus --new-window "$DIR" >"$LOG/nautilus.log" 2>&1 &
 )
 
+# The test Nautilus is the one carrying our FP_DEBUG_DIR. Never pick a process by "started after us": the
+# user's own Files may start (D-Bus activation) at the same moment, and SIGUSR2 quits a Files without the debug
+# driver.
+test_pid() {
+  local p
+  for p in $(pgrep -x nautilus); do
+    tr '\0' '\n' < /proc/"$p"/environ 2>/dev/null | grep -qxF "FP_DEBUG_DIR=$CMD_DIR" && { echo "$p"; return; }
+  done
+}
 PID=""
 for _ in $(seq 1 40); do
   sleep 0.5
-  PID="$(comm -13 <(echo "$before_pids") <(pgrep -x nautilus | sort) | head -1)"
+  PID="$(test_pid)"
   [ -n "$PID" ] && break
 done
 [ -n "$PID" ] || { echo "Nautilus failed to start:"; tail -30 "$LOG/nautilus.log"; exit 1; }
 BUS="$(tr '\0' '\n' < /proc/"$PID"/environ | sed -n 's/^DBUS_SESSION_BUS_ADDRESS=//p')"
 echo "test Nautilus pid $PID"
-sleep 5
+# Commands go by SIGUSR2, which quits Nautilus until the extension's driver handles it: wait for the driver.
+for _ in $(seq 1 60); do grep -q "debug driver enabled" "$LOG/nautilus.log" && break; sleep 0.5; done
+grep -q "debug driver enabled" "$LOG/nautilus.log" || { echo "debug driver not loaded:"; tail -30 "$LOG/nautilus.log"; exit 1; }
+sleep 3
 
-cmd() { echo "$1" > "$CMD_DIR/cmd"; kill -USR2 "$PID" 2>/dev/null; sleep "${2:-1}"; }
+cmd() { [ "$(test_pid)" = "$PID" ] || return 0; echo "$1" > "$CMD_DIR/cmd"; kill -USR2 "$PID" 2>/dev/null; sleep "${2:-1}"; }
 DIR_URI="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$DIR")"
 # Sidebar drives (PLAN.md §8): OS row, Home, network row, refresh; then back to DIR for the preview checks.
 sidebar_round() {
@@ -275,7 +286,7 @@ fi
 echo "Quitting the test Nautilus (LeakSanitizer runs at exit) ..."
 DBUS_SESSION_BUS_ADDRESS="$BUS" nautilus -q >/dev/null 2>&1
 for _ in $(seq 1 120); do ps -p "$PID" >/dev/null || break; sleep 0.5; done
-ps -p "$PID" >/dev/null && { echo "test Nautilus did not exit; killing"; kill "$PID"; }
+[ "$(test_pid)" = "$PID" ] && { echo "test Nautilus did not exit; killing"; kill "$PID"; }
 
 # ---- Analysis ----
 fail=0
