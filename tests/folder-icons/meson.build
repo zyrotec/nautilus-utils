@@ -18,3 +18,11 @@ test_icon_store = executable('test-icon-store', 'test-icon-store.c',
   include_directories: nu_common_inc,
 )
 test('icon-store', test_icon_store, env: fi_test_env, protocol: 'tap', args: ['--tap'], suite: 'folder-icons')
+
+test_fi_apply = executable('test-fi-apply', 'test-fi-apply.c',
+  link_with: fi_core_lib,
+  dependencies: fi_core_deps,
+  include_directories: [fi_inc, nu_common_inc],
+)
+test('fi-apply', test_fi_apply, env: fi_test_env, protocol: 'tap', args: ['--tap'], suite: 'folder-icons',
+     timeout: 60)

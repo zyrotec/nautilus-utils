@@ -78,7 +78,7 @@ exercise_once (void)
   const GType *types = NULL;
   int n_types = 0;
   loader->list_types (&types, &n_types);
-  g_assert_cmpint (n_types, ==, 1);
+  g_assert_cmpint (n_types, ==, 2); /* folder preview + folder icons info providers */
 
   g_autoptr (GPtrArray) objects = g_ptr_array_new_with_free_func (g_object_unref);
   for (int i = 0; i < n_types; i++)

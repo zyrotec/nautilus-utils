@@ -1597,13 +1597,16 @@ Isolated Nautilus (own D-Bus session, private `XDG_RUNTIME_DIR`, own data/config
    shows the icon natively the next time Files reads the folder's info.
 2. **No live pick-up on its own:** a folder already on screen keeps its old icon after an external metadata
    write (gvfs metadata changes raise no file monitor event).
-3. **Refresh nudge (decision I5):** setting the folder's access time to **its current value**
-   (`utimensat` with the exact current atime and `UTIME_OMIT` for mtime) raises an inotify `IN_ATTRIB` event
-   (verified on tmpfs and ntfs3); Files' directory monitor then re-reads that folder's info and shows the new
-   icon at once (verified on both). Nothing visible changes: atime keeps its value, mtime is untouched (so
-   folder previews and backups keyed on mtime are unaffected); only the inode's ctime moves, as with any
-   metadata change. Non-local folders (no path) get no nudge: their icon appears the next time Files lists
-   them.
+3. **Refresh nudge (decision I5):** an inotify `IN_ATTRIB` event on the folder makes Files' directory
+   monitor re-read its info and show the new icon at once (verified on tmpfs and ntfs3). Measured which no-op
+   changes raise it (Phase 2, `inotifywait`): `utimensat` of **atime only** (same value, or +1 µs, with
+   `UTIME_OMIT` for mtime) raises **no** `IN_ATTRIB` (the kernel reports atime-only changes as `IN_ACCESS`,
+   which GIO ignores — the first Phase 0 run's success came from setting both times); setting atime **and**
+   mtime to their current values does, but races with concurrent writes (`npm install` filling
+   `node_modules` could see its new mtime reverted). **Chosen: `chmod` to the folder's current mode** — raises
+   `IN_ATTRIB`, changes neither times nor mode (only the inode's ctime, as with any metadata change), and is
+   only racy against a concurrent chmod. Folders we may not chmod (not ours) and non-local folders get no
+   nudge: their icon appears the next time Files lists them.
 4. **Revisiting** a folder re-reads metadata: an icon written while the folder was off screen shows on the
    next visit.
 5. **Calls:** the info provider is called for every file Files lists (D3), so matching folders are seen in
@@ -1627,3 +1630,19 @@ Design refinements from the spike:
 - After a write, the nudge (3) runs in a worker thread; at most `FI_MAX_INFLIGHT` (4) folders are processed
   at once, duplicates are merged.
 - Stored icons are never deleted automatically: folders not visited since may still point at them.
+
+### 12.8 Phase results (2026-11-14)
+
+- **Phase 1:** schema keys + `nu_settings` (rules as `a(ss)`, bounded history written right away),
+  `fi_rules.c` (snapshot, markers, decision table), `nu_icon_store.c` (content-hash copies). Tests: rules,
+  markers, every row of the decision table, store (copy, dedupe, refused types/sizes, async), settings.
+  scan-build flagged the test's 4 MiB buffer as a possible leak on an assertion path; the test now writes a
+  sparse file (no buffer) instead of suppressing it. Safety: all PASS.
+- **Phase 2:** `fi_apply.c` (bounded queue, worker-thread jobs, generation per rule set, backend table with
+  the GIO implementation), `fi_provider.c`, `folder_icons.c` (settings, removed names → history, re-check of
+  recently listed folders via `nautilus_file_info_invalidate_extension_info`). The nudge was corrected to a
+  same-mode `chmod` (§12.7 item 3). Tests with an in-memory backend: apply, user icons untouched, rule icon
+  change, removal restore, feature off, hand-changed icons (marker only), errors, bounded concurrency (≤ 3
+  of 3), rule change and free while jobs run; the GIO backend without gvfs. Verified in an isolated Nautilus:
+  adding a rule turns the on-screen `node_modules` into the custom icon within ~0.1 s (grid and list view),
+  removing it restores the plain folder and leaves no metadata behind.
