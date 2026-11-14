@@ -9,6 +9,7 @@
 #include <adwaita.h>
 #include <math.h>
 
+#include "folder_icons_page.h"
 #include "nu_settings.h"
 
 #define DIALOG_KEY "st-settings-dialog" /* window qdata: GWeakRef to the open dialog */
@@ -722,7 +723,7 @@ st_settings_dialog_present (GtkWidget *parent)
 
   AdwDialog *dialog = adw_dialog_new ();
   adw_dialog_set_title (dialog, "Nautilus Utils Settings");
-  adw_dialog_set_content_width (dialog, 600);
+  adw_dialog_set_content_width (dialog, 720); /* four tabs fit without truncated titles */
   adw_dialog_set_content_height (dialog, 640);
   /* A dialog with breakpoints needs a minimum size (libadwaita warns otherwise); 360 × 294 is the HIG
    * smallest supported size. */
@@ -744,6 +745,8 @@ st_settings_dialog_present (GtkWidget *parent)
                                            "sidebar-drives", "Sidebar Drives", "drive-harddisk-symbolic");
       adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), folder_views_page (settings),
                                            "folder-views", "Folder Views", "view-grid-symbolic");
+      adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), st_folder_icons_page (settings),
+                                           "folder-icons", "Folder Icons", "folder-symbolic");
       adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar), stack);
 
       GtkWidget *switcher = adw_view_switcher_new ();

@@ -16,6 +16,7 @@
  *                                  st-set bar-colour "'#ff0000'")
  *   st-reset <key>                 back to the schema default
  *   st-open / st-close             open / close the settings dialog on the first window
+ *   st-tab <name>                  show tab <name> of the open dialog (e.g. folder-icons)
  *   st-dump                        log the current settings */
 static guint debug_signal_id;
 
@@ -75,6 +76,40 @@ debug_close (void)
     }
 }
 
+/* Depth-first search for the first AdwViewStack below @w (borrowed). */
+static GtkWidget *
+find_view_stack (GtkWidget *w)
+{
+  if (ADW_IS_VIEW_STACK (w))
+    return w;
+  for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL; c = gtk_widget_get_next_sibling (c))
+    {
+      GtkWidget *found = find_view_stack (c);
+      if (found != NULL)
+        return found;
+    }
+  return NULL;
+}
+
+static void
+debug_tab (const char *name)
+{
+  GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+  for (guint i = 0; i < g_list_model_get_n_items (toplevels); i++)
+    {
+      g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
+      GtkWidget *dialog = st_settings_dialog_get (window);
+      GtkWidget *stack = dialog != NULL ? find_view_stack (dialog) : NULL;
+      if (stack != NULL)
+        {
+          adw_view_stack_set_visible_child_name (ADW_VIEW_STACK (stack), name);
+          g_message ("st: tab %s", name);
+          return;
+        }
+    }
+  g_message ("st: no open dialog");
+}
+
 static gboolean
 on_debug_signal (gpointer data)
 {
@@ -95,6 +130,8 @@ on_debug_signal (gpointer data)
     debug_reset (cmd + 9);
   else if (g_str_equal (cmd, "st-open"))
     g_message ("st: open %s", st_menu_hook_open_settings () ? "ok" : "FAILED (no menu action)");
+  else if (g_str_has_prefix (cmd, "st-tab "))
+    debug_tab (cmd + 7);
   else if (g_str_equal (cmd, "st-close"))
     debug_close ();
   else if (g_str_equal (cmd, "st-dump"))
