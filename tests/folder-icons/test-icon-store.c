@@ -82,7 +82,8 @@ test_refused (void)
   /* One byte over the limit, as a sparse file (no buffer needed). */
   g_autofree char *huge = g_build_filename (run_dir, "huge.svg", NULL);
   FILE *fp = g_fopen (huge, "wb");
-  g_assert_nonnull (fp);
+  if (fp == NULL)
+    g_error ("cannot create %s", huge);
   g_assert_cmpint (fseek (fp, (long) NU_ICON_STORE_MAX_BYTES, SEEK_SET), ==, 0);
   g_assert_cmpint (fputc ('x', fp), ==, 'x');
   g_assert_cmpint (fclose (fp), ==, 0);

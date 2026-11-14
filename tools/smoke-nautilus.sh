@@ -82,6 +82,9 @@ ASAN_RT="$(ldd build/libnautilus-utils.so | awk '/libasan\.so/ {print $3}')"
 before_pids="$(pgrep -x nautilus | sort)"
 echo "Starting an isolated Nautilus on $DIR (logs: $LOG)"
 FV_TREE="$LOG/fvtree"
+# Folder icons by name (PLAN.md §12): projects with node_modules folders (and one "mine" with its own icon).
+FI_TREE="$LOG/fitree"
+for p in web-a web-b web-c; do mkdir -p "$FI_TREE/$p/node_modules/dep/node_modules" "$FI_TREE/$p/src"; done
 for f in A B C D; do mkdir -p "$FV_TREE/$f/sub"; for i in 1 2 3 4 5 6; do : > "$FV_TREE/$f/$f-$i.txt"; done; done
 (
   cd "$LOG" || exit 1
@@ -212,8 +215,28 @@ look_round() {
   cmd verify 0.5
 }
 
+# Folder icons (PLAN.md §12): add a rule while the folders are on screen, change its icon, remove it,
+# switch the feature off/on; afterwards no folder may keep our metadata (checked below with gio).
+FI_SVG_DIR="$ROOT/tests/folder-preview/data"
+FI_URI="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$FI_TREE")"
+icons_round() {
+  cmd "sd-open $FI_URI" 1.5; cmd fi-dump 0.3
+  cmd "st-set folder-icon-rules [('node_modules', '$FI_SVG_DIR/back.svg')]" 1
+  cmd "sd-open $FI_URI/web-a" 1.5; cmd "sd-open $FI_URI/web-a/node_modules/dep" 1.5; cmd fi-dump 0.3
+  cmd "st-set folder-icon-rules [('node_modules', '$FI_SVG_DIR/overlay.svg'), ('src', '$FI_SVG_DIR/back.svg')]" 1
+  cmd "sd-open $FI_URI/web-b" 1.5; cmd fi-dump 0.3
+  cmd "st-set folder-icons-enabled false" 1; cmd "sd-open $FI_URI/web-a" 1.5; cmd fi-dump 0.3
+  cmd "st-set folder-icons-enabled true" 1; cmd fi-dump 0.3
+  cmd "st-set folder-icon-rules @a(ss) []" 1
+  for p in web-a web-b web-c web-a/node_modules/dep; do cmd "sd-open $FI_URI/$p" 1.2; done
+  cmd fi-dump 0.3
+  cmd "st-reset folder-icon-rule-history" 0.5
+  cmd "sd-open $DIR_URI" 2
+}
+
 if [ -n "$AUTO" ]; then
   end=$(( $(date +%s) + AUTO ))
+  icons_round
   look_round
   style_round
   eject_round
@@ -300,6 +323,19 @@ if [ -n "$wrong" ]; then
   fail=1
 fi
 
+# Folder icons: icons were set and restored, without errors, and no folder of the test tree keeps our
+# marker or a custom icon afterwards.
+fi_set="$(grep -oE 'fi dump: rules=[0-9]+ set=[1-9][0-9]*' "$LOG/nautilus.log" | tail -1)"
+fi_cleared="$(grep -oE 'fi dump: .* cleared=[1-9][0-9]*' "$LOG/nautilus.log" | tail -1)"
+fi_errors="$(grep -oE 'fi dump: .* errors=[1-9][0-9]*' "$LOG/nautilus.log" | tail -1)"
+if [ -n "$AUTO" ]; then
+  if [ -z "$fi_set" ] || [ -z "$fi_cleared" ] || [ -n "$fi_errors" ]; then
+    echo "FINDING: folder icons: set/restore/error counters wrong:"
+    grep 'fi dump:' "$LOG/nautilus.log" | sed 's/^/    | /'
+    fail=1
+  fi
+fi
+
 # Previews must actually be drawn somewhere (DIR needs subfolders with pictures and the plain folder icon),
 # otherwise the wrong-folder checks above checked nothing.
 n_shown="$(grep -cE 'debug verify: ok=[1-9]' "$LOG/nautilus.log" || true)"
@@ -352,6 +388,7 @@ echo
 echo "Smoke summary:"
 echo "  module loaded:          $([ "$loaded" -gt 0 ] && echo yes || echo NO)"
 echo "  previews drawn in:      $n_shown self-checks"
+echo "  folder icons:           $(grep 'fi dump:' "$LOG/nautilus.log" | tail -1 | sed 's/.*fi dump: //')"
 echo "  self-checks (verify):   $n_verify, wrong previews: $([ -z "$wrong" ] && echo 0 || echo SOME)"
 echo "  sidebar self-dumps:     $sidebar_ok"
 echo "  sliding eject (shown):  $n_eject"

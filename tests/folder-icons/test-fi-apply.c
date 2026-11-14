@@ -124,6 +124,8 @@ fake_nudge (GFile *folder, gpointer data)
 {
   (void) folder;
   Fake *f = data;
+  if (f == NULL)
+    return; /* (GCC -O2 speculatively inlines this into calls of the real backend with NULL data) */
   g_mutex_lock (&f->lock);
   f->nudges++;
   g_mutex_unlock (&f->lock);
