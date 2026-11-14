@@ -635,9 +635,11 @@ entry (the features keep working with their stored settings).
 
 #### 9.1.2 Settings window (GNOME HIG, libadwaita)
 
-An `AdwDialog` presented over the Nautilus window it was opened from: `AdwToolbarView` with an
-`AdwHeaderBar` holding an `AdwViewSwitcher` (one tab per feature, each an `AdwPreferencesPage`) and an
-**Apply** button (`.suggested-action`) at the header bar's end. Controls only change a pending copy of the
+An `AdwDialog` presented over the Nautilus window it was opened from: an `AdwNavigationSplitView` with an
+`AdwViewSwitcherSidebar` (one row per feature) beside the selected feature's `AdwPreferencesPage` (titled
+after it), and an **Apply** button (`.suggested-action`, `.pill`) centred in a bottom bar under the page
+(owner, 2026-11-14; was a header-bar view switcher with Apply at the header bar's end). Below 600 sp the
+split view collapses: the sidebar becomes a list page and picking a row opens that feature's page. Controls only change a pending copy of the
 settings (GSettings in delay-apply mode, `g_settings_delay`); **Apply** writes them
 (`g_settings_apply`) and every open Nautilus window then updates live (no restart). Apply is insensitive
 until something has changed (`has-unapplied`). Closing the dialog with unapplied changes discards them

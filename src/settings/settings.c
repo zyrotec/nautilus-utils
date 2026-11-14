@@ -9,23 +9,24 @@
 #include <adwaita.h>
 #include <glib-unix.h>
 #include <signal.h>
+#include <stdio.h>
 
 /* Debug driver (only in -Ddebug_driver=true builds, used by tools/smoke-nautilus.sh). Shares
  * $FP_DEBUG_DIR/cmd + SIGUSR2 with the other features' drivers and ignores commands that aren't "st-…":
  *   st-set <key> <GVariant text>   change a setting as the dialog's Apply would (e.g. st-set eject-slide true,
  *                                  st-set bar-colour "'#ff0000'")
+ *   st-pending <key> <GVariant>    an unapplied change in the open dialog (as editing a control would)
  *   st-reset <key>                 back to the schema default
+ *   st-size <width> <height>       resize the first window (narrow dialog layout)
  *   st-open / st-close             open / close the settings dialog on the first window
  *   st-tab <name>                  show tab <name> of the open dialog (e.g. folder-icons)
  *   st-dump                        log the current settings */
 static guint debug_signal_id;
 
+/* Sets @key in the delayed @pending from GVariant @text; applies it when @apply. */
 static void
-debug_set (const char *key, const char *text)
+debug_set_in (GSettings *pending, const char *key, const char *text, gboolean apply)
 {
-  g_autoptr (GSettings) pending = nu_settings_new_delayed ();
-  if (pending == NULL)
-    return;
   g_autoptr (GSettingsSchema) schema = NULL;
   g_object_get (pending, "settings-schema", &schema, NULL);
   if (!g_settings_schema_has_key (schema, key))
@@ -41,8 +42,17 @@ debug_set (const char *key, const char *text)
       g_message ("st: bad value for %s: %s", key, error != NULL ? error->message : text);
       return;
     }
-  g_settings_apply (pending);
-  g_message ("st: set %s = %s", key, text);
+  if (apply)
+    g_settings_apply (pending);
+  g_message ("st: %s %s = %s", apply ? "set" : "pending", key, text);
+}
+
+static void
+debug_set (const char *key, const char *text)
+{
+  g_autoptr (GSettings) pending = nu_settings_new_delayed ();
+  if (pending != NULL)
+    debug_set_in (pending, key, text, TRUE);
 }
 
 static void
@@ -91,6 +101,39 @@ find_view_stack (GtkWidget *w)
   return NULL;
 }
 
+/* An unapplied change in the open dialog, as if a control were edited (Apply becomes sensitive). */
+static void
+debug_pending (const char *key, const char *text)
+{
+  GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+  for (guint i = 0; i < g_list_model_get_n_items (toplevels); i++)
+    {
+      g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
+      GtkWidget *dialog = st_settings_dialog_get (window);
+      GSettings *pending = dialog != NULL ? g_object_get_data (G_OBJECT (dialog), "st-settings") : NULL;
+      if (pending != NULL)
+        {
+          debug_set_in (pending, key, text, FALSE);
+          return;
+        }
+    }
+  g_message ("st: no open dialog");
+}
+
+/* Resizes the first window (to try the dialog's narrow layout). */
+static void
+debug_size (const char *text)
+{
+  int w = 0, h = 0;
+  GListModel *toplevels = gtk_window_get_toplevels (); /* borrowed */
+  if (sscanf (text, "%d %d", &w, &h) != 2 || w <= 0 || h <= 0 || g_list_model_get_n_items (toplevels) == 0)
+    return;
+  g_autoptr (GtkWindow) window = g_list_model_get_item (toplevels, 0);
+  gtk_window_unmaximize (window);
+  gtk_window_set_default_size (window, w, h);
+  g_message ("st: size %d x %d", w, h);
+}
+
 static void
 debug_tab (const char *name)
 {
@@ -126,6 +169,14 @@ on_debug_signal (gpointer data)
       if (g_strv_length (parts) == 3)
         debug_set (parts[1], parts[2]);
     }
+  else if (g_str_has_prefix (cmd, "st-pending "))
+    {
+      g_auto (GStrv) parts = g_strsplit (cmd, " ", 3);
+      if (g_strv_length (parts) == 3)
+        debug_pending (parts[1], parts[2]);
+    }
+  else if (g_str_has_prefix (cmd, "st-size "))
+    debug_size (cmd + 8);
   else if (g_str_has_prefix (cmd, "st-reset "))
     debug_reset (cmd + 9);
   else if (g_str_equal (cmd, "st-open"))

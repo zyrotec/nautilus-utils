@@ -1,7 +1,7 @@
 # Settings feature: main-menu entry + settings dialog (PLAN.md §9). The settings service itself is shared
 # code in src/common/.
 
-adw_dep = dependency('libadwaita-1', version: '>= 1.6') # AdwDialog, AdwButtonRow (1.6)
+adw_dep = dependency('libadwaita-1', version: '>= 1.9') # AdwDialog, AdwButtonRow (1.6), AdwViewSwitcherSidebar (1.9)
 
 st_feature_lib = static_library('st-feature',
   'settings.c',

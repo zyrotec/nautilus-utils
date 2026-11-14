@@ -1,9 +1,10 @@
 /* "Nautilus Utils Settings" dialog (PLAN.md §9.1.2, decision N5).
  *
- * AdwDialog > AdwToolbarView: header bar with a view switcher (one tab per feature) and an Apply button;
- * the controls are bound to a *delayed* GSettings (nu_settings_new_delayed), so nothing changes until Apply
- * (g_settings_apply). Closing with unapplied changes reverts them. Narrow dialogs move the tabs to a bottom
- * switcher bar (AdwBreakpoint). Every control has an accessible label; colours come from the theme. */
+ * AdwDialog > AdwNavigationSplitView: a sidebar (AdwViewSwitcherSidebar, one row per feature) beside the
+ * selected feature's page, with an Apply button centred at the bottom. The controls are bound to a *delayed*
+ * GSettings (nu_settings_new_delayed), so nothing changes until Apply (g_settings_apply). Closing with
+ * unapplied changes reverts them. Narrow dialogs collapse the split view (AdwBreakpoint): the sidebar becomes
+ * a list page that opens each feature. Every control has an accessible label; colours come from the theme. */
 #include "settings_dialog.h"
 
 #include <adwaita.h>
@@ -684,6 +685,25 @@ on_apply (GtkButton *button, gpointer data)
   g_settings_apply (G_SETTINGS (data));
 }
 
+/* The content pane is titled after the selected feature. */
+static void
+on_tab_changed (GObject *stack, GParamSpec *pspec, gpointer data)
+{
+  (void) pspec;
+  GtkWidget *child = adw_view_stack_get_visible_child (ADW_VIEW_STACK (stack));
+  AdwViewStackPage *page = child != NULL ? adw_view_stack_get_page (ADW_VIEW_STACK (stack), child) : NULL;
+  const char *title = page != NULL ? adw_view_stack_page_get_title (page) : NULL;
+  if (title != NULL)
+    adw_navigation_page_set_title (ADW_NAVIGATION_PAGE (data), title);
+}
+
+static void
+on_sidebar_activated (AdwViewSwitcherSidebar *sidebar, gpointer data)
+{
+  (void) sidebar;
+  adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (data), TRUE);
+}
+
 /* Unapplied changes are discarded when the dialog closes (N5). */
 static void
 on_closed (AdwDialog *dialog, gpointer data)
@@ -723,19 +743,20 @@ st_settings_dialog_present (GtkWidget *parent)
 
   AdwDialog *dialog = adw_dialog_new ();
   adw_dialog_set_title (dialog, "Nautilus Utils Settings");
-  adw_dialog_set_content_width (dialog, 720); /* four tabs fit without truncated titles */
+  adw_dialog_set_content_width (dialog, 860); /* sidebar + a full-width preferences page */
   adw_dialog_set_content_height (dialog, 640);
   /* A dialog with breakpoints needs a minimum size (libadwaita warns otherwise); 360 × 294 is the HIG
    * smallest supported size. */
   gtk_widget_set_size_request (GTK_WIDGET (dialog), 360, 294);
 
-  GtkWidget *toolbar = adw_toolbar_view_new ();
-  GtkWidget *header = adw_header_bar_new ();
-  adw_toolbar_view_add_top_bar (ADW_TOOLBAR_VIEW (toolbar), header);
-
   g_autoptr (GSettings) settings = nu_settings_new_delayed ();
   if (settings == NULL)
-    adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar), unavailable_page ());
+    {
+      GtkWidget *toolbar = adw_toolbar_view_new ();
+      adw_toolbar_view_add_top_bar (ADW_TOOLBAR_VIEW (toolbar), adw_header_bar_new ());
+      adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar), unavailable_page ());
+      adw_dialog_set_child (dialog, toolbar);
+    }
   else
     {
       GtkWidget *stack = adw_view_stack_new ();
@@ -747,42 +768,60 @@ st_settings_dialog_present (GtkWidget *parent)
                                            "folder-views", "Folder Views", "view-grid-symbolic");
       adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), st_folder_icons_page (settings),
                                            "folder-icons", "Folder Icons", "folder-symbolic");
+
+      /* Sidebar pane: one row per feature. */
+      GtkWidget *sidebar = adw_view_switcher_sidebar_new ();
+      adw_view_switcher_sidebar_set_stack (ADW_VIEW_SWITCHER_SIDEBAR (sidebar), ADW_VIEW_STACK (stack));
+      GtkWidget *side_toolbar = adw_toolbar_view_new ();
+      adw_toolbar_view_add_top_bar (ADW_TOOLBAR_VIEW (side_toolbar), adw_header_bar_new ());
+      adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (side_toolbar), sidebar);
+      AdwNavigationPage *side_page = adw_navigation_page_new (side_toolbar, "Nautilus Utils");
+
+      /* Content pane: the selected feature's page, titled after it, with Apply centred at the bottom. */
+      GtkWidget *toolbar = adw_toolbar_view_new ();
+      adw_toolbar_view_add_top_bar (ADW_TOOLBAR_VIEW (toolbar), adw_header_bar_new ());
       adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar), stack);
-
-      GtkWidget *switcher = adw_view_switcher_new ();
-      adw_view_switcher_set_policy (ADW_VIEW_SWITCHER (switcher), ADW_VIEW_SWITCHER_POLICY_WIDE);
-      adw_view_switcher_set_stack (ADW_VIEW_SWITCHER (switcher), ADW_VIEW_STACK (stack));
-      adw_header_bar_set_title_widget (ADW_HEADER_BAR (header), switcher);
-
-      /* Narrow (e.g. a bottom sheet on a small screen): tabs move to a bar at the bottom, title shown. */
-      GtkWidget *switcher_bar = adw_view_switcher_bar_new ();
-      adw_view_switcher_bar_set_stack (ADW_VIEW_SWITCHER_BAR (switcher_bar), ADW_VIEW_STACK (stack));
-      adw_toolbar_view_add_bottom_bar (ADW_TOOLBAR_VIEW (toolbar), switcher_bar);
-      AdwBreakpoint *narrow = adw_breakpoint_new (adw_breakpoint_condition_parse ("max-width: 500sp"));
-      g_auto (GValue) reveal = G_VALUE_INIT;
-      g_value_init (&reveal, G_TYPE_BOOLEAN);
-      g_value_set_boolean (&reveal, TRUE);
-      adw_breakpoint_add_setter (narrow, G_OBJECT (switcher_bar), "reveal", &reveal);
-      g_auto (GValue) no_title = G_VALUE_INIT;
-      g_value_init (&no_title, GTK_TYPE_WIDGET);
-      adw_breakpoint_add_setter (narrow, G_OBJECT (header), "title-widget", &no_title);
-      adw_dialog_add_breakpoint (dialog, narrow); /* takes ownership */
-
       GtkWidget *apply = gtk_button_new_with_mnemonic ("_Apply");
       gtk_widget_add_css_class (apply, "suggested-action");
+      gtk_widget_add_css_class (apply, "pill");
       gtk_widget_set_tooltip_text (apply, "Apply the changes");
       g_object_bind_property (settings, "has-unapplied", apply, "sensitive", G_BINDING_SYNC_CREATE);
       /* The dialog keeps @settings alive (qdata below), so plain handlers with it as data are safe. */
       g_signal_connect (apply, "clicked", G_CALLBACK (on_apply), settings);
-      adw_header_bar_pack_end (ADW_HEADER_BAR (header), apply);
+      GtkWidget *apply_bar = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
+      gtk_widget_set_halign (apply_bar, GTK_ALIGN_CENTER);
+      gtk_widget_set_margin_top (apply_bar, 12);
+      gtk_widget_set_margin_bottom (apply_bar, 12);
+      gtk_box_append (GTK_BOX (apply_bar), apply);
+      adw_toolbar_view_add_bottom_bar (ADW_TOOLBAR_VIEW (toolbar), apply_bar);
       adw_dialog_set_default_widget (dialog, apply);
+      AdwNavigationPage *content_page = adw_navigation_page_new (toolbar, "Folder Preview");
+      g_signal_connect_object (stack, "notify::visible-child", G_CALLBACK (on_tab_changed), content_page, 0);
+
+      GtkWidget *split = adw_navigation_split_view_new ();
+      adw_navigation_split_view_set_min_sidebar_width (ADW_NAVIGATION_SPLIT_VIEW (split), 200);
+      adw_navigation_split_view_set_sidebar (ADW_NAVIGATION_SPLIT_VIEW (split), side_page);
+      adw_navigation_split_view_set_content (ADW_NAVIGATION_SPLIT_VIEW (split), content_page);
+      /* Picking a feature shows its page (only matters when collapsed). */
+      g_signal_connect_object (sidebar, "activated", G_CALLBACK (on_sidebar_activated), split, 0);
+
+      /* Narrow (e.g. a bottom sheet on a small screen): one pane at a time, the sidebar as a list page. */
+      AdwBreakpoint *narrow = adw_breakpoint_new (adw_breakpoint_condition_parse ("max-width: 600sp"));
+      g_auto (GValue) collapsed = G_VALUE_INIT;
+      g_value_init (&collapsed, G_TYPE_BOOLEAN);
+      g_value_set_boolean (&collapsed, TRUE);
+      adw_breakpoint_add_setter (narrow, G_OBJECT (split), "collapsed", &collapsed);
+      g_auto (GValue) page_mode = G_VALUE_INIT;
+      g_value_init (&page_mode, ADW_TYPE_SIDEBAR_MODE);
+      g_value_set_enum (&page_mode, ADW_SIDEBAR_MODE_PAGE);
+      adw_breakpoint_add_setter (narrow, G_OBJECT (sidebar), "mode", &page_mode);
+      adw_dialog_add_breakpoint (dialog, narrow); /* takes ownership */
 
       g_signal_connect (dialog, "closed", G_CALLBACK (on_closed), settings);
       /* The dialog owns one ref on the delayed settings, released when it is finalized. */
       g_object_set_data_full (G_OBJECT (dialog), "st-settings", g_object_ref (settings), g_object_unref);
+      adw_dialog_set_child (dialog, split);
     }
-
-  adw_dialog_set_child (dialog, toolbar);
 
   GWeakRef *ref = g_new0 (GWeakRef, 1);
   g_weak_ref_init (ref, dialog);

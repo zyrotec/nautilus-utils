@@ -16,7 +16,7 @@ BuildRequires:  pkgconfig(glib-2.0) >= 2.80
 BuildRequires:  pkgconfig(gio-2.0)
 BuildRequires:  pkgconfig(gmodule-2.0)
 BuildRequires:  pkgconfig(gtk4) >= 4.12
-BuildRequires:  pkgconfig(libadwaita-1) >= 1.6
+BuildRequires:  pkgconfig(libadwaita-1) >= 1.9
 BuildRequires:  pkgconfig(gnome-desktop-4)
 BuildRequires:  pkgconfig(gdk-pixbuf-2.0)
 BuildRequires:  pkgconfig(cairo) >= 1.14
