@@ -126,6 +126,7 @@ cp "$ROOT"/tests/details-pane/data/{photo.jpg,pic.png} "$DP_TREE/pics/"
     GSETTINGS_BACKEND=memory GSETTINGS_SCHEMA_DIR="$ROOT/build/data" \
     GST_PLUGIN_FEATURE_RANK="fakeaudiosink:MAX" \
     DP_STALL_SAMPLER="${DP_STALL_SAMPLER:-}" \
+    NU_GT_SPIKE="${NU_GT_SPIKE:-}" \
     SD_DEBUG_FAKE_NETWORK="${SMOKE_FAKE_NETWORK:-}" \
     FP_DEBUG_DIR="$CMD_DIR" FP_DEBUG_ROOT="$DIR" ${SMOKE_XDG_CACHE:+"XDG_CACHE_HOME=$SMOKE_XDG_CACHE"} \
     nautilus --new-window "$DIR" >"$LOG/nautilus.log" 2>&1 &
@@ -363,7 +364,31 @@ dp_round() {
   cmd "sd-open $DIR_URI" 2
 }
 
-if [ -n "$AUTO" ] && [ "${SMOKE_ONLY:-}" = dp ]; then
+# Git (PLAN.md §14) Phase 0 spike: a test repository (committed, modified, added, untracked, ignored, a folder
+# with changes) in the list view with the Git columns, the widget tree around the slot, a test bar, the background
+# menu. Needs NU_GT_SPIKE=1 (the spike is inert otherwise).
+GT_REPO="$LOG/gt-repo"
+gt_make_repo() {
+  ( set -e
+    mkdir -p "$GT_REPO/src" && cd "$GT_REPO" && git init -q && git config user.name "Smoke Test" && git config user.email smoke@example.invalid
+    printf 'node_modules/\n*.log\n' > .gitignore; echo one > README.md; echo a > src/a.c; echo b > src/b.c; echo keep > kept.txt
+    git add -A && git commit -qm "Initial commit"; echo two >> README.md; git commit -qam "Update the readme"
+    echo changed >> kept.txt; echo new > added.txt; git add added.txt; echo u > untracked.txt; echo l > debug.log
+    mkdir -p node_modules/x; echo m > node_modules/x/m.js; echo c >> src/a.c ) || echo "gt: could not make the test repo"
+}
+gt_round() {
+  gt_make_repo
+  local uri; uri="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_REPO")"
+  cmd gt-cols 0.5; cmd "sd-open $uri" 2.5; cmd "fv-view 1" 2.5; cmd "dp-png $LOG/gt-columns.png" 1
+  cmd gt-tree 0.5; cmd dp-toggle 1.5; cmd gt-bar2 1; cmd "dp-png $LOG/gt-bar.png" 1
+  cmd "fv-view 2" 2; cmd "dp-select name README.md" 1.5; cmd "dp-png $LOG/gt-bar-grid.png" 1
+  cmd "fv-view 2" 2; cmd "action view.popup-menu" 1.5; cmd "dp-png $LOG/gt-menu.png" 1
+  cmd "sd-open $DIR_URI" 2
+}
+
+if [ -n "$AUTO" ] && [ "${SMOKE_ONLY:-}" = gt ]; then
+  gt_round
+elif [ -n "$AUTO" ] && [ "${SMOKE_ONLY:-}" = dp ]; then
   dp_round
 elif [ -n "$AUTO" ]; then
   end=$(( $(date +%s) + AUTO ))

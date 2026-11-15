@@ -2190,3 +2190,44 @@ Prefix `gt_`, log domain `git`, dir `src/git/`, branch `dev-git`.
 | 4 Details pane | Toggle group + Git view (needs a small hook from the details pane: an optional "Git" page). | Owner reviews the look. |
 | 5 Clone + auth | Context-menu item, clone dialog, credentials dialog + retry. | Clone from a local server with and without credentials; wrong token → git's message. |
 | 6 Settings, hardening, docs | Settings tab "Git"; smoke round; `check-safety.sh`; README. | All PASS. |
+
+### 14.5 Phase 0 findings (2026-11-15, Nautilus 51.1 / GTK 4.24 / libadwaita 1.10 / git 2.56)
+
+Spike: `src/git/git.c`, **inert unless `NU_GT_SPIKE=1` and `GSETTINGS_BACKEND=memory`** (the module is the
+owner's live extension through the symlink); smoke `NU_GT_SPIKE=1 SMOKE_ONLY=gt` with a test repository (committed,
+modified, added, untracked, ignored, a folder with changes).
+
+1. **Columns (public API): work.** `get_columns` is asked when the list view is shown; four columns with our
+   attributes appear and can be made visible (`org.gnome.nautilus.list-view default-visible-columns`, i.e. Files'
+   *Visible Columns*). The async info path works: `update_file_info` returns `IN_PROGRESS`, one `git status` per
+   folder fills every waiting file, `nautilus_info_provider_update_complete_invoke` → values shown (Ignored /
+   Modified / Added / Untracked; a folder with changes inside: Modified). Note: with all four on, a narrow list view
+   squeezes the Name column (Files' own behaviour); ours stay off by default.
+2. **Background menu (public API): works.** `get_background_items` is called for every folder Files opens (also
+   outside repositories), so *Clone Repository…* is a plain menu item. (Popovers aren't in window snapshots: the
+   menu itself is checked by hand in Phase 5.)
+3. **Status bar placement.** The slot is not a box: `NautilusWindowSlot` → `GtkStack` with pages for the normal view
+   (a vertical box with `NautilusFilesView`), an empty/error `AdwStatusPage`, and the owner's other extension's
+   Miller-columns view (`MillerCanvas`). A bar inside one page would vanish on the others. **Under the tab view**
+   works: a vertical box `[AdwTabView][bar]` as the details pane's paned start child — the bar spans the folder view
+   only (not the pane), follows the active tab, sits under every page kind, and Files' floating "selected" label
+   stays above it (`gt-bar-grid.png`). → Phase 2: one shared helper wraps the tab view once (`src/common`), used by
+   both the details pane (its paned) and the Git bar, so either works without the other.
+4. **AdwToggleGroup**: available (libadwaita 1.10), toggles by name.
+5. **Authorization** (local smart-HTTP server with basic auth): with `GIT_TERMINAL_PROMPT=0` git fails at once —
+   no credentials: `fatal: could not read Username for '…': terminal prompts disabled`; wrong ones: `fatal:
+   Authentication failed for '…'`. The one-shot helper `-c credential.helper='!f() { test "$1" = get && printf
+   "username=%s\npassword=%s\n" "$NU_GIT_USER" "$NU_GIT_TOKEN"; }; f'` with the values in the child's environment
+   works (clone, then push), and git then stores them through the user's own helper (tested with `store`).
+   **The owner has no credential helper configured**, so entered tokens would not be remembered: Phase 5 offers
+   "Remember" via `git-credential-libsecret` if installed (not installed now: `dnf install git-credential-libsecret`)
+   or `gh auth setup-git` (gh is installed). The owner's remotes use SSH: runs get `SSH_ASKPASS_REQUIRE=never` and no
+   terminal, so ssh fails with its message instead of waiting.
+6. **Timings** (NTFS drive, warm cache): the owner's repositories are small (≤ 187 tracked files; Angular ones with
+   `node_modules`, which status skips as ignored): rev-parse 4–9 ms, status 15–26 ms, last-commit walk ≤ 39 ms. The
+   **first status after a cold cache took 0.2–1.2 s** → always async, cancellable. Synthetic 30 000-file repository
+   with 200 commits: full status 42–50 ms, one folder's status 10 ms, one folder's last-commit walk ~20 ms.
+   Repository detection per folder will walk up looking for `.git` (stat only, no process) and spawn git only
+   inside repositories, since Files asks the info provider about every folder.
+7. **Found in the spike:** `gtk_window_get_toplevels()` is borrowed — unref'ing it (a `g_autoptr`) broke Files'
+   window list and crashed the next user of it; optimised `-Warray-bounds` caught reading past an empty string.
