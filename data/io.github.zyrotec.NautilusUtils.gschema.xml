@@ -390,6 +390,11 @@
       <summary>The details pane shows the Git view (the last choice of its Details | Git toggle)</summary>
     </key>
 
+    <key name="git-history-graph" type="b">
+      <default>true</default>
+      <summary>The Git view's history shows the graph of branch lines (else a plain list)</summary>
+    </key>
+
     <key name="git-ide" type="s">
       <default>''</default>
       <summary>Desktop ID of the IDE "Open in IDE" uses ('' = the first one installed)</summary>

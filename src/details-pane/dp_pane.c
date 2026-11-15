@@ -66,6 +66,7 @@ struct _DpPane
   guint           stack_art;     /* Folders drawn with their previews in the stack (P23) */
   GtkWidget      *extra_toggle;  /* AdwToggleGroup "Details | <extra>" at the top (PLAN.md §14.2 item 4) */
   GtkWidget      *extra_page;    /* Borrowed (in @info_box) or NULL: the extra page for what is shown */
+  GtkWidget      *extra_header;  /* Borrowed (in @content, after @box) or NULL: shown instead of the preview */
   GFile          *last_folder;   /* Owned or NULL: the last dp_pane_show arguments (to rebuild the extra page) */
   GPtrArray      *last_files;    /* Owned or NULL: GFile* (owned) */
   guint           last_n;
@@ -90,6 +91,7 @@ static GPtrArray       *panes;            /* Borrowed DpPane* (each removes itse
 static char            *extra_title;      /* Owned or NULL: the extra view (dp_pane_set_extra) */
 static DpExtraFunc      extra_func;
 static DpExtraSelectedFunc extra_selected_func;
+static DpExtraDescribeFunc extra_describe_func;
 static gpointer         extra_data;
 static gboolean         extra_selected;   /* The extra page is the view shown when available */
 static GHashTable      *retiring;         /* Owned: GtkMediaStream* (owned ref) → its release timeout id. */
@@ -1186,10 +1188,14 @@ dp_pane_describe (DpPane *self)
                           gtk_label_get_text (GTK_LABEL (self->title)), gtk_label_get_text (GTK_LABEL (self->subtitle)),
                           self->preview_kind, dp_pane_is_playing (self), self->pending);
   /* Walk the rendered widgets, so this describes what is on screen. */
-  /* The visible groups: the details, or the extra page (built from the same groups). */
-  GtkWidget *shown_groups = gtk_widget_get_visible (self->groups) || self->extra_page == NULL ? self->groups
-                                                                                              : self->extra_page;
-  for (GtkWidget *g = gtk_widget_get_first_child (shown_groups); g != NULL; g = gtk_widget_get_next_sibling (g))
+  /* The details' groups; the extra page (when it is what is shown) describes itself. */
+  if (self->extra_page != NULL && gtk_widget_get_visible (self->extra_page) && extra_describe_func != NULL)
+    {
+      g_autofree char *extra = extra_describe_func (self->extra_page);
+      g_string_append_printf (s, " [extra: %s]", extra);
+    }
+  for (GtkWidget *g = gtk_widget_get_visible (self->groups) ? gtk_widget_get_first_child (self->groups) : NULL; g != NULL;
+       g = gtk_widget_get_next_sibling (g))
     {
       GtkWidget *heading = gtk_widget_get_first_child (g);
       g_string_append_printf (s, " [%s:", gtk_label_get_text (GTK_LABEL (heading)));
@@ -1263,6 +1269,9 @@ sync_extra (DpPane *self)
   gtk_widget_set_visible (self->groups, !bottom && !extra);
   if (self->extra_page != NULL)
     gtk_widget_set_visible (self->extra_page, extra);
+  if (self->extra_header != NULL)
+    gtk_widget_set_visible (self->extra_header, extra);
+  gtk_widget_set_visible (self->box, !(extra && self->extra_header != NULL));
   if (available)
     adw_toggle_group_set_active_name (ADW_TOGGLE_GROUP (self->extra_toggle), extra ? "extra" : "details");
 }
@@ -1273,11 +1282,21 @@ build_extra (DpPane *self)
 {
   if (self->extra_page != NULL)
     gtk_box_remove (GTK_BOX (self->info_box), self->extra_page);
-  self->extra_page = NULL;
+  if (self->extra_header != NULL)
+    gtk_box_remove (GTK_BOX (self->content), self->extra_header);
+  self->extra_page = self->extra_header = NULL;
+  GtkWidget *header = NULL;
   if (extra_func != NULL && (self->last_folder != NULL || (self->last_files != NULL && self->last_files->len > 0)))
-    self->extra_page = extra_func (self->last_folder, self->last_files, extra_data);
+    self->extra_page = extra_func (self->last_folder, self->last_files, &header, extra_data);
   if (self->extra_page != NULL)
     gtk_box_insert_child_after (GTK_BOX (self->info_box), self->extra_page, self->groups);
+  if (header != NULL && self->extra_page != NULL)
+    {
+      self->extra_header = header;
+      gtk_box_insert_child_after (GTK_BOX (self->content), header, self->box);
+    }
+  else if (header != NULL)
+    g_object_unref (g_object_ref_sink (header));
   if (extra_title != NULL)
     {
       AdwToggle *t = adw_toggle_group_get_toggle_by_name (ADW_TOGGLE_GROUP (self->extra_toggle), "extra");
@@ -1303,8 +1322,10 @@ on_extra_toggle (GObject *group, GParamSpec *pspec, gpointer data)
 }
 
 void
-dp_pane_set_extra (const char *title, DpExtraFunc func, DpExtraSelectedFunc on_selected, gpointer user_data)
+dp_pane_set_extra (const char *title, DpExtraFunc func, DpExtraSelectedFunc on_selected, DpExtraDescribeFunc describe,
+                   gpointer user_data)
 {
+  extra_describe_func = func != NULL ? describe : NULL;
   g_free (extra_title);
   extra_title = func != NULL ? g_strdup (title) : NULL;
   extra_func = func;
@@ -1312,6 +1333,13 @@ dp_pane_set_extra (const char *title, DpExtraFunc func, DpExtraSelectedFunc on_s
   extra_data = func != NULL ? user_data : NULL;
   for (guint i = 0; panes != NULL && i < panes->len; i++)
     build_extra (g_ptr_array_index (panes, i));
+}
+
+GtkWidget *
+dp_pane_get_extra_page (DpPane *self)
+{
+  g_return_val_if_fail (DP_IS_PANE (self), NULL);
+  return self->extra_page;
 }
 
 void

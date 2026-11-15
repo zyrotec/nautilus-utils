@@ -57,11 +57,15 @@ G_DEFINE_FINAL_TYPE (GtBar, gt_bar, GTK_TYPE_WIDGET)
 
 static GtkCssProvider *css;
 
+/* The bar: the same padding all round as Files' header bar (6 px, buttons at their normal height); popovers 12 px
+ * inside, rows lined up with the search field (owner, 2026-11-15). */
 static const char style_sheet[] =
-  ".gt-bar { border-top: 1px solid var(--border-color); padding: 2px 6px; }\n"
-  ".gt-bar > button, .gt-bar > menubutton > button { min-height: 26px; padding: 0 8px; }\n"
-  ".gt-op-message { font-family: monospace; font-size: 0.9em; }\n"
-  ".gt-branch-row { padding: 6px 10px; }\n";
+  "gt-bar { border-top: 1px solid var(--border-color); padding: 6px; }\n"
+  "popover.gt-popover > contents { padding: 12px; }\n"
+  ".gt-list { background: none; }\n"
+  ".gt-list > row { padding: 6px 8px; border-radius: 6px; }\n"
+  ".gt-list > row.gt-section { padding: 10px 8px 2px 8px; }\n"
+  ".gt-op-message { font-family: monospace; font-size: 0.9em; }\n";
 
 static void
 ensure_style (void)
@@ -143,10 +147,14 @@ update (GtBar *self)
   gtk_widget_set_sensitive (self->push_button, !busy && branch != NULL && (counts || self->remote != NULL));
   gtk_widget_set_sensitive (self->pull_button, !busy && counts);
   gtk_widget_set_sensitive (self->sync_button, !busy && (counts || self->remote != NULL));
-  g_autofree char *push_text = counts && ahead > 0 ? g_strdup_printf ("Push %d", ahead) : g_strdup ("Push");
-  g_autofree char *pull_text = counts && behind > 0 ? g_strdup_printf ("Pull %d", behind) : g_strdup ("Pull");
-  gtk_button_set_label (GTK_BUTTON (self->push_button), push_text);
-  gtk_button_set_label (GTK_BUTTON (self->pull_button), pull_text);
+  g_autofree char *push_tip = counts && ahead > 0 ? g_strdup_printf ("Push %d commit%s to the remote", ahead, ahead == 1 ? "" : "s")
+                              : g_strdup (counts ? "Push (nothing to send)" : "Push: publish this branch");
+  g_autofree char *pull_tip = counts && behind > 0
+                                ? g_strdup_printf ("Pull %d commit%s from the remote (fast-forward only)", behind, behind == 1 ? "" : "s")
+                                : g_strdup ("Pull (fast-forward only)");
+  gtk_widget_set_tooltip_text (self->push_button, push_tip);
+  gtk_widget_set_tooltip_text (self->pull_button, pull_tip);
+  gtk_widget_set_tooltip_text (self->sync_button, "Sync: check the remote for new commits (fetch); changes nothing else");
 }
 
 /* Progress button: spinner while something runs here, else the last result's icon; hidden with no operations. */
@@ -329,10 +337,8 @@ section_row (const char *title)
   gtk_widget_add_css_class (l, "heading");
   gtk_widget_add_css_class (l, "dim-label");
   gtk_label_set_xalign (GTK_LABEL (l), 0);
-  gtk_widget_set_margin_top (l, 8);
-  gtk_widget_set_margin_start (l, 10);
-  gtk_widget_set_margin_bottom (l, 2);
   GtkWidget *row = gtk_list_box_row_new ();
+  gtk_widget_add_css_class (row, "gt-section");
   gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (row), l);
   gtk_list_box_row_set_activatable (GTK_LIST_BOX_ROW (row), FALSE);
   gtk_list_box_row_set_selectable (GTK_LIST_BOX_ROW (row), FALSE);
@@ -344,7 +350,6 @@ static GtkWidget *
 branch_row (const GtBranch *b)
 {
   GtkWidget *box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 8);
-  gtk_widget_add_css_class (box, "gt-branch-row");
   GtkWidget *check = gtk_image_new_from_icon_name ("object-select-symbolic");
   gtk_widget_set_opacity (check, b->current ? 1.0 : 0.0);
   gtk_box_append (GTK_BOX (box), check);
@@ -578,10 +583,8 @@ create_op_row (gpointer item, gpointer data)
   (void) data;
   GtOp *op = item;
   GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 4);
-  gtk_widget_set_margin_start (box, 10);
-  gtk_widget_set_margin_end (box, 10);
-  gtk_widget_set_margin_top (box, 8);
-  gtk_widget_set_margin_bottom (box, 8);
+  gtk_widget_set_margin_top (box, 4);
+  gtk_widget_set_margin_bottom (box, 4);
   GtkWidget *head = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 8);
   GtkWidget *title = gtk_label_new (gt_op_get_title (op));
   gtk_widget_add_css_class (title, "heading");
@@ -656,18 +659,23 @@ on_any_op_notify (GListModel *all, guint pos, guint removed, guint added, gpoint
 static GtkWidget *
 popover_box (void)
 {
-  GtkWidget *b = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
-  gtk_widget_set_margin_start (b, 6);
-  gtk_widget_set_margin_end (b, 6);
-  gtk_widget_set_margin_top (b, 6);
-  gtk_widget_set_margin_bottom (b, 6);
-  return b;
+  return gtk_box_new (GTK_ORIENTATION_VERTICAL, 12);
+}
+
+/* The bar's popovers open upwards, above their button, so they stay inside the window (owner, 2026-11-15). */
+static GtkWidget *
+bar_popover (void)
+{
+  GtkWidget *pop = gtk_popover_new ();
+  gtk_popover_set_position (GTK_POPOVER (pop), GTK_POS_TOP);
+  gtk_widget_add_css_class (pop, "gt-popover");
+  return pop;
 }
 
 static void
 build_branch_popover (GtBar *self)
 {
-  GtkWidget *pop = gtk_popover_new ();
+  GtkWidget *pop = bar_popover ();
   GtkWidget *box = popover_box ();
   gtk_widget_set_size_request (box, 320, -1);
   self->branch_search = gtk_search_entry_new ();
@@ -680,7 +688,7 @@ build_branch_popover (GtBar *self)
   gtk_scrolled_window_set_propagate_natural_height (GTK_SCROLLED_WINDOW (scroll), TRUE);
   self->branch_list = gtk_list_box_new ();
   gtk_list_box_set_selection_mode (GTK_LIST_BOX (self->branch_list), GTK_SELECTION_NONE);
-  gtk_widget_add_css_class (self->branch_list, "navigation-sidebar");
+  gtk_widget_add_css_class (self->branch_list, "gt-list");
   gtk_list_box_set_filter_func (GTK_LIST_BOX (self->branch_list), branch_filter, self, NULL);
   g_signal_connect (self->branch_list, "row-activated", G_CALLBACK (on_branch_activated), self);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (scroll), self->branch_list);
@@ -726,10 +734,18 @@ on_counts_popover (GtkPopover *popover, gpointer data)
   load_remotes (GT_BAR (data));
 }
 
+static GtkWidget *
+soft_icon_button (const char *icon, const char *name)
+{
+  GtkWidget *b = gtk_button_new_from_icon_name (icon);
+  gtk_accessible_update_property (GTK_ACCESSIBLE (b), GTK_ACCESSIBLE_PROPERTY_LABEL, name, -1);
+  return b;
+}
+
 static void
 build_counts_popover (GtBar *self)
 {
-  GtkWidget *pop = gtk_popover_new ();
+  GtkWidget *pop = bar_popover ();
   GtkWidget *box = popover_box ();
   gtk_widget_set_size_request (box, 300, -1);
   GtkWidget *head = gtk_label_new ("Last Commit");
@@ -753,12 +769,10 @@ build_counts_popover (GtBar *self)
   gtk_box_append (GTK_BOX (box), self->upstream_label);
   GtkWidget *buttons = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
   gtk_box_set_homogeneous (GTK_BOX (buttons), TRUE);
-  self->push_button = gtk_button_new_with_label ("Push");
-  gtk_widget_set_tooltip_text (self->push_button, "Send your commits to the remote");
-  self->pull_button = gtk_button_new_with_label ("Pull");
-  gtk_widget_set_tooltip_text (self->pull_button, "Bring in the remote's commits (fast-forward only)");
-  self->sync_button = gtk_button_new_with_label ("Sync");
-  gtk_widget_set_tooltip_text (self->sync_button, "Check the remote for new commits (fetch); changes nothing else");
+  /* Soft icon buttons (owner, 2026-11-15): Adwaita's default, tinted button style; the words are in the tooltips. */
+  self->push_button = soft_icon_button ("go-up-symbolic", "Push");
+  self->pull_button = soft_icon_button ("go-down-symbolic", "Pull");
+  self->sync_button = soft_icon_button ("view-refresh-symbolic", "Sync");
   g_signal_connect (self->push_button, "clicked", G_CALLBACK (on_push), self);
   g_signal_connect (self->pull_button, "clicked", G_CALLBACK (on_pull), self);
   g_signal_connect (self->sync_button, "clicked", G_CALLBACK (on_sync), self);
@@ -774,7 +788,7 @@ build_counts_popover (GtBar *self)
 static void
 build_progress_popover (GtBar *self)
 {
-  GtkWidget *pop = gtk_popover_new ();
+  GtkWidget *pop = bar_popover ();
   GtkWidget *scroll = gtk_scrolled_window_new ();
   gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
   gtk_scrolled_window_set_max_content_height (GTK_SCROLLED_WINDOW (scroll), 420);
@@ -782,7 +796,7 @@ build_progress_popover (GtBar *self)
   gtk_widget_set_size_request (scroll, 380, -1);
   self->ops_list = gtk_list_box_new ();
   gtk_list_box_set_selection_mode (GTK_LIST_BOX (self->ops_list), GTK_SELECTION_NONE);
-  gtk_widget_add_css_class (self->ops_list, "boxed-list-separate");
+  gtk_widget_add_css_class (self->ops_list, "gt-list");
   gtk_list_box_bind_model (GTK_LIST_BOX (self->ops_list), G_LIST_MODEL (self->my_ops), (GtkListBoxCreateWidgetFunc) create_op_row,
                            NULL, NULL);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (scroll), self->ops_list);

@@ -295,7 +295,7 @@ dp_round() {
   # objects alive at exit, which LeakSanitizer reports under our test driver's frame — PLAN.md §13.9 Phase 5).
   cmd fv-new-tab 2; cmd dp-dump 0.3; cmd "dp-tab 0" 1.5; cmd dp-dump 0.3; dp_expect 'title="photo.jpg"'
   cmd "dp-width 400" 1; cmd dp-dump 0.3; cmd "dp-width 320" 1
-  cmd st-open 1; cmd "st-tab details-pane" 1; cmd st-dump 0.3; cmd st-close 0.5
+  cmd st-open 1; cmd "st-tab details-pane" 1; cmd st-dump 0.3; cmd "st-tab git" 1; cmd st-dump 0.3; cmd st-close 0.5
   # v2 look (PLAN.md §13.10): stack options, a floating card, the header line, the bottom strip.
   cmd "dp-select all" 2; dp_expect 'preview=stack'
   cmd "st-set details-pane-stack-depth-effect 'darken'" 1; cmd "st-set details-pane-stack-card false" 1.5
@@ -405,15 +405,20 @@ gt_round() {
   cmd "gt-switch no-such-branch" 2; gt_expect 'progress="Switch to no-such-branch: failed"'; gt_expect 'branch="feature"'
   cmd "gt-switch main" 2.5; gt_expect 'branch="main"'
   cmd dp-toggle 1.5; cmd "dp-png $LOG/gt-bar-pane.png" 1
-  # The details pane's Details | Git (§14.2 item 4): the repository, the selected item, the folder itself.
-  cmd "dp-select none" 1; dp_expect 'view=details'; cmd "dp-extra on" 1.5; dp_expect 'view=extra'
-  dp_expect '[Repository: Repository=repo; Location='; dp_expect 'Branch=main; Upstream=origin/main; Commits=0 to push, 0 to pull;'
-  cmd "dp-select name README.md" 2; dp_expect 'view=extra'; dp_expect '[Selected Item: Status=Unchanged; Path=README.md; Last commit=Update from elsewhere;'
+  # The details pane's Details | Git (§14.2 item 4, §14.11): the branch card, the history (graph / list), the hover card.
+  cmd "dp-select none" 1; dp_expect 'view=details'; cmd "dp-extra on" 2; dp_expect 'view=extra'
+  dp_expect '[extra: card=[main|Local work|S · '
+  dp_expect 'Mainline: origin/main · 0 ahead, 0 behind'; dp_expect 'graph=1 commits=3 lanes=1'
+  dp_expect 'commit0=Local work{main}'; dp_expect 'commit1=Update from elsewhere commit2=Initial commit'
+  cmd "dp-select name README.md" 2; dp_expect '|README.md · Unchanged]'
   cmd "dp-png $LOG/gt-pane-git.png" 1
+  cmd "gt-card 1" 2.5; dp_expect 'hover=[Update from elsewhere|'; dp_expect '1 file changed ·|+1|−0|'
+  cmd "dp-png $LOG/gt-pane-card.png" 1
   ( cd "$GT_REPO" && echo y >> README.md ); cmd "dp-select none" 0.5; cmd "dp-select name README.md" 2
-  dp_expect 'Status=Modified; Path=README.md;'
-  cmd "dp-select name src" 0.5; cmd "dp-select add README.md" 2; dp_expect '[Selected Items: Items=2; Changes=1 Modified'
-  cmd "sd-open $uri/src" 2; cmd "dp-select none" 1.5; dp_expect '[This Folder: Status=Unchanged; Path=src;'
+  dp_expect '|README.md · Modified]'
+  cmd "dp-select name src" 0.5; cmd "dp-select add README.md" 2; dp_expect '|2 selected · 1 with changes]'
+  cmd "st-set git-history-graph false" 2; dp_expect 'graph=0 commits=3'; cmd "dp-png $LOG/gt-pane-list.png" 1
+  cmd "st-reset git-history-graph" 2; dp_expect 'graph=1'
   cmd "st-set details-pane-position 'bottom'" 1.5; dp_expect 'view=details-only'
   gt_expect 'at=bottom'; cmd "dp-png $LOG/gt-bar-bottom.png" 1                            # below the strip
   cmd "st-set details-pane-position 'right'" 1.5; dp_expect 'view=extra'; gt_expect 'at=column'

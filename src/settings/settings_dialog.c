@@ -852,6 +852,40 @@ details_pane_page (GSettings *settings)
   return page;
 }
 
+/* Git (PLAN.md §14). The IDE choice and more come with Phase 6. */
+static GtkWidget *
+git_page (GSettings *settings)
+{
+  /* The tab's branch icon is in the Git feature's resources (registered at load, also when Git is off). */
+  static gboolean icons_added;
+  if (!icons_added && gdk_display_get_default () != NULL)
+    {
+      icons_added = TRUE;
+      gtk_icon_theme_add_resource_path (gtk_icon_theme_get_for_display (gdk_display_get_default ()),
+                                        "/io/github/zyrotec/NautilusUtils/git/icons");
+    }
+  GtkWidget *page = adw_preferences_page_new ();
+  GtkWidget *main_group = group (NULL, NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (main_group),
+                             switch_row (settings, "git-enabled", "Git",
+                                         "Inside a Git repository: a status bar, Git columns for the list view, the "
+                                         "Git view in the details pane"));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (main_group));
+
+  GtkWidget *look = group ("Show", NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (look),
+                             switch_row (settings, "git-status-bar", "Status Bar",
+                                         "Branch, commits to push and pull, operations and Open in IDE, under the "
+                                         "folder view"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (look),
+                             switch_row (settings, "git-history-graph", "History Graph",
+                                         "The details pane’s Git view draws the branch lines next to the commits; "
+                                         "off: a plain list"));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (look));
+  g_settings_bind (settings, "git-enabled", look, "sensitive", G_SETTINGS_BIND_GET);
+  return page;
+}
+
 /* Shown instead of the tabs when the schema isn't installed. */
 static GtkWidget *
 unavailable_page (void)
@@ -959,6 +993,8 @@ st_settings_dialog_present (GtkWidget *parent)
                                            "folder-icons", "Folder Icons", "folder-symbolic");
       adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), details_pane_page (settings),
                                            "details-pane", "Details Pane", "sidebar-show-right-symbolic");
+      adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), git_page (settings), "git", "Git",
+                                           "nu-git-branch-symbolic");
 
       /* Sidebar pane: one row per feature. */
       GtkWidget *sidebar = adw_view_switcher_sidebar_new ();

@@ -10,7 +10,9 @@
 #include <nautilus-extension.h>
 #include <string.h>
 
+#include "dp_pane.h"
 #include "gt_bar.h"
+#include "gt_page.h"
 #include "gt_columns.h"
 #include "gt_ide.h"
 #include "gt_info.h"
@@ -465,6 +467,14 @@ gt_hook_debug_command (const char *cmd)
         g_message ("gt expect ok: %s %s", rest, want);
       else
         g_message ("gt expect FAIL: %s %s — %s", rest, want, full);
+    }
+  else if (g_str_has_prefix (cmd, "gt-card "))
+    {
+      /* Opens the hover card of commit N in the details pane's Git view. */
+      GtkWidget *pane = find_type (hook->window, DP_TYPE_PANE, 40);
+      GtkWidget *page = pane != NULL ? dp_pane_get_extra_page (DP_PANE (pane)) : NULL;
+      guint n = (guint) g_ascii_strtoull (cmd + strlen ("gt-card "), NULL, 10);
+      g_message ("gt card %u: %s", n, page != NULL && gt_page_open_card (page, n) ? "open" : "none");
     }
   else if (g_str_equal (cmd, "gt-push"))
     gt_bar_push (bar);

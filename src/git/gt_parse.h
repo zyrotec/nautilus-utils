@@ -90,6 +90,63 @@ GHashTable *gt_log_last_commits (const char *data,
 GtCommit *gt_log_first (const char *data,
                         gsize       len);
 
+/* ---- history with a graph (PLAN.md §14.11) ---- */
+
+/* `git log --topo-order --decorate=full --format=GT_HISTORY_FORMAT`: one record per commit, ended by \x1e. */
+#define GT_HISTORY_FORMAT "%H%x00%P%x00%an%x00%at%x00%D%x00%s%x1e"
+
+typedef enum
+{
+  GT_REF_HEAD,    /* a detached HEAD */
+  GT_REF_CURRENT, /* the branch checked out */
+  GT_REF_LOCAL,
+  GT_REF_REMOTE,
+  GT_REF_TAG,
+} GtRefKind;
+
+typedef struct
+{
+  char     *name;  /* short: "main", "origin/main", "v1.0" */
+  GtRefKind kind;
+} GtRef;
+
+typedef struct
+{
+  char      *hash;
+  GStrv      parents; /* full hashes, may be empty */
+  char      *author;
+  gint64     date;
+  char      *subject;
+  GPtrArray *refs;    /* GtRef* (owned) */
+} GtLogEntry;
+
+void       gt_log_entry_free     (GtLogEntry *entry);
+/* GtLogEntry* in log order (an owned array). */
+GPtrArray *gt_history_parse      (const char *data,
+                                  gsize       len);
+
+/* One row of the graph: the commit sits in lane @node; segments go from the row's top to the node ("top") or from
+ * the node to the row's bottom, between lanes @from and @to, in colour @color (an index). */
+typedef struct
+{
+  int      from, to;
+  gboolean top;
+  int      color;
+} GtGraphSeg;
+
+typedef struct
+{
+  int      node;
+  int      node_color;
+  gboolean merge;   /* two or more parents */
+  int      n_lanes; /* lanes used in this row (for its width) */
+  GArray  *segs;    /* GtGraphSeg */
+} GtGraphRow;
+
+void       gt_graph_row_free     (GtGraphRow *row);
+/* One GtGraphRow* per entry (an owned array), lanes kept as straight as possible, colours per branch line. */
+GPtrArray *gt_graph_layout       (GPtrArray *entries);
+
 /* Why a git run failed, from its error text (LC_ALL=C). */
 typedef enum
 {

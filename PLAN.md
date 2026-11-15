@@ -2354,3 +2354,19 @@ modified, added, untracked, ignored, a folder with changes).
   (G1). Moves live with the pane's position. Smoke `at=bottom` / `at=column`, `gt-bar-bottom.png`.
 - `check-safety.sh` all PASS; full ASan smoke: folder views 86 / 0 wrong, details pane 62, git 45, no "should not be
   reached" in the log; the flagged leak is the known sidebar OS-menu popover one.
+
+### 14.11 Design changes after Phase 4 (owner, 2026-11-15, images 22–30)
+
+| # | Change |
+|---|---|
+| G5 | Git view: a **branch card** replaces the preview (branch, HEAD chip, last commit's message, author · time, "Mainline: origin/main · N ahead, M behind" — origin's default branch, else origin/main, origin/master, main, master —, the selected item's state); below it the **history** from HEAD (300 commits, topo order) with a **graph** of the branch lines (merges as rings, a colour per branch line) and branch / tag chips (current green, other local red, remote neutral, tags yellow; they wrap). |
+| G6 | `git-history-graph` (b, true): off = a plain list (chips at the end of each row). In a new **Git** settings tab (with the feature switch and the status bar; the rest of the tab in Phase 6). |
+| G7 | Hovering a commit (500 ms) opens a **card**: the whole message (title + body), a copy button (the full hash), the hash and parent hash(es), author · time, "N files changed · +a −d" (merges: against the first parent). A popover rather than a tooltip, so the copy button can be clicked; it stays while the pointer is over the row or the card. |
+| G8 | The bar: the header bar's padding all round (6 px, buttons at their normal height, 46 px). Its popovers open upwards (inside the window); 12 px padding; the branch list's rows line up with the search field. Push / Pull / Sync are soft icon buttons (arrows, refresh), the counts in their tooltips. |
+
+Implementation: the details pane's extra view takes an optional header (shown instead of the preview box) and a
+describe function; `gt_history_parse` / `gt_graph_layout` (pure, unit-tested: a merge, decorations incl.
+origin/HEAD left out, a root, a straight line, empty input). Driver `gt-card N`. The card is closed when the history
+leaves the screen (a row freed with the card attached made GTK warn). Smoke: 19 pane checks (card, mainline,
+history, chips, hover card with message and stats, modified item, two items, plain list), Git tab opened.
+- `check-safety.sh` all PASS; full ASan smoke **PASS** (folder views 86 / 0 wrong, details pane 67, git 45).

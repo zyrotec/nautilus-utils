@@ -74,6 +74,7 @@ static const NuConfig defaults = {
   .git_status_bar = TRUE,
   .git_ide = "",
   .git_pane_git = FALSE,
+  .git_history_graph = TRUE,
 };
 
 /* Key name → group reported to listeners. */
@@ -152,6 +153,7 @@ static const struct
   { "git-status-bar", NU_CHANGED_GIT },
   { "git-ide", NU_CHANGED_GIT },
   { "git-pane-git", NU_CHANGED_GIT },
+  { "git-history-graph", NU_CHANGED_GIT },
 };
 
 typedef struct
@@ -358,6 +360,7 @@ read_all (void)
   ns->git_ide = g_settings_get_string (s, "git-ide");
   c->git_ide = ns->git_ide;
   c->git_pane_git = g_settings_get_boolean (s, "git-pane-git");
+  c->git_history_graph = g_settings_get_boolean (s, "git-history-graph");
 }
 
 static gboolean

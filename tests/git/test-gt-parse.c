@@ -186,6 +186,91 @@ test_relative_date (void)
   g_assert_nonnull (strstr (old, "20")); /* a full date with the year */
 }
 
+/* Finds a segment in @row. */
+static gboolean
+has_seg (GtGraphRow *row, int from, int to, gboolean top)
+{
+  for (guint i = 0; i < row->segs->len; i++)
+    {
+      GtGraphSeg *g = &g_array_index (row->segs, GtGraphSeg, i);
+      if (g->from == from && g->to == to && g->top == top)
+        return TRUE;
+    }
+  return FALSE;
+}
+
+static void
+test_history_graph (void)
+{
+  /* M merges X into B; both come from A (the root). Topo order: M, B, X, A. */
+  static const char data[] =
+    "mmm\0bbb xxx\0Ann\0" "400\0HEAD -> refs/heads/main, refs/remotes/origin/main, refs/remotes/origin/HEAD, tag: refs/tags/v1\0Merge X\x1e\n"
+    "bbb\0aaa\0Bob\0" "300\0refs/heads/old\0On main\x1e\n"
+    "xxx\0aaa\0Cy\0" "200\0\0On a branch\x1e\n"
+    "aaa\0\0Dee\0" "100\0\0Root\x1e\n";
+  g_autoptr (GPtrArray) entries = gt_history_parse (data, sizeof data - 1);
+  g_assert_cmpuint (entries->len, ==, 4);
+  GtLogEntry *m = g_ptr_array_index (entries, 0), *a = g_ptr_array_index (entries, 3);
+  g_assert_cmpstr (m->hash, ==, "mmm");
+  g_assert_cmpuint (g_strv_length (m->parents), ==, 2);
+  g_assert_cmpstr (m->parents[1], ==, "xxx");
+  g_assert_cmpstr (m->author, ==, "Ann");
+  g_assert_cmpint (m->date, ==, 400);
+  g_assert_cmpstr (m->subject, ==, "Merge X");
+  g_assert_cmpuint (m->refs->len, ==, 3); /* origin/HEAD left out */
+  GtRef *r0 = g_ptr_array_index (m->refs, 0), *r1 = g_ptr_array_index (m->refs, 1), *r2 = g_ptr_array_index (m->refs, 2);
+  g_assert_cmpstr (r0->name, ==, "main");
+  g_assert_cmpint (r0->kind, ==, GT_REF_CURRENT);
+  g_assert_cmpstr (r1->name, ==, "origin/main");
+  g_assert_cmpint (r1->kind, ==, GT_REF_REMOTE);
+  g_assert_cmpstr (r2->name, ==, "v1");
+  g_assert_cmpint (r2->kind, ==, GT_REF_TAG);
+  g_assert_cmpint (((GtRef *) g_ptr_array_index (((GtLogEntry *) g_ptr_array_index (entries, 1))->refs, 0))->kind, ==,
+                   GT_REF_LOCAL);
+  g_assert_cmpuint (g_strv_length (a->parents), ==, 0);
+
+  g_autoptr (GPtrArray) rows = gt_graph_layout (entries);
+  g_assert_cmpuint (rows->len, ==, 4);
+  GtGraphRow *rm = g_ptr_array_index (rows, 0), *rb = g_ptr_array_index (rows, 1), *rx = g_ptr_array_index (rows, 2),
+             *ra = g_ptr_array_index (rows, 3);
+  g_assert_cmpint (rm->node, ==, 0);
+  g_assert_true (rm->merge);
+  g_assert_true (has_seg (rm, 0, 0, FALSE)); /* to B */
+  g_assert_true (has_seg (rm, 0, 1, FALSE)); /* to X, in a new lane */
+  g_assert_false (has_seg (rm, 1, 1, FALSE));
+  g_assert_cmpint (rm->n_lanes, ==, 2);
+  g_assert_cmpint (rb->node, ==, 0);
+  g_assert_true (has_seg (rb, 0, 0, TRUE));
+  g_assert_true (has_seg (rb, 1, 1, TRUE)); /* X's lane passes */
+  g_assert_true (has_seg (rb, 1, 1, FALSE));
+  g_assert_cmpint (rx->node, ==, 1);
+  g_assert_true (has_seg (rx, 1, 1, TRUE));
+  g_assert_true (has_seg (rx, 0, 0, TRUE));
+  g_assert_cmpint (ra->node, ==, 0);
+  g_assert_true (has_seg (ra, 0, 0, TRUE));
+  g_assert_true (has_seg (ra, 1, 0, TRUE)); /* X's line bends into the root */
+  g_assert_false (ra->merge);
+  g_assert_cmpuint (ra->segs->len, ==, 2); /* nothing below the root */
+  g_assert_cmpint (rm->node_color, !=, rx->node_color); /* the branch line has its own colour */
+
+  /* A straight line; empty and garbage input. */
+  static const char line[] = "c3\0c2\0A\0" "3\0\0three\x1e" "c2\0c1\0A\0" "2\0\0two\x1e" "c1\0\0A\0" "1\0\0one\x1e";
+  g_autoptr (GPtrArray) le = gt_history_parse (line, sizeof line - 1);
+  g_autoptr (GPtrArray) lr = gt_graph_layout (le);
+  for (guint i = 0; i < lr->len; i++)
+    {
+      GtGraphRow *r = g_ptr_array_index (lr, i);
+      g_assert_cmpint (r->node, ==, 0);
+      g_assert_cmpint (r->n_lanes, ==, 1);
+    }
+  g_autoptr (GPtrArray) none = gt_history_parse (NULL, 0);
+  g_assert_cmpuint (none->len, ==, 0);
+  g_autoptr (GPtrArray) none_rows = gt_graph_layout (none);
+  g_assert_cmpuint (none_rows->len, ==, 0);
+  g_autoptr (GPtrArray) junk = gt_history_parse ("x\x1e\0\0\x1e", 6);
+  g_assert_cmpuint (junk->len, ==, 0);
+}
+
 static void
 test_urls (void)
 {
@@ -227,5 +312,6 @@ main (int argc, char **argv)
   g_test_add_func ("/gt-parse/errors-progress", test_errors_progress);
   g_test_add_func ("/gt-parse/urls", test_urls);
   g_test_add_func ("/gt-parse/relative-date", test_relative_date);
+  g_test_add_func ("/gt-parse/history-graph", test_history_graph);
   return g_test_run ();
 }

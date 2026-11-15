@@ -87,19 +87,26 @@ void dp_pane_unload_style (void);
  * for what is shown, a toggle group at the pane's top switches between the details and the extra page. ---------- */
 
 /* Builds the extra page for @folder / @files (as given to dp_pane_show; @files may be NULL or empty), or returns NULL
- * when there is none for them (e.g. not in a Git repository). A new floating widget. Main thread. */
-typedef GtkWidget *(*DpExtraFunc) (GFile     *folder,
-                                   GPtrArray *files,
-                                   gpointer   user_data);
+ * when there is none for them (e.g. not in a Git repository). A new floating widget, shown instead of the detail
+ * groups; *@header (optional, may be left NULL) receives a floating widget shown instead of the preview box.
+ * Main thread. */
+typedef GtkWidget *(*DpExtraFunc) (GFile      *folder,
+                                   GPtrArray  *files,
+                                   GtkWidget **header,
+                                   gpointer    user_data);
 
 /* The user switched views (TRUE = the extra page). */
 typedef void (*DpExtraSelectedFunc) (gboolean selected,
                                      gpointer user_data);
 
+/* One line describing an extra page (dp_pane_describe). Caller frees. */
+typedef char *(*DpExtraDescribeFunc) (GtkWidget *page);
+
 /* Process-wide: @title names the toggle ("Git"); NULL @func removes the extra view from every pane. */
 void dp_pane_set_extra (const char          *title,
                         DpExtraFunc          func,
                         DpExtraSelectedFunc  on_selected,
+                        DpExtraDescribeFunc  describe,
                         gpointer             user_data);
 
 /* Which view every pane shows when the extra page is available (e.g. the remembered choice). */
@@ -116,6 +123,9 @@ GtkWidget *dp_pane_build_group (const char        *title,
 /* Clicks the toggle's Details (FALSE) or extra (TRUE) button, as the user would (if the toggle is shown). */
 void dp_pane_select_extra (DpPane   *self,
                            gboolean  extra);
+
+/* The extra page shown for what is shown now (borrowed), or NULL. */
+GtkWidget *dp_pane_get_extra_page (DpPane *self);
 
 /* Clicks the play button. FALSE if there is none (not a video, or already playing). */
 gboolean dp_pane_play (DpPane *self);

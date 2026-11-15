@@ -537,3 +537,225 @@ gt_relative_date (gint64 when, gint64 now)
   g_autoptr (GDateTime) then = g_date_time_new_from_unix_local (when);
   return then != NULL ? g_date_time_format (then, "%-d %B %Y") : g_strdup ("");
 }
+
+/* ---- history with a graph ---- */
+
+void
+gt_log_entry_free (GtLogEntry *e)
+{
+  if (e == NULL)
+    return;
+  g_free (e->hash);
+  g_strfreev (e->parents);
+  g_free (e->author);
+  g_free (e->subject);
+  g_clear_pointer (&e->refs, g_ptr_array_unref);
+  g_free (e);
+}
+
+static void
+ref_free (gpointer data)
+{
+  GtRef *r = data;
+  g_free (r->name);
+  g_free (r);
+}
+
+static void
+add_ref (GPtrArray *refs, const char *name, GtRefKind kind)
+{
+  GtRef *r = g_new0 (GtRef, 1);
+  r->name = g_strdup (name);
+  r->kind = kind;
+  g_ptr_array_add (refs, r);
+}
+
+/* "%D" with --decorate=full: "HEAD -> refs/heads/main, refs/remotes/origin/main, tag: refs/tags/v1". */
+static GPtrArray *
+parse_refs (const char *d, gsize len)
+{
+  GPtrArray *refs = g_ptr_array_new_with_free_func (ref_free);
+  g_autofree char *text = g_strndup (d, len);
+  g_auto (GStrv) parts = g_strsplit (text, ", ", -1);
+  for (int i = 0; parts[i] != NULL; i++)
+    {
+      const char *p = g_strstrip (parts[i]);
+      if (*p == '\0')
+        continue;
+      if (g_str_has_prefix (p, "HEAD -> "))
+        {
+          const char *b = p + strlen ("HEAD -> ");
+          add_ref (refs, g_str_has_prefix (b, "refs/heads/") ? b + strlen ("refs/heads/") : b, GT_REF_CURRENT);
+        }
+      else if (g_str_equal (p, "HEAD"))
+        add_ref (refs, "HEAD", GT_REF_HEAD);
+      else if (g_str_has_prefix (p, "tag: "))
+        {
+          const char *t = p + strlen ("tag: ");
+          add_ref (refs, g_str_has_prefix (t, "refs/tags/") ? t + strlen ("refs/tags/") : t, GT_REF_TAG);
+        }
+      else if (g_str_has_prefix (p, "refs/heads/"))
+        add_ref (refs, p + strlen ("refs/heads/"), GT_REF_LOCAL);
+      else if (g_str_has_prefix (p, "refs/remotes/"))
+        {
+          if (!g_str_has_suffix (p, "/HEAD"))
+            add_ref (refs, p + strlen ("refs/remotes/"), GT_REF_REMOTE);
+        }
+    }
+  return refs;
+}
+
+GPtrArray *
+gt_history_parse (const char *data, gsize len)
+{
+  GPtrArray *out = g_ptr_array_new_with_free_func ((GDestroyNotify) gt_log_entry_free);
+  gsize pos = 0;
+  while (data != NULL && pos < len)
+    {
+      const char *rec = data + pos;
+      const char *end = memchr (rec, '\x1e', len - pos);
+      gsize rlen = end != NULL ? (gsize) (end - rec) : len - pos;
+      pos += rlen + 1;
+      while (rlen > 0 && (*rec == '\n' || *rec == '\r'))
+        rec++, rlen--;
+      const char *f[6];
+      gsize fl[6];
+      gsize p = 0;
+      int n = 0;
+      for (; n < 6 && p <= rlen; n++)
+        {
+          const char *z = n < 5 ? memchr (rec + p, '\0', rlen - p) : NULL;
+          f[n] = rec + p;
+          fl[n] = z != NULL ? (gsize) (z - (rec + p)) : rlen - p;
+          p += fl[n] + 1;
+          if (z == NULL && n < 5)
+            {
+              n++;
+              break;
+            }
+        }
+      if (n < 6 || fl[0] == 0)
+        continue;
+      GtLogEntry *e = g_new0 (GtLogEntry, 1);
+      e->hash = g_strndup (f[0], fl[0]);
+      g_autofree char *parents = g_strndup (f[1], fl[1]);
+      e->parents = *parents != '\0' ? g_strsplit (parents, " ", -1) : g_new0 (char *, 1);
+      e->author = g_strndup (f[2], fl[2]);
+      g_autofree char *date = g_strndup (f[3], fl[3]);
+      e->date = g_ascii_strtoll (date, NULL, 10);
+      e->refs = parse_refs (f[4], fl[4]);
+      e->subject = g_strndup (f[5], fl[5]);
+      g_ptr_array_add (out, e);
+    }
+  return out;
+}
+
+void
+gt_graph_row_free (GtGraphRow *row)
+{
+  if (row == NULL)
+    return;
+  g_array_unref (row->segs);
+  g_free (row);
+}
+
+static void
+seg (GtGraphRow *row, int from, int to, gboolean top, int color)
+{
+  GtGraphSeg s = { from, to, top, color };
+  g_array_append_val (row->segs, s);
+}
+
+/* A free lane (not @avoid), or a new one at the end. */
+static int
+free_lane (GPtrArray *lanes, int avoid)
+{
+  for (guint i = 0; i < lanes->len; i++)
+    if (g_ptr_array_index (lanes, i) == NULL && (int) i != avoid)
+      return (int) i;
+  g_ptr_array_add (lanes, NULL);
+  return (int) lanes->len - 1;
+}
+
+GPtrArray *
+gt_graph_layout (GPtrArray *entries)
+{
+  GPtrArray *rows = g_ptr_array_new_with_free_func ((GDestroyNotify) gt_graph_row_free);
+  g_autoptr (GPtrArray) lanes = g_ptr_array_new_with_free_func (g_free); /* the commit each lane waits for */
+  g_autoptr (GArray) colors = g_array_new (FALSE, TRUE, sizeof (int));
+  int next_color = 0;
+  for (guint k = 0; entries != NULL && k < entries->len; k++)
+    {
+      GtLogEntry *e = g_ptr_array_index (entries, k);
+      GtGraphRow *row = g_new0 (GtGraphRow, 1);
+      row->segs = g_array_new (FALSE, FALSE, sizeof (GtGraphSeg));
+      int node = -1;
+      for (guint i = 0; i < lanes->len; i++)
+        if (g_strcmp0 (g_ptr_array_index (lanes, i), e->hash) == 0)
+          {
+            node = (int) i;
+            break;
+          }
+      gboolean expected = node >= 0;
+      if (!expected)
+        node = free_lane (lanes, -1);
+      g_array_set_size (colors, MAX (colors->len, lanes->len));
+      if (!expected)
+        g_array_index (colors, int, node) = next_color++;
+      /* Top half: every lane coming in; the ones waiting for this commit bend into its node. */
+      int width = (int) lanes->len;
+      for (guint i = 0; i < lanes->len; i++)
+        {
+          const char *want = g_ptr_array_index (lanes, i);
+          if (want == NULL)
+            continue;
+          int c = g_array_index (colors, int, i);
+          seg (row, (int) i, g_str_equal (want, e->hash) ? node : (int) i, TRUE, c);
+          if (g_str_equal (want, e->hash) && (int) i != node)
+            g_ptr_array_index (lanes, i) = (g_free (g_ptr_array_index (lanes, i)), NULL);
+        }
+      row->node = node;
+      row->node_color = g_array_index (colors, int, node);
+      int n_parents = (int) g_strv_length (e->parents);
+      row->merge = n_parents > 1;
+      g_free (g_ptr_array_index (lanes, node));
+      g_ptr_array_index (lanes, node) = n_parents > 0 ? g_strdup (e->parents[0]) : NULL;
+      /* Lanes made in this row for the other parents get no pass-through segment of their own. */
+      g_autoptr (GArray) fresh = g_array_new (FALSE, TRUE, sizeof (gboolean));
+      g_array_set_size (fresh, lanes->len + (guint) n_parents);
+      for (int pi = 1; pi < n_parents; pi++)
+        {
+          int j = -1;
+          for (guint i = 0; i < lanes->len; i++)
+            if (g_strcmp0 (g_ptr_array_index (lanes, i), e->parents[pi]) == 0)
+              {
+                j = (int) i;
+                break;
+              }
+          if (j < 0)
+            {
+              j = free_lane (lanes, node);
+              g_free (g_ptr_array_index (lanes, j));
+              g_ptr_array_index (lanes, j) = g_strdup (e->parents[pi]);
+              g_array_set_size (colors, MAX (colors->len, lanes->len));
+              g_array_index (colors, int, j) = next_color++;
+              g_array_set_size (fresh, MAX (fresh->len, lanes->len));
+              g_array_index (fresh, gboolean, j) = TRUE;
+            }
+          seg (row, node, j, FALSE, g_array_index (colors, int, j));
+        }
+      /* Bottom half: the node to its first parent, every other lane straight down. */
+      for (guint i = 0; i < lanes->len; i++)
+        {
+          if (g_ptr_array_index (lanes, i) == NULL || g_array_index (fresh, gboolean, i))
+            continue;
+          seg (row, (int) i, (int) i, FALSE, g_array_index (colors, int, i));
+        }
+      /* Trailing free lanes are dropped (rows stay narrow). */
+      while (lanes->len > 0 && g_ptr_array_index (lanes, lanes->len - 1) == NULL)
+        g_ptr_array_set_size (lanes, lanes->len - 1);
+      row->n_lanes = MAX (width, MAX ((int) lanes->len, node + 1));
+      g_ptr_array_add (rows, row);
+    }
+  return rows;
+}
