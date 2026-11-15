@@ -37,7 +37,8 @@ typedef struct
   GWeakRef            toolbar_view;  /* The content AdwToolbarView (Nautilus') */
   GWeakRef            tab_view;      /* Nautilus' AdwTabView, moved into @paned */
   GWeakRef            view_controls; /* The header's NautilusViewControls */
-  GWeakRef            header_bar;    /* Nautilus' content AdwHeaderBar (the line under it, P15) */
+  GWeakRef            header_bar;    /* What the line under the header goes on: the top bar around Nautilus' content
+                                      * AdwHeaderBar, or the header bar itself (P15, line_target) */
   GWeakRef            paned;         /* Ours */
   GWeakRef            pane;          /* Ours (DpPane) */
   GWeakRef            button;        /* Ours */
@@ -506,6 +507,18 @@ win_hook_free (gpointer data)
   g_free (hook->shown_key);
   g_free (hook);
 }
+/* The widget the line under the header bar goes on (P15): the toolbar view's top bar (the box with libadwaita's
+ * "top-bar" class) around Files' header bar, which ends exactly where the content (and the pane's border) starts;
+ * the header bar itself sits 3 px inside it (Nautilus 51.1), so a line on it left a gap. Falls back to @header. */
+static GtkWidget *
+line_target (GtkWidget *header)
+{
+  for (GtkWidget *w = header; w != NULL && !ADW_IS_TOOLBAR_VIEW (w); w = gtk_widget_get_parent (w))
+    if (gtk_widget_has_css_class (w, "top-bar"))
+      return w;
+  return header;
+}
+
 
 static gboolean
 install (GtkWidget *window)
@@ -533,7 +546,7 @@ install (GtkWidget *window)
 
   WinHook *hook = g_new0 (WinHook, 1);
   hook->window = window;
-  g_weak_ref_init (&hook->header_bar, find_type (toolbar, ADW_TYPE_HEADER_BAR, 4));
+  g_weak_ref_init (&hook->header_bar, line_target (find_type (toolbar, ADW_TYPE_HEADER_BAR, 4)));
   g_weak_ref_init (&hook->toolbar_view, toolbar_view);
   g_weak_ref_init (&hook->tab_view, tab_view);
   g_weak_ref_init (&hook->view_controls, vc);
@@ -905,6 +918,22 @@ dp_hook_debug_command (const char *cmd)
           gsk_renderer_unrealize (renderer);
         }
       g_message ("dp png: %s %s", ok ? "saved" : "FAILED", out);
+    }
+  else if (g_str_equal (cmd, "dp-geom"))
+    {
+      /* Where the header bar (and its parents up to the window) and the pane are, in window coordinates. */
+      g_autoptr (GtkWidget) header = g_weak_ref_get (&hook->header_bar);
+      for (GtkWidget *w = header; w != NULL && w != hook->window; w = gtk_widget_get_parent (w))
+        {
+          graphene_rect_t r;
+          if (gtk_widget_compute_bounds (w, hook->window, &r))
+            g_message ("dp geom: %s.%s y=%.1f..%.1f x=%.1f..%.1f", G_OBJECT_TYPE_NAME (w), gtk_widget_get_css_name (w),
+                       r.origin.y, r.origin.y + r.size.height, r.origin.x, r.origin.x + r.size.width);
+        }
+      graphene_rect_t r;
+      if (pane != NULL && gtk_widget_compute_bounds (GTK_WIDGET (pane), hook->window, &r))
+        g_message ("dp geom: pane y=%.1f..%.1f x=%.1f..%.1f", r.origin.y, r.origin.y + r.size.height, r.origin.x,
+                   r.origin.x + r.size.width);
     }
   else if (g_str_equal (cmd, "dp-close-window"))
     gtk_window_close (GTK_WINDOW (hook->window));

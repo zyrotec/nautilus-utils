@@ -102,7 +102,7 @@ static const char style_sheet[] =
   /* Our paned's own line is replaced by the pane's border (on/off, P13); the handle stays draggable. */
   "paned.dp-paned > separator { background: none; background-image: none; box-shadow: none; }\n"
   /* P15: a line under Files' content header bar while the pane is shown (class set by the hook). */
-  "headerbar.dp-header-line { box-shadow: inset 0 -1px var(--border-color); }\n"
+  ".dp-header-line { box-shadow: inset 0 -1px var(--border-color); }\n"
   ".dp-play { min-width: 56px; min-height: 56px; -gtk-icon-size: 24px; }\n"
   ".dp-chip { border-radius: 9999px; padding: 3px 12px; background-color: alpha(currentColor, 0.08);"
   " font-size: 0.9em; }\n"

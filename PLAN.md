@@ -2101,3 +2101,7 @@ selection flickers; a blurred background behind pictures; and look into the 17�
 - **P29 (spacing):** the uneven gaps came from spacing the icons' *squares*: a folder icon is drawn in the lower
   part of its square, a document fills it, so a document behind folders showed twice the gap. Now the visible tops
   are spaced; demo renders at 4, 12 and 30 px with folders + a document and with picture cards are even.
+- **P15 fix (owner: the header line didn't meet the pane's border):** Files' header bar sits 3 px inside the toolbar
+  view's top bar (header y 3–43, top bar 0–46, content from 46; measured with the new driver command `dp-geom`), so
+  the line drawn on the header bar ended 3 px above the pane. It is now drawn on the top bar (libadwaita's
+  `top-bar` box), which ends where the content starts — also below the tab bar when several tabs are open.

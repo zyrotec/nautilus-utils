@@ -301,7 +301,9 @@ dp_round() {
   cmd "st-set details-pane-stack-depth-effect 'darken'" 1; cmd "st-set details-pane-stack-card false" 1.5
   dp_expect 'preview=stack'
   cmd "st-set details-pane-margin 10" 0.5; cmd "st-set details-pane-radius 14" 0.5
-  cmd "st-set details-pane-header-border true" 1; cmd dp-dump 0.3; cmd "dp-png $LOG/dp-floating.png" 1
+  cmd "st-set details-pane-header-border true" 1; cmd dp-dump 0.3; cmd dp-geom 0.3
+  cmd "st-set details-pane-margin 0" 0.5; cmd dp-geom 0.3; cmd "dp-png $LOG/dp-header-line.png" 1
+  cmd "st-set details-pane-margin 10" 0.5; cmd "dp-png $LOG/dp-floating.png" 1
   # v3 (§13.12): icon size, snug media box, the Windows 7 summary at the bottom.
   cmd "st-set details-pane-icon-size 64" 1; dp_pick notes.txt 2; dp_expect 'box=icon'
   cmd "dp-select all" 2.5; dp_expect 'preview=stack'; cmd "dp-png $LOG/dp-stack.png" 1
