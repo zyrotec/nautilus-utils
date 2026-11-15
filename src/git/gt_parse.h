@@ -107,6 +107,10 @@ gboolean gt_progress_parse (const char *line,
                             char      **phase,
                             int        *percent);
 
+/* "just now", "5 minutes ago", "yesterday", "12 days ago", "3 March 2026" for unix time @when relative to @now. */
+char *gt_relative_date (gint64 when,
+                        gint64 now);
+
 /* TRUE for a URL git can clone: http(s)://, ssh://, git://, file:// with a path, or scp-like user@host:path. */
 gboolean gt_url_is_valid  (const char *url);
 /* The folder name git would make for @url ("nautilus-utils" for …/nautilus-utils.git), or NULL. Caller frees. */

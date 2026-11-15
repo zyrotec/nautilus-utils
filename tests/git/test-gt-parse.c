@@ -170,6 +170,23 @@ test_errors_progress (void)
 }
 
 static void
+test_relative_date (void)
+{
+  const gint64 now = 1800000000;
+  static const struct { gint64 ago; const char *text; } cases[] = {
+    { 5, "just now" }, { 90, "1 minute ago" }, { 600, "10 minutes ago" }, { 3700, "1 hour ago" },
+    { 5 * 3600, "5 hours ago" }, { 30 * 3600, "yesterday" }, { 12 * 86400, "12 days ago" },
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS (cases); i++)
+    {
+      g_autofree char *t = gt_relative_date (now - cases[i].ago, now);
+      g_assert_cmpstr (t, ==, cases[i].text);
+    }
+  g_autofree char *old = gt_relative_date (now - 400 * 86400, now);
+  g_assert_nonnull (strstr (old, "20")); /* a full date with the year */
+}
+
+static void
 test_urls (void)
 {
   static const struct { const char *url; const char *name; } ok[] = {
@@ -209,5 +226,6 @@ main (int argc, char **argv)
   g_test_add_func ("/gt-parse/log", test_log);
   g_test_add_func ("/gt-parse/errors-progress", test_errors_progress);
   g_test_add_func ("/gt-parse/urls", test_urls);
+  g_test_add_func ("/gt-parse/relative-date", test_relative_date);
   return g_test_run ();
 }

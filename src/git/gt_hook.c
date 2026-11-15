@@ -352,12 +352,12 @@ gt_hook_debug_command (const char *cmd)
   if (g_str_equal (cmd, "gt-dump"))
     {
       g_autofree char *d = gt_bar_describe (bar);
-      g_message ("gt dump: shown=%d %s", gtk_widget_get_visible (GTK_WIDGET (bar)), d);
+      g_message ("gt dump: bar=%d %s", gtk_widget_get_visible (GTK_WIDGET (bar)), d);
     }
   else if (g_str_has_prefix (cmd, "gt-expect "))
     {
       g_autofree char *d = gt_bar_describe (bar);
-      g_autofree char *full = g_strdup_printf ("shown=%d %s", gtk_widget_get_visible (GTK_WIDGET (bar)), d);
+      g_autofree char *full = g_strdup_printf ("bar=%d %s", gtk_widget_get_visible (GTK_WIDGET (bar)), d);
       const char *want = cmd + strlen ("gt-expect ");
       if (strstr (full, want) != NULL)
         g_message ("gt expect ok: %s", want);

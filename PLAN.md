@@ -2317,3 +2317,25 @@ modified, added, untracked, ignored, a folder with changes).
   `cancel_update` with a handle the provider never handed out, which the columns provider treated as its own
   (it would have written into it). Fixed: handles handed to Files are tracked and unknown ones ignored; the test
   expects 3 types and checks the Git column provider (4 columns, `nu_git_status`). Then all PASS.
+
+### 14.9 Phase 4 results (2026-11-15)
+
+- **Details pane extra view** (generic, no Git code in the pane): `dp_pane_set_extra (title, func, on_selected)` — a
+  page builder for what is shown — and `dp_pane_set_extra_selected`; an `AdwToggleGroup` "Details | <title>" at the
+  pane's top, only at the right and only when the builder returns a page; the page replaces the detail groups (the
+  preview and the name stay). `dp_pane_build_group` builds groups in the pane's own look for such pages.
+- **Git page** (`gt_page.c`, plugged in by the Git feature as "Git"): **Repository** (name, location, branch or
+  detached / no commits, upstream or "None (not published)", commits to push / pull, last commit, by, when) and
+  **Selected Item** (status — Unchanged / Not in Git / Modified… —, path, last commit, hash, by, when),
+  **Selected Items** (count and how many of each state) or **This Folder** (nothing selected; nothing extra at the
+  repository root). Re-read when the repository changes; a superseded read is never applied.
+- The choice is remembered: key `git-pane-git` (UI state, `nu_settings_set_git_pane_git`); every pane follows it.
+  Feature off removes the toggle.
+- Smoke (`dp-extra on|off`, the pane's description now covers the page): 14 checks — the toggle, the repository
+  rows, a clean then a modified file, two items, a subfolder, bottom position (no toggle), back, outside a
+  repository (no toggle), the choice kept. `gt-pane-git.png`.
+- **Found in the test itself:** `gt-expect 'shown=0'` also matched `progress-shown=0`, so since Phase 2 the
+  "outside any repository" checks passed whatever the bar did — and the folder used was inside this checkout's own
+  repository (the logs live in it), where the bar correctly showed that repository. The field is now `bar=`, and the
+  outside folder is a temporary folder outside the checkout; the bar is really hidden there.
+- Details-pane smoke still 50/50; `check-safety.sh` all PASS.

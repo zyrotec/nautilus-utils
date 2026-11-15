@@ -519,3 +519,21 @@ gt_url_dir_name (const char *url)
     return NULL;
   return g_strdup (start);
 }
+
+char *
+gt_relative_date (gint64 when, gint64 now)
+{
+  gint64 s = now - when;
+  if (s < 60)
+    return g_strdup ("just now");
+  if (s < 3600)
+    return s < 120 ? g_strdup ("1 minute ago") : g_strdup_printf ("%" G_GINT64_FORMAT " minutes ago", s / 60);
+  if (s < 86400)
+    return s < 7200 ? g_strdup ("1 hour ago") : g_strdup_printf ("%" G_GINT64_FORMAT " hours ago", s / 3600);
+  if (s < 2 * 86400)
+    return g_strdup ("yesterday");
+  if (s < 30 * 86400)
+    return g_strdup_printf ("%" G_GINT64_FORMAT " days ago", s / 86400);
+  g_autoptr (GDateTime) then = g_date_time_new_from_unix_local (when);
+  return then != NULL ? g_date_time_format (then, "%-d %B %Y") : g_strdup ("");
+}

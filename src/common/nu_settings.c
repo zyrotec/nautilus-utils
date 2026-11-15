@@ -73,6 +73,7 @@ static const NuConfig defaults = {
   .git_enabled = TRUE,
   .git_status_bar = TRUE,
   .git_ide = "",
+  .git_pane_git = FALSE,
 };
 
 /* Key name → group reported to listeners. */
@@ -150,6 +151,7 @@ static const struct
   { "git-enabled", NU_CHANGED_GIT },
   { "git-status-bar", NU_CHANGED_GIT },
   { "git-ide", NU_CHANGED_GIT },
+  { "git-pane-git", NU_CHANGED_GIT },
 };
 
 typedef struct
@@ -355,6 +357,7 @@ read_all (void)
   g_free (ns->git_ide);
   ns->git_ide = g_settings_get_string (s, "git-ide");
   c->git_ide = ns->git_ide;
+  c->git_pane_git = g_settings_get_boolean (s, "git-pane-git");
 }
 
 static gboolean
@@ -562,6 +565,16 @@ nu_settings_set_details_pane_state (gboolean visible,
     g_settings_set_boolean (ns->settings, "details-pane-visible", visible);
   if (g_settings_get_int (ns->settings, "details-pane-width") != width)
     g_settings_set_int (ns->settings, "details-pane-width", width);
+  return TRUE;
+}
+
+gboolean
+nu_settings_set_git_pane_git (gboolean git)
+{
+  if (!nu_settings_available ())
+    return FALSE;
+  if (g_settings_get_boolean (ns->settings, "git-pane-git") != git)
+    g_settings_set_boolean (ns->settings, "git-pane-git", git);
   return TRUE;
 }
 

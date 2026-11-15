@@ -40,10 +40,11 @@ gt_feature_lib = static_library('gt-feature',
   'git.c',
   'gt_columns.c',
   'gt_hook.c',
+  'gt_page.c',
   gt_resources[1], # the header only (the code is in gt-ui)
   c_args: gt_c_args + (get_option('debug_driver') ? ['-DGT_DEBUG_DRIVER'] : []),
   dependencies: ext_deps + gt_ui_deps,
-  include_directories: [gt_inc, nu_common_inc, include_directories('..')],
+  include_directories: [gt_inc, nu_common_inc, include_directories('..', '../details-pane')], # dp_pane.h (the pane's extra view)
   pic: true,
   gnu_symbol_visibility: 'hidden',
 )

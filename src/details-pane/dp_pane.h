@@ -83,7 +83,39 @@ void dp_pane_set_folder_renderer (DpFolderRenderer renderer);
 /* The CSS the pane needs, added to every display once (removed by dp_pane_unload_style). */
 void dp_pane_unload_style (void);
 
+/* An extra view (PLAN.md §14.2 item 4: the Git details): with the pane at the right and the extra page available
+ * for what is shown, a toggle group at the pane's top switches between the details and the extra page. ---------- */
+
+/* Builds the extra page for @folder / @files (as given to dp_pane_show; @files may be NULL or empty), or returns NULL
+ * when there is none for them (e.g. not in a Git repository). A new floating widget. Main thread. */
+typedef GtkWidget *(*DpExtraFunc) (GFile     *folder,
+                                   GPtrArray *files,
+                                   gpointer   user_data);
+
+/* The user switched views (TRUE = the extra page). */
+typedef void (*DpExtraSelectedFunc) (gboolean selected,
+                                     gpointer user_data);
+
+/* Process-wide: @title names the toggle ("Git"); NULL @func removes the extra view from every pane. */
+void dp_pane_set_extra (const char          *title,
+                        DpExtraFunc          func,
+                        DpExtraSelectedFunc  on_selected,
+                        gpointer             user_data);
+
+/* Which view every pane shows when the extra page is available (e.g. the remembered choice). */
+void dp_pane_set_extra_selected (gboolean selected);
+
+/* A titled group of "label  value" rows in the pane's own look (for extra pages). New floating widget. */
+GtkWidget *dp_pane_build_group (const char        *title,
+                                const char *const *labels,
+                                const char *const *values,
+                                guint              n_rows);
+
 /* For the debug driver and tests ---------------------------------------------------------------- */
+
+/* Clicks the toggle's Details (FALSE) or extra (TRUE) button, as the user would (if the toggle is shown). */
+void dp_pane_select_extra (DpPane   *self,
+                           gboolean  extra);
 
 /* Clicks the play button. FALSE if there is none (not a video, or already playing). */
 gboolean dp_pane_play (DpPane *self);

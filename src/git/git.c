@@ -8,6 +8,8 @@
 #include "gt_columns.h"
 #include "gt_hook.h"
 #include "gt_ops.h"
+#include "gt_page.h"
+#include "dp_pane.h"
 #include "gt_resources.h"
 #include "nu_settings.h"
 
@@ -18,11 +20,24 @@ static guint debug_signal_id;
 #endif
 
 static void
+on_pane_view (gboolean git, gpointer data)
+{
+  (void) data;
+  nu_settings_set_git_pane_git (git);
+}
+
+static void
 apply (void)
 {
   const NuConfig *c = nu_settings_get ();
   gt_hook_configure (c->git_enabled, c->git_status_bar, c->git_ide);
   gt_columns_set_enabled (c->git_enabled);
+  /* The details pane's "Details | Git" (PLAN.md §14.2 item 4); the choice is remembered. */
+  dp_pane_set_extra_selected (c->git_pane_git);
+  if (c->git_enabled)
+    dp_pane_set_extra ("Git", gt_page_new, on_pane_view, NULL);
+  else
+    dp_pane_set_extra (NULL, NULL, NULL, NULL);
 }
 
 static void
@@ -74,6 +89,7 @@ gt_feature_shutdown (void)
 #endif
   nu_settings_remove_listener (settings_listener);
   settings_listener = 0;
+  dp_pane_set_extra (NULL, NULL, NULL, NULL);
   gt_hook_shutdown ();
   gt_columns_shutdown ();
   gt_ops_shutdown ();

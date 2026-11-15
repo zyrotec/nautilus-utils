@@ -89,26 +89,10 @@ root (GtBar *self)
   return self->info != NULL ? gt_info_get_root (self->info) : NULL;
 }
 
-/* "3 hours ago", "yesterday", "12 March 2026". */
 static char *
 relative_date (gint64 when)
 {
-  g_autoptr (GDateTime) now = g_date_time_new_now_local ();
-  g_autoptr (GDateTime) then = g_date_time_new_from_unix_local (when);
-  if (then == NULL)
-    return g_strdup ("");
-  gint64 s = g_date_time_to_unix (now) - when;
-  if (s < 60)
-    return g_strdup ("just now");
-  if (s < 3600)
-    return g_strdup_printf (s < 120 ? "%" G_GINT64_FORMAT " minute ago" : "%" G_GINT64_FORMAT " minutes ago", s / 60);
-  if (s < 86400)
-    return g_strdup_printf (s < 7200 ? "%" G_GINT64_FORMAT " hour ago" : "%" G_GINT64_FORMAT " hours ago", s / 3600);
-  if (s < 2 * 86400)
-    return g_strdup ("yesterday");
-  if (s < 30 * 86400)
-    return g_strdup_printf ("%" G_GINT64_FORMAT " days ago", s / 86400);
-  return g_date_time_format (then, "%-d %B %Y");
+  return gt_relative_date (when, g_get_real_time () / G_USEC_PER_SEC);
 }
 
 /* ---- refresh from the info ---- */

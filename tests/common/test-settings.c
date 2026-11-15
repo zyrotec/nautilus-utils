@@ -90,6 +90,7 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_cmpint (a->git_enabled, ==, b->git_enabled);
   g_assert_cmpint (a->git_status_bar, ==, b->git_status_bar);
   g_assert_cmpstr (a->git_ide, ==, b->git_ide);
+  g_assert_cmpint (a->git_pane_git, ==, b->git_pane_git);
   g_assert_cmpstr (a->preview_folder_icon, ==, b->preview_folder_icon);
   g_assert_cmpstr (a->preview_overlay_icon, ==, b->preview_overlay_icon);
 }

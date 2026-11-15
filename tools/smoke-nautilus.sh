@@ -380,15 +380,17 @@ gt_make_repo() {
     git checkout -q -b feature && echo f > feature.txt && git add feature.txt && git commit -qm "Feature work" && git push -q origin feature
     cd .. && git clone -q -b main remote.git repo && git clone -q -b main remote.git other
     cd other && echo two >> README.md && git commit -qam "Update from elsewhere" && git push -q origin main
-    mkdir -p "$GT_DIR/plain" ) || echo "gt: could not make the test repositories"
+    true ) || echo "gt: could not make the test repositories"
+  # A folder outside any repository (the log folder is inside this checkout's own repository).
+  GT_PLAIN="$(mktemp -d "${TMPDIR:-/tmp}/nu-gt-plain.XXXXXX")"
 }
 gt_expect() { cmd "gt-expect $1" 0.3; }
 gt_round() {
   gt_make_repo
   local uri plain; uri="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_REPO")"
-  plain="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_DIR/plain")"
+  plain="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_PLAIN")"
   cmd "sd-open $uri" 3; cmd gt-dump 0.3
-  gt_expect 'shown=1'; gt_expect 'branch="main"'; gt_expect 'counts="↑0 ↓0"'; gt_expect 'remote=origin'
+  gt_expect 'bar=1'; gt_expect 'branch="main"'; gt_expect 'counts="↑0 ↓0"'; gt_expect 'remote=origin'
   cmd "dp-png $LOG/gt-bar.png" 1
   cmd gt-sync 3; cmd gt-dump 0.3; gt_expect 'counts="↑0 ↓1"'; gt_expect 'progress="Sync: done"'
   cmd gt-pull 3; gt_expect 'counts="↑0 ↓0"'; gt_expect 'progress="Pull: done"'
@@ -401,7 +403,23 @@ gt_round() {
   cmd "gt-switch-remote origin/feature" 2.5; gt_expect 'branch="feature"'; gt_expect 'counts="↑0 ↓0"'
   cmd "gt-switch no-such-branch" 2; gt_expect 'progress="Switch to no-such-branch: failed"'; gt_expect 'branch="feature"'
   cmd "gt-switch main" 2.5; gt_expect 'branch="main"'
-  cmd dp-toggle 1.5; cmd "dp-png $LOG/gt-bar-pane.png" 1; cmd dp-toggle 1
+  cmd dp-toggle 1.5; cmd "dp-png $LOG/gt-bar-pane.png" 1
+  # The details pane's Details | Git (§14.2 item 4): the repository, the selected item, the folder itself.
+  cmd "dp-select none" 1; dp_expect 'view=details'; cmd "dp-extra on" 1.5; dp_expect 'view=extra'
+  dp_expect '[Repository: Repository=repo; Location='; dp_expect 'Branch=main; Upstream=origin/main; Commits=0 to push, 0 to pull;'
+  cmd "dp-select name README.md" 2; dp_expect 'view=extra'; dp_expect '[Selected Item: Status=Unchanged; Path=README.md; Last commit=Update from elsewhere;'
+  cmd "dp-png $LOG/gt-pane-git.png" 1
+  ( cd "$GT_REPO" && echo y >> README.md ); cmd "dp-select none" 0.5; cmd "dp-select name README.md" 2
+  dp_expect 'Status=Modified; Path=README.md;'
+  cmd "dp-select name src" 0.5; cmd "dp-select add README.md" 2; dp_expect '[Selected Items: Items=2; Changes=1 Modified'
+  cmd "sd-open $uri/src" 2; cmd "dp-select none" 1.5; dp_expect '[This Folder: Status=Unchanged; Path=src;'
+  cmd "st-set details-pane-position 'bottom'" 1.5; dp_expect 'view=details-only'
+  cmd "st-set details-pane-position 'right'" 1.5; dp_expect 'view=extra'
+  cmd "dp-extra off" 1; dp_expect 'view=details'; cmd "dp-extra on" 1
+  cmd "sd-open $uri" 2; cmd "sd-open $plain" 2; dp_expect 'view=details-only'                # outside: no toggle
+  cmd "sd-open $uri" 2; cmd "dp-select none" 1; dp_expect 'view=extra'                        # the choice is kept
+  ( cd "$GT_REPO" && git checkout -q -- README.md )
+  cmd "dp-extra off" 1; cmd "st-reset details-pane-position" 0.3; cmd dp-toggle 1
   # Git columns (§14.2 item 3): values Files has for each file, through its public API; changes made outside.
   gt_attr() { cmd "gt-attr $1" 0.3; }
   cmd gt-cols 0.5; cmd "fv-view 1" 3; cmd gt-dump 1; cmd "dp-png $LOG/gt-columns.png" 1
@@ -417,14 +435,15 @@ gt_round() {
   gt_attr 'README.md status=|commit=Commit from a terminal|'; gt_attr 'README.md author=Col Test|'
   gt_attr 'src status=|commit=Commit from a terminal|'; gt_attr 'untracked.txt status=Untracked|'
   cmd "fv-view 2" 2
-  cmd "sd-open $uri/src" 2; gt_expect 'shown=1'; gt_expect 'branch="main"'          # a folder inside
-  cmd "sd-open $plain" 2; gt_expect 'shown=0'                                        # outside any repository
-  cmd "sd-open $uri" 2; gt_expect 'shown=1'
-  cmd "st-set git-status-bar false" 1; gt_expect 'shown=0'
-  cmd "st-set git-status-bar true" 1; gt_expect 'shown=1'
+  cmd "sd-open $uri/src" 2; gt_expect 'bar=1'; gt_expect 'branch="main"'          # a folder inside
+  cmd "sd-open $plain" 2; cmd gt-dump 0.3; gt_expect 'bar=0'                       # outside any repository
+  cmd "sd-open $uri" 2; gt_expect 'bar=1'
+  cmd "st-set git-status-bar false" 1; gt_expect 'bar=0'
+  cmd "st-set git-status-bar true" 1; gt_expect 'bar=1'
   cmd "st-set git-enabled false" 1; cmd gt-dump 0.3
-  cmd "st-set git-enabled true" 2; gt_expect 'shown=1'; gt_expect 'branch="main"'
+  cmd "st-set git-enabled true" 2; gt_expect 'bar=1'; gt_expect 'branch="main"'
   cmd "sd-open $DIR_URI" 2
+  rmdir "$GT_PLAIN" 2>/dev/null || true
 }
 
 if [ -n "$AUTO" ] && [ "${SMOKE_ONLY:-}" = gt ]; then

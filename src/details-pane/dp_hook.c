@@ -1012,6 +1012,8 @@ dp_hook_debug_command (const char *cmd)
         g_message ("dp geom: pane y=%.1f..%.1f x=%.1f..%.1f", r.origin.y, r.origin.y + r.size.height, r.origin.x,
                    r.origin.x + r.size.width);
     }
+  else if (g_str_has_prefix (cmd, "dp-extra ") && pane != NULL)
+    dp_pane_select_extra (pane, g_str_equal (cmd + strlen ("dp-extra "), "on"));
   else if (g_str_equal (cmd, "dp-close-window"))
     gtk_window_close (GTK_WINDOW (hook->window));
   else if (g_str_has_prefix (cmd, "dp-width "))

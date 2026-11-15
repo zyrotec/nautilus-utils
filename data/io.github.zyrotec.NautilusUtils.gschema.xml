@@ -385,6 +385,11 @@
       <summary>Show the Git status bar under the folder view inside repositories</summary>
     </key>
 
+    <key name="git-pane-git" type="b">
+      <default>false</default>
+      <summary>The details pane shows the Git view (the last choice of its Details | Git toggle)</summary>
+    </key>
+
     <key name="git-ide" type="s">
       <default>''</default>
       <summary>Desktop ID of the IDE "Open in IDE" uses ('' = the first one installed)</summary>
