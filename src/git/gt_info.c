@@ -3,7 +3,7 @@
 
 #include "gt_run.h"
 
-#define READ_TIMEOUT_MS 20000
+#define READ_TIMEOUT_MS 120000 /* a cold file cache on a big repository is slow (owner, 2026-11-15) */
 #define CHANGE_DELAY_MS 250 /* coalesce bursts of git folder changes (a commit touches many files) */
 
 struct _GtInfo
@@ -24,7 +24,7 @@ struct _GtInfo
   char         *error;
 };
 
-enum { CHANGED, N_SIGNALS };
+enum { CHANGED, READING_CHANGED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 static GHashTable *infos; /* root → GtInfo* (borrowed; removed in finalize) */
 
@@ -65,6 +65,8 @@ read_done (GtInfo *self, GtStatus *status, GtCommit *last, const char *error)
     gt_commit_unref (last);
   self->loaded = TRUE;
   self->n_reads++;
+  if (!self->again)
+    g_signal_emit (self, signals[READING_CHANGED], 0);
   g_signal_emit (self, signals[CHANGED], 0);
   if (self->again)
     {
@@ -139,6 +141,7 @@ read_now (GtInfo *self)
       return;
     }
   self->cancel = g_cancellable_new ();
+  g_signal_emit (self, signals[READING_CHANGED], 0);
   Read *r = g_new0 (Read, 1);
   r->self = g_object_ref (self);
   /* No untracked scan: the bar needs the branch and the counts, not every file. */
@@ -252,6 +255,8 @@ gt_info_class_init (GtInfoClass *klass)
   G_OBJECT_CLASS (klass)->finalize = gt_info_finalize;
   signals[CHANGED] = g_signal_new ("changed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
                                    G_TYPE_NONE, 0);
+  signals[READING_CHANGED] = g_signal_new ("reading-changed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                                           NULL, G_TYPE_NONE, 0);
 }
 
 static void
@@ -296,6 +301,7 @@ gt_info_get (const char *root, const char *git_dir)
 const char *gt_info_get_root (GtInfo *self) { g_return_val_if_fail (GT_IS_INFO (self), NULL); return self->root; }
 const char *gt_info_get_name (GtInfo *self) { g_return_val_if_fail (GT_IS_INFO (self), NULL); return self->name; }
 gboolean gt_info_get_loaded (GtInfo *self) { g_return_val_if_fail (GT_IS_INFO (self), FALSE); return self->loaded; }
+gboolean gt_info_is_reading (GtInfo *self) { g_return_val_if_fail (GT_IS_INFO (self), FALSE); return self->cancel != NULL; }
 guint gt_info_get_n_reads (GtInfo *self) { g_return_val_if_fail (GT_IS_INFO (self), 0); return self->n_reads; }
 const char *gt_info_get_error (GtInfo *self) { g_return_val_if_fail (GT_IS_INFO (self), NULL); return self->error; }
 GtCommit *gt_info_get_last (GtInfo *self) { g_return_val_if_fail (GT_IS_INFO (self), NULL); return self->last; }

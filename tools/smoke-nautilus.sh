@@ -407,7 +407,7 @@ gt_round() {
   cmd dp-toggle 1.5; cmd "dp-png $LOG/gt-bar-pane.png" 1
   # The details pane's Details | Git (§14.2 item 4, §14.11): the branch card, the history (graph / list), the hover card.
   cmd "dp-select none" 1; dp_expect 'view=details'; cmd "dp-extra on" 2; dp_expect 'view=extra'
-  dp_expect '[extra: card=[main|Local work|S · '
+  dp_expect 'card=[main|Local work|S · '
   dp_expect 'Mainline: origin/main · 0 ahead, 0 behind'; dp_expect 'graph=1 commits=3 lanes=1'
   dp_expect 'commit0=Local work{main}'; dp_expect 'commit1=Update from elsewhere commit2=Initial commit'
   cmd "dp-select name README.md" 2; dp_expect '|README.md · Unchanged]'
@@ -453,6 +453,25 @@ gt_round() {
   cmd "st-set git-status-bar true" 1; gt_expect 'bar=1'
   cmd "st-set git-enabled false" 1; cmd gt-dump 0.3
   cmd "st-set git-enabled true" 2; gt_expect 'bar=1'; gt_expect 'branch="main"'
+  # Error state and loading (owner, 2026-11-15): a broken index makes `git status` fail → "Git error" with a refresh
+  # button; repaired + refresh → back. A repository whose first read takes seconds (a slow fsmonitor hook) shows a
+  # spinner while it loads.
+  cmd "sd-open $uri" 2.5; gt_expect 'loading=0'
+  ( cd "$GT_REPO" && cp .git/index "$GT_DIR/index.good" && printf 'garbage' > .git/index )
+  cmd gt-dump 2; gt_expect 'branch="Git error"'; gt_expect 'refresh=1'
+  cp "$GT_DIR/index.good" "$GT_REPO/.git/index"; cmd gt-refresh 2.5; gt_expect 'branch="main"'; gt_expect 'refresh=0'
+  # (The hook goes in the temp folder: git runs it through the shell, and this checkout's path has a space.)
+  local hook_dir; hook_dir="$(mktemp -d "${TMPDIR:-/tmp}/nu-gt-hook.XXXXXX")"
+  printf '#!/bin/sh\nsleep 4\nexit 1\n' > "$hook_dir/slow-fsmonitor"; chmod +x "$hook_dir/slow-fsmonitor"
+  ( cd "$GT_DIR" && git clone -q remote.git slow && git -C slow config core.fsmonitor "$hook_dir/slow-fsmonitor" )
+  local slow_uri; slow_uri="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_DIR/slow")"
+  cmd dp-toggle 1.5; cmd "dp-extra on" 1
+  cmd "sd-open $slow_uri" 1.5; cmd gt-dump 0.3; gt_expect 'loading=1'; gt_expect 'branch="Loading…"'
+  dp_expect '[extra: loading=1 refresh=0 spinner=0 card=[Loading…|'   # (the history, a separate read, is already in)
+  cmd gt-dump 12; gt_expect 'loading=0'; gt_expect 'branch="main"'
+  dp_expect '[extra: loading=0 refresh=0 spinner=0 card=[main|'
+  cmd "dp-extra off" 1; cmd dp-toggle 1
+  rm -rf "$hook_dir"
   # Clone Repository… (§14.2 items 5–6): into a folder outside any repository (the bar shows the clone there), the
   # dialog's checks, then from a local smart-HTTP server with basic auth through the sign-in dialog.
   # The driver splits "URL NAME" at a space, and this checkout's path has one: clone from a copy in the temp folder.

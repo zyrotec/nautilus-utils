@@ -2396,3 +2396,17 @@ history, chips, hover card with message and stats, modified item, two items, pla
   driver splits "URL NAME" at a space and this checkout's path has one, so the clone source is copied to the temp
   folder.)
 - `check-safety.sh` all PASS; full ASan smoke **PASS** (folder views 86 / 0 wrong, details pane 67, git 52).
+
+### 14.13 Owner's report: "git took too long and was stopped" (2026-11-15)
+
+- The bar's background read gave up after 20 s in one of the owner's repositories (a cold file cache on the NTFS
+  drive). Reads now get 2 minutes (bar, columns, Git view).
+- **Error state:** a **refresh button** next to the branch button (and in the Git view's card, which shows git's
+  message) reads the repository again.
+- **Loading:** an `AdwSpinner` instead of the branch icon ("Loading…") in the bar, and in the Git view's card, while
+  the repository is read for the first time or again after an error (not on routine re-reads after a commit, so it
+  doesn't flicker); a spinner in place of the history until it is in. `GtInfo` has a "reading-changed" signal.
+- Smoke: a broken index (`git status` fails) → "Git error" + refresh; repaired + refresh → back; a repository whose
+  first read takes 4 s (a slow fsmonitor hook — in the temp folder: git runs it through the shell and this checkout's
+  path has a space) → spinner in the bar and the card, then the branch. Git 61 checks; full ASan smoke **PASS**
+  (folder views 86 / 0 wrong, details pane 69, git 61); `check-safety.sh` all PASS.

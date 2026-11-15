@@ -8,7 +8,7 @@
 #include "gt_ops.h"
 #include "gt_run.h"
 
-#define READ_TIMEOUT_MS 20000
+#define READ_TIMEOUT_MS 120000 /* a cold file cache on a big repository is slow (owner, 2026-11-15) */
 
 struct _GtBar
 {
@@ -16,6 +16,10 @@ struct _GtBar
   GtInfo       *info;          /* owned or NULL */
   char         *scope;         /* outside a repository: the folder whose operations are shown, or NULL */
   gulong        info_id;
+  gulong        reading_id;
+  GtkWidget    *branch_icon;
+  GtkWidget    *loading;       /* AdwSpinner while the repository is (re)read after nothing or an error */
+  GtkWidget    *refresh_button; /* in the error state */
   GAppInfo     *ide;           /* owned or NULL */
 
   GtkWidget    *box;           /* our only child */
@@ -118,6 +122,17 @@ update (GtBar *self)
                                  : branch != NULL   ? g_strdup (branch)
                                  : short_oid != NULL ? g_strdup_printf ("Detached at %s", short_oid)
                                                      : g_strdup ("No commits yet");
+  /* Loading (the first read, or again after an error): a spinner instead of the branch icon; failed: refresh. */
+  gboolean reading = info != NULL && gt_info_is_reading (info);
+  gboolean loading = reading && (!loaded || error != NULL);
+  gtk_widget_set_visible (self->loading, loading);
+  gtk_widget_set_visible (self->branch_icon, !loading);
+  gtk_widget_set_visible (self->refresh_button, info != NULL && error != NULL && !reading);
+  if (loading)
+    {
+      g_free (branch_text);
+      branch_text = g_strdup ("Loading…");
+    }
   gtk_label_set_text (GTK_LABEL (self->branch_label), branch_text);
   /* At least the first 14 characters stay readable when the column is narrow (the details pane open). */
   gtk_label_set_width_chars (GTK_LABEL (self->branch_label), (int) MIN (g_utf8_strlen (branch_text, -1), 14));
@@ -265,6 +280,14 @@ gt_bar_create_branch (GtBar *self, const char *name)
   g_autofree char *title = g_strdup_printf ("Create %s", clean);
   const char *args[] = { "switch", "-c", clean, NULL };
   start (self, title, args, 0, "Created and switched");
+}
+
+void
+gt_bar_refresh (GtBar *self)
+{
+  g_return_if_fail (GT_IS_BAR (self));
+  if (self->info != NULL)
+    gt_info_refresh (self->info);
 }
 
 void
@@ -850,7 +873,12 @@ gt_bar_init (GtBar *self)
   gtk_widget_set_parent (self->box, GTK_WIDGET (self));
 
   GtkWidget *bb = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
-  gtk_box_append (GTK_BOX (bb), gtk_image_new_from_icon_name ("nu-git-branch-symbolic"));
+  self->branch_icon = gtk_image_new_from_icon_name ("nu-git-branch-symbolic");
+  self->loading = adw_spinner_new ();
+  gtk_widget_set_visible (self->loading, FALSE);
+  gtk_accessible_update_property (GTK_ACCESSIBLE (self->loading), GTK_ACCESSIBLE_PROPERTY_LABEL, "Loading the repository", -1);
+  gtk_box_append (GTK_BOX (bb), self->branch_icon);
+  gtk_box_append (GTK_BOX (bb), self->loading);
   self->branch_label = gtk_label_new ("…");
   gtk_label_set_ellipsize (GTK_LABEL (self->branch_label), PANGO_ELLIPSIZE_MIDDLE);
   gtk_label_set_max_width_chars (GTK_LABEL (self->branch_label), 32);
@@ -858,6 +886,12 @@ gt_bar_init (GtBar *self)
   self->branch_button = menu_button (bb);
   gtk_accessible_update_property (GTK_ACCESSIBLE (self->branch_button), GTK_ACCESSIBLE_PROPERTY_LABEL, "Branches", -1);
   gtk_box_append (GTK_BOX (self->box), self->branch_button);
+  self->refresh_button = gtk_button_new_from_icon_name ("view-refresh-symbolic");
+  gtk_widget_add_css_class (self->refresh_button, "flat");
+  gtk_widget_set_tooltip_text (self->refresh_button, "Read the repository again");
+  gtk_widget_set_visible (self->refresh_button, FALSE);
+  g_signal_connect_swapped (self->refresh_button, "clicked", G_CALLBACK (gt_bar_refresh), self);
+  gtk_box_append (GTK_BOX (self->box), self->refresh_button);
 
   self->counts_label = gtk_label_new (NULL);
   self->counts_button = menu_button (self->counts_label);
@@ -957,13 +991,17 @@ gt_bar_set_info (GtBar *self, GtInfo *info)
   if (self->info == info)
     return;
   if (self->info != NULL)
-    g_clear_signal_handler (&self->info_id, self->info);
+    {
+      g_clear_signal_handler (&self->info_id, self->info);
+      g_clear_signal_handler (&self->reading_id, self->info);
+    }
   g_clear_object (&self->info);
   g_clear_pointer (&self->remote, g_free);
   if (info != NULL)
     {
       self->info = g_object_ref (info);
       self->info_id = g_signal_connect (info, "changed", G_CALLBACK (on_info_changed), self);
+      self->reading_id = g_signal_connect (info, "reading-changed", G_CALLBACK (on_info_changed), self);
       load_remotes (self);
     }
   if (self->my_ops != NULL)
@@ -1013,8 +1051,9 @@ char *
 gt_bar_describe (GtBar *self)
 {
   g_return_val_if_fail (GT_IS_BAR (self), NULL);
-  return g_strdup_printf ("root=%s branch=\"%s\" counts=\"%s\" counts-shown=%d progress=\"%s\" progress-shown=%d "
+  return g_strdup_printf ("loading=%d refresh=%d root=%s branch=\"%s\" counts=\"%s\" counts-shown=%d progress=\"%s\" progress-shown=%d "
                           "running=%u ide=\"%s\" remote=%s",
+                          gtk_widget_get_visible (self->loading), gtk_widget_get_visible (self->refresh_button),
                           root (self) != NULL ? root (self) : "-", gtk_label_get_text (GTK_LABEL (self->branch_label)),
                           gtk_label_get_text (GTK_LABEL (self->counts_label)), gtk_widget_get_visible (self->counts_button),
                           gtk_label_get_text (GTK_LABEL (self->progress_label)),

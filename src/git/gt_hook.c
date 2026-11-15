@@ -646,6 +646,8 @@ gt_hook_debug_command (const char *cmd)
       guint n = (guint) g_ascii_strtoull (cmd + strlen ("gt-card "), NULL, 10);
       g_message ("gt card %u: %s", n, page != NULL && gt_page_open_card (page, n) ? "open" : "none");
     }
+  else if (g_str_equal (cmd, "gt-refresh"))
+    gt_bar_refresh (bar);
   else if (g_str_equal (cmd, "gt-push"))
     gt_bar_push (bar);
   else if (g_str_equal (cmd, "gt-pull"))

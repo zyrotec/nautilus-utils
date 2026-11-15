@@ -38,6 +38,7 @@ void gt_bar_switch_branch (GtBar      *self,
                            gboolean    remote);
 void gt_bar_create_branch (GtBar      *self,
                            const char *name);
+void gt_bar_refresh       (GtBar      *self);
 void gt_bar_push          (GtBar      *self);
 void gt_bar_pull          (GtBar      *self);
 void gt_bar_sync          (GtBar      *self);

@@ -9,7 +9,7 @@
 #include "gt_repo.h"
 #include "gt_run.h"
 
-#define READ_TIMEOUT_MS  30000
+#define READ_TIMEOUT_MS 120000 /* a cold file cache on a big repository is slow (owner, 2026-11-15) */
 #define LOG_MAX_COMMITS  "5000"      /* the last-commit walk stops here; older items stay empty */
 #define REASK_AFTER_US   (2 * G_USEC_PER_SEC)   /* Files asking again after this: a change, or a revisit */
 #define ROOT_TTL_US      (30 * G_USEC_PER_SEC)  /* "is this folder in a repository" answers kept this long */

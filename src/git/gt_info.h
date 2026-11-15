@@ -37,7 +37,10 @@ gboolean    gt_info_get_counts   (GtInfo *self,
 GtCommit   *gt_info_get_last     (GtInfo *self);  /* borrowed, NULL before the first commit */
 const char *gt_info_get_error    (GtInfo *self);  /* why the last read failed, or NULL */
 
-/* Signal "changed": a read completed. */
+/* TRUE while a read runs. */
+gboolean gt_info_is_reading (GtInfo *self);
+
+/* Signal "changed": a read completed. Signal "reading-changed": a read started or ended (spinners). */
 
 /* For tests: reads completed so far. */
 guint gt_info_get_n_reads (GtInfo *self);

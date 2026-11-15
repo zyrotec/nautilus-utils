@@ -18,7 +18,7 @@
 #include "gt_repo.h"
 #include "gt_run.h"
 
-#define READ_TIMEOUT_MS 20000
+#define READ_TIMEOUT_MS 120000 /* a cold file cache on a big repository is slow (owner, 2026-11-15) */
 #define HISTORY_MAX     "300"
 #define MAX_PATHS       200
 #define LANE_W          14.0   /* px between graph lanes */
@@ -41,9 +41,12 @@ typedef struct
   gboolean      sel_is_dir;
   /* header */
   GtkWidget    *branch, *subject, *meta, *mainline, *selection;
+  GtkWidget    *card_spinner, *refresh, *head_chip;
+  gulong        reading_id;
   char         *mainline_ref;
   /* history */
   GtkWidget    *list;
+  GtkWidget    *list_spinner; /* while the history is read and nothing is shown yet */
   GPtrArray    *entries;    /* GtLogEntry* */
   GPtrArray    *rows;       /* GtGraphRow* */
   int           max_lanes;
@@ -65,7 +68,10 @@ page_free (gpointer data)
     g_cancellable_cancel (p->cancel);
   g_clear_object (&p->cancel);
   if (p->info != NULL)
-    g_clear_signal_handler (&p->info_id, p->info);
+    {
+      g_clear_signal_handler (&p->info_id, p->info);
+      g_clear_signal_handler (&p->reading_id, p->info);
+    }
   g_clear_object (&p->info);
   g_clear_pointer (&p->entries, g_ptr_array_unref);
   g_clear_pointer (&p->rows, g_ptr_array_unref);
@@ -211,11 +217,27 @@ render_header (Page *p)
 {
   GtInfo *info = p->info;
   const char *b = gt_info_get_branch (info), *oid = gt_info_get_oid (info);
-  g_autofree char *name = b != NULL ? g_strdup (b)
-                          : oid != NULL ? g_strdup_printf ("Detached at %.7s", oid)
-                          : g_strdup (gt_info_get_loaded (info) ? "No commits yet" : "…");
+  const char *error = gt_info_get_error (info);
+  gboolean reading = gt_info_is_reading (info);
+  gboolean loading = reading && (!gt_info_get_loaded (info) || error != NULL);
+  g_autofree char *name = loading           ? g_strdup ("Loading…")
+                          : error != NULL   ? g_strdup ("Git error")
+                          : b != NULL       ? g_strdup (b)
+                          : oid != NULL     ? g_strdup_printf ("Detached at %.7s", oid)
+                                            : g_strdup ("No commits yet");
   gtk_label_set_text (GTK_LABEL (p->branch), name);
-  GtCommit *c = gt_info_get_last (info);
+  /* Loading: a spinner; failed: git's message and a refresh button (owner, 2026-11-15). */
+  gtk_widget_set_visible (p->card_spinner, loading);
+  gtk_widget_set_visible (p->refresh, error != NULL && !reading);
+  gtk_widget_set_visible (p->head_chip, !loading && error == NULL);
+  if (error != NULL && !loading)
+    {
+      gtk_label_set_text (GTK_LABEL (p->subject), error);
+      gtk_widget_set_visible (p->subject, TRUE);
+      gtk_widget_set_visible (p->meta, FALSE);
+      return;
+    }
+  GtCommit *c = loading ? NULL : gt_info_get_last (info);
   gtk_label_set_text (GTK_LABEL (p->subject), c != NULL ? c->subject : "");
   gtk_widget_set_visible (p->subject, c != NULL);
   g_autofree char *when = c != NULL ? short_when (c->date) : NULL;
@@ -305,10 +327,21 @@ build_header (Page *p)
   GtkWidget *card = gtk_box_new (GTK_ORIENTATION_VERTICAL, 4);
   gtk_widget_add_css_class (card, "gt-card");
   GtkWidget *top = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 8);
+  p->card_spinner = adw_spinner_new ();
+  gtk_widget_set_size_request (p->card_spinner, 20, 20);
+  gtk_widget_set_visible (p->card_spinner, FALSE);
   p->branch = label ("…", "title-3", FALSE);
   gtk_widget_set_hexpand (p->branch, TRUE);
+  p->refresh = gtk_button_new_from_icon_name ("view-refresh-symbolic");
+  gtk_widget_add_css_class (p->refresh, "flat");
+  gtk_widget_set_valign (p->refresh, GTK_ALIGN_CENTER);
+  gtk_widget_set_tooltip_text (p->refresh, "Read the repository again");
+  gtk_widget_set_visible (p->refresh, FALSE);
+  p->head_chip = chip ("HEAD", NULL, FALSE);
+  gtk_box_append (GTK_BOX (top), p->card_spinner);
   gtk_box_append (GTK_BOX (top), p->branch);
-  gtk_box_append (GTK_BOX (top), chip ("HEAD", NULL, FALSE));
+  gtk_box_append (GTK_BOX (top), p->refresh);
+  gtk_box_append (GTK_BOX (top), p->head_chip);
   gtk_box_append (GTK_BOX (card), top);
   p->subject = label (NULL, "dim-label", TRUE);
   gtk_label_set_lines (GTK_LABEL (p->subject), 3);
@@ -728,6 +761,7 @@ commit_row (Page *p, guint index)
 static void
 on_history (Page *p, GtRunResult *r)
 {
+  gtk_widget_set_visible (p->list_spinner, FALSE);
   close_card (p);
   GtkWidget *c;
   while ((c = gtk_widget_get_first_child (p->list)) != NULL)
@@ -756,6 +790,8 @@ read_all (Page *p)
   p->cancel = g_cancellable_new ();
   const char *history[] = { "log", "--topo-order", "--decorate=full", "-n", HISTORY_MAX,
                             "--format=" GT_HISTORY_FORMAT, "HEAD", "--", NULL };
+  /* A spinner until the history is in, unless some is already shown (a re-read after a commit). */
+  gtk_widget_set_visible (p->list_spinner, p->entries == NULL || p->entries->len == 0);
   page_read (p, history, on_history);
   const char *refs[] = { "for-each-ref", "--format=%(refname:short)%09%(symref:short)", "refs/remotes/origin/HEAD",
                          "refs/remotes/origin/main", "refs/remotes/origin/master", "refs/heads/main", "refs/heads/master",
@@ -818,6 +854,11 @@ gt_page_new (GFile *folder, GPtrArray *files, GtkWidget **header, gpointer user_
   gtk_list_box_set_selection_mode (GTK_LIST_BOX (p->list), GTK_SELECTION_NONE);
   gtk_widget_add_css_class (p->list, "gt-history");
   gtk_accessible_update_property (GTK_ACCESSIBLE (p->list), GTK_ACCESSIBLE_PROPERTY_LABEL, "History", -1);
+  p->list_spinner = adw_spinner_new ();
+  gtk_widget_set_size_request (p->list_spinner, 32, 32);
+  gtk_widget_set_halign (p->list_spinner, GTK_ALIGN_CENTER);
+  gtk_widget_set_margin_top (p->list_spinner, 24);
+  gtk_box_append (GTK_BOX (p->page), p->list_spinner);
   gtk_box_append (GTK_BOX (p->page), p->list);
   g_object_set_data_full (G_OBJECT (p->page), "gt-page", p, page_free);
   g_signal_connect (p->list, "unmap", G_CALLBACK (on_list_unmap), p);
@@ -826,6 +867,8 @@ gt_page_new (GFile *folder, GPtrArray *files, GtkWidget **header, gpointer user_
     *header = p->header;
   p->info = gt_info_get (root, git_dir);
   p->info_id = g_signal_connect (p->info, "changed", G_CALLBACK (on_info_changed), p);
+  p->reading_id = g_signal_connect_swapped (p->info, "reading-changed", G_CALLBACK (render_header), p);
+  g_signal_connect_swapped (p->refresh, "clicked", G_CALLBACK (gt_info_refresh), p->info);
   render_header (p);
   read_all (p);
   return p->page;
@@ -859,6 +902,8 @@ gt_page_describe (GtkWidget *page)
   if (p == NULL)
     return g_strdup ("no git page");
   GString *s = g_string_new (NULL);
+  g_string_append_printf (s, "loading=%d refresh=%d spinner=%d ", gtk_widget_get_visible (p->card_spinner),
+                          gtk_widget_get_visible (p->refresh), gtk_widget_get_visible (p->list_spinner));
   g_string_append_printf (s, "card=[%s|%s|%s|%s|%s] graph=%d commits=%u lanes=%d", gtk_label_get_text (GTK_LABEL (p->branch)),
                           gtk_label_get_text (GTK_LABEL (p->subject)), gtk_label_get_text (GTK_LABEL (p->meta)),
                           gtk_widget_get_visible (p->mainline) ? gtk_label_get_text (GTK_LABEL (p->mainline)) : "",
