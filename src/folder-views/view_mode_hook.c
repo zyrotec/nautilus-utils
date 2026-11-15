@@ -1107,7 +1107,7 @@ attach_existing (void)
       g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
       if (!G_TYPE_CHECK_INSTANCE_TYPE (window, window_type))
         continue;
-      GtkWidget *tab_view = find_descendant (window, ADW_TYPE_TAB_VIEW, 12);
+      GtkWidget *tab_view = find_descendant (window, ADW_TYPE_TAB_VIEW, 30); /* deeper since the shared content column (PLAN.md §14.8) */
       for (int p = 0; tab_view != NULL && p < adw_tab_view_get_n_pages (ADW_TAB_VIEW (tab_view)); p++)
         {
           GtkWidget *child = adw_tab_page_get_child (adw_tab_view_get_nth_page (ADW_TAB_VIEW (tab_view), p));
@@ -1145,7 +1145,7 @@ debug_tab_view (void)
       g_autoptr (GtkWidget) window = g_list_model_get_item (toplevels, i);
       if (G_TYPE_CHECK_INSTANCE_TYPE (window, window_type))
         {
-          GtkWidget *tv = find_descendant (window, ADW_TYPE_TAB_VIEW, 12);
+          GtkWidget *tv = find_descendant (window, ADW_TYPE_TAB_VIEW, 30); /* deeper since the shared content column (PLAN.md §14.8) */
           return tv != NULL ? ADW_TAB_VIEW (tv) : NULL;
         }
     }

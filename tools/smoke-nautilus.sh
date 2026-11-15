@@ -402,6 +402,21 @@ gt_round() {
   cmd "gt-switch no-such-branch" 2; gt_expect 'progress="Switch to no-such-branch: failed"'; gt_expect 'branch="feature"'
   cmd "gt-switch main" 2.5; gt_expect 'branch="main"'
   cmd dp-toggle 1.5; cmd "dp-png $LOG/gt-bar-pane.png" 1; cmd dp-toggle 1
+  # Git columns (§14.2 item 3): values Files has for each file, through its public API; changes made outside.
+  gt_attr() { cmd "gt-attr $1" 0.3; }
+  cmd gt-cols 0.5; cmd "fv-view 1" 3; cmd gt-dump 1; cmd "dp-png $LOG/gt-columns.png" 1
+  gt_attr 'README.md status=|commit=Update from elsewhere|'; gt_attr 'README.md author=Smoke Test|'
+  gt_attr 'src status=|commit=Initial commit|'
+  ( cd "$GT_REPO" && echo u > untracked.txt && echo l > debug.log && echo m >> src/a.c && echo x >> README.md )
+  cmd gt-dump 3
+  gt_attr 'untracked.txt status=Untracked|commit=|'; gt_attr 'debug.log status=Ignored|'
+  gt_attr 'README.md status=Modified|'; gt_attr 'src status=Contains changes|'
+  ( cd "$GT_REPO" && GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME="Col Test" GIT_AUTHOR_EMAIL=c@x.invalid \
+      GIT_COMMITTER_NAME="Col Test" GIT_COMMITTER_EMAIL=c@x.invalid git commit -qam "Commit from a terminal" )
+  cmd gt-dump 3                                                                   # the repository changed
+  gt_attr 'README.md status=|commit=Commit from a terminal|'; gt_attr 'README.md author=Col Test|'
+  gt_attr 'src status=|commit=Commit from a terminal|'; gt_attr 'untracked.txt status=Untracked|'
+  cmd "fv-view 2" 2
   cmd "sd-open $uri/src" 2; gt_expect 'shown=1'; gt_expect 'branch="main"'          # a folder inside
   cmd "sd-open $plain" 2; gt_expect 'shown=0'                                        # outside any repository
   cmd "sd-open $uri" 2; gt_expect 'shown=1'

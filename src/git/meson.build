@@ -38,6 +38,7 @@ gt_ui_lib = static_library('gt-ui',
 # Feature entry point + the hook (the only Git file using Nautilus' widgets).
 gt_feature_lib = static_library('gt-feature',
   'git.c',
+  'gt_columns.c',
   'gt_hook.c',
   gt_resources[1], # the header only (the code is in gt-ui)
   c_args: gt_c_args + (get_option('debug_driver') ? ['-DGT_DEBUG_DRIVER'] : []),

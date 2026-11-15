@@ -2285,3 +2285,30 @@ modified, added, untracked, ignored, a folder with changes).
   started before the change → it now waits for the expected state; (2) a third-party leak in `test-dp-meta`:
   libsrt (GStreamer's SRT plugin, dlopen'ed by decodebin) allocates in a C++ static initializer — suppressed
   narrowly (`libsrt-static-init`). Then `check-safety.sh` all PASS.
+
+### 14.8 Phase 3 results (2026-11-15)
+
+- `gt_columns.c`: one type implementing Files' public column and info providers (registered in the module's type
+  list). Columns **Git Status**, **Last Commit** (message), **Commit Hash** (short), **Commit Author**; off by default
+  (Files' *Visible Columns*). Per folder one `git --literal-pathspecs status --porcelain=v2 -z
+  --untracked-files=normal --ignored=matching -- <folder>` and one `git log --name-only -z -n 5000 -- <folder>`
+  (run at the root, in parallel) answer every file of the folder; files asked for meanwhile wait (IN_PROGRESS +
+  `update_complete_invoke`). Clean tracked files show an empty status; untracked / ignored files no commit;
+  folders the last commit of anything inside and "Contains changes".
+- Freshness: the answers are re-read when Files asks again more than 2 s after the last read (a file changed, or
+  the folder is shown again) and when the repository changes (the shared GtInfo's git folder monitor: commit,
+  checkout, stage…); after a re-read only files whose values changed are invalidated
+  (`nautilus_file_info_invalidate_extension_info`), so Files' re-asks are answered from the new read (no loop).
+  Folder answers unused for 2 min and "is this folder in a repository" answers after 30 s are dropped.
+- Only native folders inside a repository start git (stat-only detection, cached); hidden files aren't asked about
+  by Files (not shown). Feature off: no answers (the columns stay listed, empty).
+- **Regression found by the smoke (from Phase 2's shared column):** folder-views looked for Files' tab view at most
+  12 levels deep, and the column (plus the details pane's paned) put it deeper, so after switching folder views off
+  and on existing tabs were not re-attached (and its driver's `fv-view` failed). Both searches now go 30 deep, like
+  the details pane's.
+- Smoke: 11 column checks in `gt_round` (values through Files' own `nautilus_file_info_get_string_attribute`):
+  clean files, a folder's last commit, untracked, ignored, modified, "Contains changes" — made from a terminal — then
+  a terminal commit updates message, author and status. `gt-columns.png`.
+- Full ASan smoke (every round): all functional checks pass (folder views 86 tab checks / 0 wrong, details pane 48,
+  git 39); the one flagged leak is the known intermittent GTK popover leak of the sidebar OS-menu test (Nautilus'
+  `show_row_popover`). `check-safety.sh` all PASS.

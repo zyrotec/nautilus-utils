@@ -7,8 +7,11 @@
 #include "gt_hook.h"
 
 #include <adwaita.h>
+#include <nautilus-extension.h>
+#include <string.h>
 
 #include "gt_bar.h"
+#include "gt_columns.h"
 #include "gt_ide.h"
 #include "gt_info.h"
 #include "gt_repo.h"
@@ -367,6 +370,46 @@ gt_hook_debug_command (const char *cmd)
     gt_bar_switch_branch (bar, cmd + strlen ("gt-switch-remote "), TRUE);
   else if (g_str_has_prefix (cmd, "gt-create "))
     gt_bar_create_branch (bar, cmd + strlen ("gt-create "));
+  else if (g_str_equal (cmd, "gt-cols"))
+    {
+      /* The Git columns visible in the list view — in the test session's in-memory settings only. */
+      if (g_strcmp0 (g_getenv ("GSETTINGS_BACKEND"), "memory") != 0)
+        g_message ("gt: gt-cols only with in-memory settings");
+      else
+        {
+          g_autoptr (GSettings) s = g_settings_new ("org.gnome.nautilus.list-view");
+          const char *cols[] = { "name", "NuGit::status", "NuGit::commit", "NuGit::hash", "NuGit::author", NULL };
+          g_settings_set_strv (s, "default-visible-columns", cols);
+          g_message ("gt cols: on");
+        }
+    }
+  else if (g_str_has_prefix (cmd, "gt-attr "))
+    {
+      /* "gt-attr NAME [TEXT]": the Git values Files has for NAME in the shown folder; with TEXT, a check. */
+      g_autofree char *rest = g_strdup (cmd + strlen ("gt-attr "));
+      char *space = strchr (rest, ' ');
+      const char *want = NULL;
+      if (space != NULL)
+        *space = '\0', want = space + 1;
+      g_autoptr (GObject) slot = g_weak_ref_get (&hook->slot);
+      g_autoptr (GFile) location = NULL;
+      if (slot != NULL)
+        g_object_get (slot, "location", &location, NULL);
+      g_autoptr (GFile) child = location != NULL ? g_file_get_child (location, rest) : NULL;
+      g_autoptr (NautilusFileInfo) fi = child != NULL ? nautilus_file_info_lookup (child) : NULL;
+      g_autofree char *st = fi != NULL ? nautilus_file_info_get_string_attribute (fi, GT_ATTR_STATUS) : NULL;
+      g_autofree char *cm = fi != NULL ? nautilus_file_info_get_string_attribute (fi, GT_ATTR_COMMIT) : NULL;
+      g_autofree char *hs = fi != NULL ? nautilus_file_info_get_string_attribute (fi, GT_ATTR_HASH) : NULL;
+      g_autofree char *au = fi != NULL ? nautilus_file_info_get_string_attribute (fi, GT_ATTR_AUTHOR) : NULL;
+      g_autofree char *full = g_strdup_printf ("%s: status=%s|commit=%s|hash=%s|author=%s|", rest, st ? st : "(none)",
+                                               cm ? cm : "(none)", hs ? hs : "(none)", au ? au : "(none)");
+      if (want == NULL)
+        g_message ("gt attr %s", full);
+      else if (strstr (full, want) != NULL)
+        g_message ("gt expect ok: %s %s", rest, want);
+      else
+        g_message ("gt expect FAIL: %s %s — %s", rest, want, full);
+    }
   else if (g_str_equal (cmd, "gt-push"))
     gt_bar_push (bar);
   else if (g_str_equal (cmd, "gt-pull"))

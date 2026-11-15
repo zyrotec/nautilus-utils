@@ -5,12 +5,14 @@
 #include <signal.h>
 
 #include "gt_bar.h"
+#include "gt_columns.h"
 #include "gt_hook.h"
 #include "gt_ops.h"
 #include "gt_resources.h"
 #include "nu_settings.h"
 
 static guint settings_listener;
+static GType types[1];
 #ifdef GT_DEBUG_DRIVER
 static guint debug_signal_id;
 #endif
@@ -20,6 +22,7 @@ apply (void)
 {
   const NuConfig *c = nu_settings_get ();
   gt_hook_configure (c->git_enabled, c->git_status_bar, c->git_ide);
+  gt_columns_set_enabled (c->git_enabled);
 }
 
 static void
@@ -51,8 +54,9 @@ on_debug_signal (gpointer data)
 void
 gt_feature_initialize (GTypeModule *module)
 {
-  (void) module;
   g_resources_register (gt_get_resource ());
+  gt_columns_register (module);
+  types[0] = GT_TYPE_COLUMNS;
   gt_hook_init ();
   apply ();
   settings_listener = nu_settings_add_listener (on_settings_changed, NULL);
@@ -71,6 +75,7 @@ gt_feature_shutdown (void)
   nu_settings_remove_listener (settings_listener);
   settings_listener = 0;
   gt_hook_shutdown ();
+  gt_columns_shutdown ();
   gt_ops_shutdown ();
   gt_bar_unload_style ();
   g_resources_unregister (gt_get_resource ());
@@ -80,6 +85,6 @@ gt_feature_shutdown (void)
 const GType *
 gt_feature_list_types (int *num_types)
 {
-  *num_types = 0;
-  return NULL;
+  *num_types = 1; /* the columns (Files' public column and info providers) */
+  return types;
 }
