@@ -54,6 +54,10 @@ static const NuConfig defaults = {
   .details_pane_preview_radius = 12,
   .details_pane_preview_margin = 0,
   .details_pane_icon_size = 128,
+  .details_pane_media_fit = NU_MEDIA_FIT_SHAPE,
+  .details_pane_title_centered = FALSE,
+  .details_pane_show_icon = TRUE,
+  .details_pane_stack_folder_look = FALSE,
   .details_pane_stack_depth = NU_DEPTH_BLUR,
   .details_pane_stack_shadow = TRUE,
   .details_pane_stack_rotation = TRUE,
@@ -119,6 +123,10 @@ static const struct
   { "details-pane-preview-margin", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-depth-effect", NU_CHANGED_DP_LOOK },
   { "details-pane-icon-size", NU_CHANGED_DP_LOOK },
+  { "details-pane-media-fit", NU_CHANGED_DP_LOOK },
+  { "details-pane-title-centered", NU_CHANGED_DP_LOOK },
+  { "details-pane-show-icon", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-folder-look", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-shadow", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-rotation", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-keep-aspect", NU_CHANGED_DP_LOOK },
@@ -302,6 +310,11 @@ read_all (void)
   c->details_pane_preview_radius = g_settings_get_int (s, "details-pane-preview-radius");
   c->details_pane_preview_margin = g_settings_get_int (s, "details-pane-preview-margin");
   /* Steps of 16 (a hand-edited value in between is rounded to the nearest step). */
+  c->details_pane_media_fit = g_settings_get_enum (s, "details-pane-media-fit") == NU_MEDIA_FIT_BOX
+                                ? NU_MEDIA_FIT_BOX : NU_MEDIA_FIT_SHAPE;
+  c->details_pane_title_centered = g_settings_get_boolean (s, "details-pane-title-centered");
+  c->details_pane_show_icon = g_settings_get_boolean (s, "details-pane-show-icon");
+  c->details_pane_stack_folder_look = g_settings_get_boolean (s, "details-pane-stack-folder-look");
   c->details_pane_icon_size = CLAMP ((g_settings_get_int (s, "details-pane-icon-size") + 8) / 16 * 16, 16, 256);
   int sdepth = g_settings_get_enum (s, "details-pane-stack-depth-effect");
   c->details_pane_stack_depth = (sdepth >= NU_DEPTH_NONE && sdepth <= NU_DEPTH_DARKEN)

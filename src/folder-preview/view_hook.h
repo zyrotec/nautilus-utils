@@ -51,4 +51,7 @@ GdkPaintable *fp_view_hook_render_folder (GFile        *folder,
                                           int           size,
                                           int           scale);
 
+/* The folder previews' current look (PLAN.md §13.13: the details pane's stack can copy it). FALSE before init. */
+gboolean fp_view_hook_get_style (FpStyle *out);
+
 G_END_DECLS

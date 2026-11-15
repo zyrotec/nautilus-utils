@@ -1726,3 +1726,12 @@ fp_view_hook_render_folder (GFile        *folder,
   fp_cache_get_frame_async (vh->cache, folder, 0, px, G_PRIORITY_DEFAULT, NULL, on_pane_frame, ref);
   return GDK_PAINTABLE (paintable);
 }
+
+gboolean
+fp_view_hook_get_style (FpStyle *out)
+{
+  if (vh == NULL)
+    return FALSE;
+  *out = vh->style;
+  return TRUE;
+}

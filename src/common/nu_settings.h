@@ -85,6 +85,12 @@ typedef enum
   NU_PANE_BOTTOM = 1,
 } NuPanePosition;
 
+typedef enum
+{
+  NU_MEDIA_FIT_SHAPE = 0, /* the box takes the media's shape (snug) */
+  NU_MEDIA_FIT_BOX   = 1, /* a fixed box; the media flush inside it */
+} NuMediaFit;
+
 /* Which groups of settings changed in one batch (bit flags for listeners). */
 typedef enum
 {
@@ -160,6 +166,10 @@ typedef struct
   int             details_pane_preview_radius;
   int             details_pane_preview_margin;
   int             details_pane_icon_size;   /* px, 16 … 256, a multiple of 16 */
+  NuMediaFit      details_pane_media_fit;
+  gboolean        details_pane_title_centered;
+  gboolean        details_pane_show_icon;
+  gboolean        details_pane_stack_folder_look;
   NuDepthEffect   details_pane_stack_depth;
   gboolean        details_pane_stack_shadow;
   gboolean        details_pane_stack_rotation;

@@ -53,6 +53,11 @@
     <value nick="bottom" value="1"/>
   </enum>
 
+  <enum id="io.github.zyrotec.NautilusUtils.MediaFit">
+    <value nick="shape" value="0"/>
+    <value nick="box" value="1"/>
+  </enum>
+
   <schema id="io.github.zyrotec.NautilusUtils" path="/io/github/zyrotec/NautilusUtils/">
     <key name="folder-preview-enabled" type="b">
       <default>true</default>
@@ -271,6 +276,26 @@
       <range min="16" max="256"/>
       <default>128</default>
       <summary>Size in pixels of icons in the preview (files, folders, and the front icon of a stack); steps of 16</summary>
+    </key>
+
+    <key name="details-pane-media-fit" enum="io.github.zyrotec.NautilusUtils.MediaFit">
+      <default>'shape'</default>
+      <summary>shape = the preview box takes the picture's shape; box = a fixed box, the picture flush inside it</summary>
+    </key>
+
+    <key name="details-pane-title-centered" type="b">
+      <default>false</default>
+      <summary>Centre the name and type under the preview</summary>
+    </key>
+
+    <key name="details-pane-show-icon" type="b">
+      <default>true</default>
+      <summary>Show the small icon next to the name</summary>
+    </key>
+
+    <key name="details-pane-stack-folder-look" type="b">
+      <default>false</default>
+      <summary>Several selected: use the folder previews' thumbnail look (border, corners, …)</summary>
     </key>
 
     <key name="details-pane-preview-radius" type="i">
