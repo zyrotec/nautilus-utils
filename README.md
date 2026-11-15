@@ -203,8 +203,9 @@ Like File Explorer's details pane: a **Details Pane** button right of *View Opti
 file or folder and its properties. Drag its left edge to resize it.
 
 - 🖼️ **Preview:** the file's thumbnail (made if missing, in the shared thumbnail cache, so Files benefits too),
-  filling a box of its own shape edge to edge; files without one show their icon at the **icon size** you choose
-  (16–256 px). Folders show their **folder preview** (same look as in the grid) when folder previews are on.
+  filling a box of its own shape edge to edge (or flush inside a fixed box, if you prefer); files without one
+  show their icon at the **icon size** you choose (16–256 px). Folders show their **folder preview** (same look
+  as in the grid) when folder previews are on. The name and type can be centred, the small icon hidden.
 - ▶️ **Videos:** a play button plays a small, muted, looping preview right in the pane, with pause and sound
   buttons. Nothing plays until you click; selecting something else stops it.
 - 📄 **Details:** type, size, location, modified, created and accessed; for folders the number of items and
@@ -217,8 +218,10 @@ file or folder and its properties. Drag its left edge to resize it.
   **Read / Write / Run** for files, **List files / Create & delete / Open** for folders — instead of
   `drwxr-xr-x`.
 - 🗂️ **Several selected:** how many, a stack of the first three in the same look as the stacked folder
-  previews (with its own depth effect, shadow, rotation, aspect ratio and fade options) — the front one at the
-  bottom, icons getting smaller towards the back like the pictures — total size and what kinds of files.
+  previews (with its own depth effect, shadow, rotation, aspect ratio and fade options, or exactly the folder
+  previews' thumbnail look, borders and all) — the front one at the bottom, icons getting smaller towards the
+  back like the pictures, folders with a folder preview drawn with their pictures — total size and what kinds of
+  files.
   **Nothing selected:** the folder you are in.
 - ↔️ **Right or bottom:** at the bottom it becomes a short summary strip like Windows 7 — thumbnail, name and
   type, then a few key properties in columns; drag its top edge to change the height.
@@ -264,7 +267,7 @@ press **Apply**; closing the window without Apply discards them.
 | 💽 **Sidebar Drives** | On/off, bar colour (accent colour, a custom colour, or a two-colour gradient), show/hide the usage bars and the size labels, slide the eject button in only on hover. |
 | 👁️ **Folder Views** | Remember the view per folder (on/off) and **Reset All Folder Views…**, which asks for confirmation and acts right away (it isn't a setting waiting for Apply). |
 | 🎨 **Folder Icons** | Icons by folder name (on/off) and the rules: folder name, icon (Choose Icon…), remove; add a rule with **+**. Invalid or duplicate names are marked red. |
-| 📋 **Details Pane** | On/off; position (right or bottom); border, margin, padding, corner radius; line under the header bar; icon size (16–256 px in steps of 16), preview box corner radius and margin; several selected: depth effect, shadow, keep aspect ratio, rotation, bottom fade, card behind icons. Whether the pane is shown, its width and its height are kept as you leave them. |
+| 📋 **Details Pane** | On/off; position (right or bottom); border, margin, padding, corner radius; line under the header bar; icon size (16–256 px in steps of 16), pictures in a box of their shape or a fixed box, icon next to the name, centred name, preview box corner radius and margin; several selected: same look as folder previews, depth effect, shadow, keep aspect ratio, rotation, bottom fade, card behind icons. Whether the pane is shown, its width and its height are kept as you leave them. |
 
 The settings are stored with GSettings (schema `io.github.zyrotec.NautilusUtils`; inspect them with
 `gsettings list-recursively io.github.zyrotec.NautilusUtils`). If the schema isn't installed, the features

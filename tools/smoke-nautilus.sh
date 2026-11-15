@@ -305,6 +305,21 @@ dp_round() {
   cmd "dp-select all" 2.5; dp_expect 'preview=stack'; cmd "dp-png $LOG/dp-stack.png" 1
   cmd "st-set details-pane-icon-size 256" 1.5; dp_expect 'preview=stack'
   # (Snug media boxes need thumbnails, which can't be made in this session, D8: checked with the demo.)
+  # v4 (§13.13): centred name without icon, media in a fixed box, the folder previews' look, folder art in stacks.
+  cmd "st-set details-pane-title-centered true" 0.5; cmd "st-set details-pane-show-icon false" 0.5
+  cmd "st-set details-pane-media-fit 'box'" 0.5; dp_pick photo.jpg; dp_expect 'Camera=Canon EOS R6'
+  cmd "dp-png $LOG/dp-centred.png" 1
+  cmd "st-set details-pane-stack-folder-look true" 1; cmd "dp-select all" 3; dp_expect 'preview=stack'
+  dp_expect 'stack-art=yes'; cmd "dp-png $LOG/dp-folder-look.png" 1
+  # DIR's own picture folders (thumbnails already cached there): folders drawn with their pictures in the stack.
+  cmd "sd-open $DIR_URI" 3; cmd "dp-select all" 4; cmd "dp-png $LOG/dp-folder-art.png" 1; cmd "dp-select none" 1
+  cmd "st-reset details-pane-stack-folder-look" 1
+  cmd "dp-select name Wallpapers" 1; cmd "dp-select add Screenshots" 4; cmd "dp-png $LOG/dp-folder-art2.png" 1
+  cmd "dp-select none" 1
+  cmd "sd-open $DP_URI" 2
+  for k in details-pane-title-centered details-pane-show-icon details-pane-media-fit details-pane-stack-folder-look; do
+    cmd "st-reset $k" 0.4
+  done
   dp_pick photo.jpg; cmd "st-set details-pane-position 'bottom'" 2; cmd dp-dump 0.3
   dp_expect '[Summary: Dimensions=120 × 80 px;'; dp_expect 'Camera=Canon EOS R6;'; cmd "dp-png $LOG/dp-bottom.png" 1
   dp_pick clip.webm 2; dp_expect 'Codec=VP8;'; dp_pick pics 2; dp_expect 'Contents=2 items;'

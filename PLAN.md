@@ -2032,3 +2032,26 @@ few properties) instead of the full columns. The owner was away; Claude decided 
   `dp-stack.png`, `dp-bottom.png` from the smoke. The smoke's snug-media check needs thumbnails, which can't be
   made in that session (D8): covered by the demo.
 - **Final:** `check-safety.sh` all PASS; full smoke `smoke-20261115-012226` **PASS** (details pane 35/35).
+
+### 13.13 v4 — header options, media in a fixed box, folder-preview look for stacks (owner, 2026-11-15)
+
+| # | Decision |
+|---|---|
+| P20 | `details-pane-media-fit` (shape / box, default shape): **box** = one fixed box for everything (220 px, or icon size + 48 if larger); a picture touches its edges on one side and is centred on the other (no padding), the rest of the translucent box shows. |
+| P21 | `details-pane-title-centered` (b, false): name and type centred (right layout); `details-pane-show-icon` (b, true): the small icon next to the name. |
+| P22 | `details-pane-stack-folder-look` (b, false): the stack uses **the folder previews' own look** (border, colour, width, corners, shadow, depth, fade… read live from folder-preview, `fp_view_hook_get_style`), still front-at-the-bottom; the pane's own stack options then don't apply. Icons are drawn as same-size squares so the border frames them like photos. |
+| P23 | (C) In a stack, a folder that gets a folder preview is drawn **with its pictures** (the same renderer as the single-folder preview), redrawn once its frame arrives; always on when folder previews apply, no extra option. |
+
+#### 13.13 results (2026-11-15)
+
+- Settings keys + tests; `fp_view_hook_get_style`; pane: fixed-box mode (`CONTENT_FIT_CONTAIN`, box 220 px or icon
+  size + 48), centred name / hidden icon, stack in the folder previews' look (live: folder-preview style changes
+  redraw it), folder art in stacks (redrawn once a folder's frame arrives; 60 ms coalescing, handlers dropped on
+  every redraw / reset). Settings tab: the pane's own stack options grey out while the folder-preview look is on.
+- Verified: demo renders (centred, fixed box with a wide photo and a portrait PDF, folder-preview look with
+  pictures and with icons); in Files (smoke): `dp-centred.png`, `dp-folder-look.png`, and the owner's own
+  Pictures folders stacked with their previews (`dp-folder-art2.png`: Screenshots in front with its pictures).
+  Driver: `dp-select add NAME`.
+- Fixed on the way: `test-dp-meta` expected the fixtures' modified date to read "Today" (true only on the day they
+  were generated).
+- **Final:** `check-safety.sh` all PASS; full smoke `smoke-20261115-084600` **PASS** (details pane 39/39).
