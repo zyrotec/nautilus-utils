@@ -38,7 +38,7 @@ fp_style_equal (const FpStyle *a, const FpStyle *b)
          a->shadow == b->shadow && a->rotation == b->rotation && a->keep_aspect == b->keep_aspect &&
          a->depth == b->depth && a->corner_radius == b->corner_radius && a->fade == b->fade &&
          a->view_top_radius == b->view_top_radius && a->view_bottom_radius == b->view_bottom_radius &&
-         a->stack_padding == b->stack_padding;
+         a->stack_padding == b->stack_padding && a->bottom_align == b->bottom_align;
 }
 
 /* Returns a new string (caller frees). */
@@ -47,12 +47,14 @@ fp_style_key (const FpStyle *style)
 {
   gboolean stacked = style->layout == FP_LAYOUT_STACKED;
   /* Stacked-only options are left out of grid keys, so changing them keeps the grid's cached frames. */
-  return g_strdup_printf ("%s%u-b%d%02x%02x%02x-s%d-r%d-a%d-c%u-d%d-f%u-v%u.%u-p%u-w%u", stacked ? "stack" : "grid",
+  /* "-B" only when set: folder previews (never set) keep their disk cache keys. */
+  return g_strdup_printf ("%s%u-b%d%02x%02x%02x-s%d-r%d-a%d-c%u-d%d-f%u-v%u.%u-p%u-w%u%s", stacked ? "stack" : "grid",
                           stacked ? style->stack_step : 0u, style->border != FALSE, style->border_r,
                           style->border_g, style->border_b, style->shadow != FALSE, style->rotation != FALSE,
                           style->keep_aspect != FALSE, style->corner_radius, stacked ? (int) style->depth : 0,
                           stacked ? style->fade : 0u, stacked ? style->view_top_radius : 0u,
-                          stacked ? style->view_bottom_radius : 0u, stacked ? style->stack_padding : 0u, style->border ? style->border_width : 0u);
+                          stacked ? style->view_bottom_radius : 0u, stacked ? style->stack_padding : 0u, style->border ? style->border_width : 0u,
+                          stacked && style->bottom_align ? "-B" : "");
 }
 
 guint
@@ -123,14 +125,11 @@ fp_composite_tilt (guint seed)
   return unit (seed, 0x9e3779b9U) * FRAME_MAX_TILT_DEG;
 }
 
-/* Decodes @path with GTK's thread-safe loader into a new cairo image surface (caller owns; destroy with
- * cairo_surface_destroy), or NULL if it can't be read, decoded, or is unreasonably large. */
+/* Copies @texture (borrowed) into a new cairo image surface (caller owns; destroy with cairo_surface_destroy),
+ * or NULL if it is unreasonably large. */
 static cairo_surface_t *
-load_surface (const char *path)
+texture_surface (GdkTexture *texture)
 {
-  g_autoptr (GdkTexture) texture = gdk_texture_new_from_filename (path, NULL);
-  if (texture == NULL)
-    return NULL;
   int w = gdk_texture_get_width (texture);
   int h = gdk_texture_get_height (texture);
   if (w <= 0 || h <= 0 || w > MAX_SOURCE_PX || h > MAX_SOURCE_PX)
@@ -150,6 +149,15 @@ load_surface (const char *path)
                                         (gsize) cairo_image_surface_get_stride (surface));
   cairo_surface_mark_dirty (surface);
   return surface;
+}
+
+/* Decodes @path with GTK's thread-safe loader into a new cairo image surface (caller owns; destroy with
+ * cairo_surface_destroy), or NULL if it can't be read, decoded, or is unreasonably large. */
+static cairo_surface_t *
+load_surface (const char *path)
+{
+  g_autoptr (GdkTexture) texture = gdk_texture_new_from_filename (path, NULL);
+  return texture != NULL ? texture_surface (texture) : NULL;
 }
 
 void
@@ -469,7 +477,8 @@ draw_card (cairo_t *cr, const FpStyle *style, cairo_surface_t *img, double x, do
   cairo_destroy (icr);
   /* The front card always stays upright (owner); only the cards behind it tilt. */
   double angle = style->rotation && depth > 0 ? unit (seed, 0x9e3779b9U) * STACK_MAX_TILT_DEG : 0;
-  item_finish (cr, &item, x + w / 2, y + ch / 2, angle, shadow, blur, alpha);
+  double cy = style->bottom_align ? y + h - ch / 2 : y + ch / 2;
+  item_finish (cr, &item, x + w / 2, cy, angle, shadow, blur, alpha);
 }
 
 GdkTexture *
@@ -511,7 +520,8 @@ fp_composite_frame (const FpStyle         *style,
   for (guint k = 0; k < n_items; k++)
     {
       guint i = stacked ? n_items - 1 - k : k;
-      cairo_surface_t *img = items[i].path != NULL ? load_surface (items[i].path) : NULL; /* owned */
+      cairo_surface_t *img = items[i].texture != NULL ? texture_surface (items[i].texture)
+                             : items[i].path != NULL ? load_surface (items[i].path) : NULL; /* owned */
       if (items[i].path != NULL && img == NULL && n_unreadable != NULL)
         (*n_unreadable)++;
       double sx, sy, sw, sh;

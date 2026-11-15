@@ -78,6 +78,19 @@ typedef struct
   guint8     list_zoom; /* 0 .. NU_LIST_ZOOM_MAX */
 } NuFolderView;
 
+/* Details pane v2 (PLAN.md §13.10). Values equal the schema enum. */
+typedef enum
+{
+  NU_PANE_RIGHT  = 0,
+  NU_PANE_BOTTOM = 1,
+} NuPanePosition;
+
+typedef enum
+{
+  NU_MEDIA_FIT_SHAPE = 0, /* the box takes the media's shape (snug) */
+  NU_MEDIA_FIT_BOX   = 1, /* a fixed box; the media flush inside it */
+} NuMediaFit;
+
 /* Which groups of settings changed in one batch (bit flags for listeners). */
 typedef enum
 {
@@ -95,6 +108,10 @@ typedef enum
   NU_CHANGED_PREVIEW_ICONS  = 1 << 9, /* folder-preview-cycle, -folder-icon, -overlay-icon, -stack-position,
                                        * -stack-offset (nothing that changes the pictures themselves) */
   NU_CHANGED_FOLDER_ICONS   = 1 << 10, /* folder-icons-enabled, folder-icon-rules, folder-icon-rule-history */
+  NU_CHANGED_DETAILS_PANE   = 1 << 11, /* details-pane-enabled */
+  NU_CHANGED_DP_STATE       = 1 << 12, /* details-pane-visible, -width, -height (UI state) */
+  NU_CHANGED_DP_LOOK        = 1 << 13, /* details-pane-position, -border, -margin, -padding, -radius,
+                                        * -header-border, -preview-*, -stack-* */
 } NuChanged;
 
 typedef struct
@@ -136,7 +153,41 @@ typedef struct
   const NuIconRule *icon_rules;         /* n_icon_rules entries (NULL when 0); same ownership. */
   guint           n_icon_rules;
   const char *const *icon_rule_history; /* NULL-terminated, never NULL; same ownership. */
+  gboolean        details_pane_enabled;
+  gboolean        details_pane_visible;
+  int             details_pane_width;   /* px, NU_DETAILS_PANE_WIDTH_MIN … _MAX */
+  int             details_pane_height;  /* px, NU_DETAILS_PANE_HEIGHT_MIN … _MAX (bottom position) */
+  NuPanePosition  details_pane_position;
+  gboolean        details_pane_border;
+  int             details_pane_margin;
+  int             details_pane_padding;
+  int             details_pane_radius;
+  gboolean        details_pane_header_border;
+  int             details_pane_preview_radius;
+  int             details_pane_preview_margin;
+  int             details_pane_icon_size;   /* px, 16 … 256, a multiple of 16 */
+  NuMediaFit      details_pane_media_fit;
+  gboolean        details_pane_title_centered;
+  gboolean        details_pane_show_icon;
+  gboolean        details_pane_preview_backdrop;
+  NuDepthEffect   details_pane_stack_depth;
+  gboolean        details_pane_stack_shadow;
+  gboolean        details_pane_stack_rotation;
+  gboolean        details_pane_stack_keep_aspect;
+  int             details_pane_stack_fade;
+  gboolean        details_pane_stack_card;
+  gboolean        details_pane_stack_border;
+  NuRgb           details_pane_stack_border_colour;
+  double          details_pane_stack_border_width; /* px, 0.5 … 8 */
+  int             details_pane_stack_corner_radius;
+  gboolean        details_pane_stack_media_square;
+  int             details_pane_stack_spacing;
 } NuConfig;
+
+#define NU_DETAILS_PANE_WIDTH_MIN 260
+#define NU_DETAILS_PANE_WIDTH_MAX 480
+#define NU_DETAILS_PANE_HEIGHT_MIN 72
+#define NU_DETAILS_PANE_HEIGHT_MAX 400
 
 typedef void (*NuSettingsListener) (NuChanged changed, gpointer user_data);
 
@@ -194,6 +245,15 @@ gboolean nu_settings_reset_folder_views (void);
  * (not a pending dialog setting), keeping the newest NU_ICON_RULE_HISTORY_MAX. Returns FALSE without
  * schema or if nothing was added. */
 gboolean nu_settings_remember_icon_rule_names (const char *const *names);
+
+/* Details pane UI state (PLAN.md §13.4), written right away (not a pending dialog setting); @width is
+ * clamped to the schema range. Only changed keys are written. Returns FALSE without schema. */
+gboolean nu_settings_set_details_pane_state (gboolean visible,
+                                             int      width);
+
+/* Details pane height at the bottom (PLAN.md §13.10), UI state written right away; clamped. FALSE without
+ * schema. */
+gboolean nu_settings_set_details_pane_height (int height);
 
 /* The built-in defaults (static, never freed). */
 const NuConfig *nu_settings_defaults (void);

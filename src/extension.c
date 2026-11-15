@@ -4,6 +4,7 @@
 #include <gmodule.h>
 #include <nautilus-extension.h>
 
+#include "details-pane/details_pane.h"
 #include "folder-icons/folder_icons.h"
 #include "folder-preview/folder_preview.h"
 #include "folder-views/folder_views.h"
@@ -24,6 +25,8 @@ static const NuFeature features[] = {
   { sd_feature_initialize, sd_feature_shutdown, sd_feature_list_types },
   { fv_feature_initialize, fv_feature_shutdown, fv_feature_list_types },
   { fi_feature_initialize, fi_feature_shutdown, fi_feature_list_types },
+  /* After folder-preview: the pane draws folders through its view hook (PLAN.md §13.1.2). */
+  { dp_feature_initialize, dp_feature_shutdown, dp_feature_list_types },
 };
 
 /* Upper bound on provider types across all features; checked in nautilus_module_initialize(). */

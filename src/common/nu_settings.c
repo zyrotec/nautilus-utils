@@ -41,6 +41,35 @@ static const NuConfig defaults = {
   .icon_rules = NULL,
   .n_icon_rules = 0,
   .icon_rule_history = (const char *const[]) { NULL },
+  .details_pane_enabled = TRUE,
+  .details_pane_visible = FALSE,
+  .details_pane_width = 320,
+  .details_pane_height = 112,
+  .details_pane_position = NU_PANE_RIGHT,
+  .details_pane_border = TRUE,
+  .details_pane_margin = 0,
+  .details_pane_padding = 18,
+  .details_pane_radius = 0,
+  .details_pane_header_border = FALSE,
+  .details_pane_preview_radius = 12,
+  .details_pane_preview_margin = 0,
+  .details_pane_icon_size = 128,
+  .details_pane_media_fit = NU_MEDIA_FIT_SHAPE,
+  .details_pane_title_centered = FALSE,
+  .details_pane_show_icon = TRUE,
+  .details_pane_preview_backdrop = FALSE,
+  .details_pane_stack_depth = NU_DEPTH_BLUR,
+  .details_pane_stack_shadow = TRUE,
+  .details_pane_stack_rotation = TRUE,
+  .details_pane_stack_keep_aspect = TRUE,
+  .details_pane_stack_fade = 0,
+  .details_pane_stack_card = TRUE,
+  .details_pane_stack_border = FALSE,
+  .details_pane_stack_border_colour = { 0xff, 0xff, 0xff },
+  .details_pane_stack_border_width = 2.0,
+  .details_pane_stack_corner_radius = 4,
+  .details_pane_stack_media_square = FALSE,
+  .details_pane_stack_spacing = 12,
 };
 
 /* Key name → group reported to listeners. */
@@ -86,6 +115,35 @@ static const struct
   { "folder-icon-rule-history", NU_CHANGED_FOLDER_ICONS },
   { "folder-preview-folder-icon", NU_CHANGED_PREVIEW_ICONS },
   { "folder-preview-overlay-icon", NU_CHANGED_PREVIEW_ICONS },
+  { "details-pane-enabled", NU_CHANGED_DETAILS_PANE },
+  { "details-pane-visible", NU_CHANGED_DP_STATE },
+  { "details-pane-width", NU_CHANGED_DP_STATE },
+  { "details-pane-height", NU_CHANGED_DP_STATE },
+  { "details-pane-position", NU_CHANGED_DP_LOOK },
+  { "details-pane-border", NU_CHANGED_DP_LOOK },
+  { "details-pane-margin", NU_CHANGED_DP_LOOK },
+  { "details-pane-padding", NU_CHANGED_DP_LOOK },
+  { "details-pane-radius", NU_CHANGED_DP_LOOK },
+  { "details-pane-header-border", NU_CHANGED_DP_LOOK },
+  { "details-pane-preview-radius", NU_CHANGED_DP_LOOK },
+  { "details-pane-preview-margin", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-depth-effect", NU_CHANGED_DP_LOOK },
+  { "details-pane-icon-size", NU_CHANGED_DP_LOOK },
+  { "details-pane-media-fit", NU_CHANGED_DP_LOOK },
+  { "details-pane-title-centered", NU_CHANGED_DP_LOOK },
+  { "details-pane-show-icon", NU_CHANGED_DP_LOOK },
+  { "details-pane-preview-backdrop", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-shadow", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-rotation", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-keep-aspect", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-fade", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-card", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-border", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-border-colour", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-border-width", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-corner-radius", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-media-square", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-spacing", NU_CHANGED_DP_LOOK },
 };
 
 typedef struct
@@ -246,6 +304,45 @@ read_all (void)
   g_strfreev (ns->history);
   ns->history = g_settings_get_strv (s, "folder-icon-rule-history");
   c->icon_rule_history = (const char *const *) ns->history;
+
+  c->details_pane_enabled = g_settings_get_boolean (s, "details-pane-enabled");
+  c->details_pane_visible = g_settings_get_boolean (s, "details-pane-visible");
+  c->details_pane_width = CLAMP (g_settings_get_int (s, "details-pane-width"), NU_DETAILS_PANE_WIDTH_MIN,
+                                 NU_DETAILS_PANE_WIDTH_MAX);
+  c->details_pane_height = CLAMP (g_settings_get_int (s, "details-pane-height"), NU_DETAILS_PANE_HEIGHT_MIN,
+                                  NU_DETAILS_PANE_HEIGHT_MAX);
+  int pane_position = g_settings_get_enum (s, "details-pane-position");
+  c->details_pane_position = pane_position == NU_PANE_BOTTOM ? NU_PANE_BOTTOM : NU_PANE_RIGHT;
+  c->details_pane_border = g_settings_get_boolean (s, "details-pane-border");
+  /* The schema ranges keep the integers in range. */
+  c->details_pane_margin = g_settings_get_int (s, "details-pane-margin");
+  c->details_pane_padding = g_settings_get_int (s, "details-pane-padding");
+  c->details_pane_radius = g_settings_get_int (s, "details-pane-radius");
+  c->details_pane_header_border = g_settings_get_boolean (s, "details-pane-header-border");
+  c->details_pane_preview_radius = g_settings_get_int (s, "details-pane-preview-radius");
+  c->details_pane_preview_margin = g_settings_get_int (s, "details-pane-preview-margin");
+  /* Steps of 16 (a hand-edited value in between is rounded to the nearest step). */
+  c->details_pane_media_fit = g_settings_get_enum (s, "details-pane-media-fit") == NU_MEDIA_FIT_BOX
+                                ? NU_MEDIA_FIT_BOX : NU_MEDIA_FIT_SHAPE;
+  c->details_pane_title_centered = g_settings_get_boolean (s, "details-pane-title-centered");
+  c->details_pane_show_icon = g_settings_get_boolean (s, "details-pane-show-icon");
+  c->details_pane_preview_backdrop = g_settings_get_boolean (s, "details-pane-preview-backdrop");
+  c->details_pane_icon_size = CLAMP ((g_settings_get_int (s, "details-pane-icon-size") + 8) / 16 * 16, 16, 256);
+  int sdepth = g_settings_get_enum (s, "details-pane-stack-depth-effect");
+  c->details_pane_stack_depth = (sdepth >= NU_DEPTH_NONE && sdepth <= NU_DEPTH_DARKEN)
+                                  ? (NuDepthEffect) sdepth : defaults.details_pane_stack_depth;
+  c->details_pane_stack_shadow = g_settings_get_boolean (s, "details-pane-stack-shadow");
+  c->details_pane_stack_rotation = g_settings_get_boolean (s, "details-pane-stack-rotation");
+  c->details_pane_stack_keep_aspect = g_settings_get_boolean (s, "details-pane-stack-keep-aspect");
+  c->details_pane_stack_fade = g_settings_get_int (s, "details-pane-stack-fade");
+  c->details_pane_stack_card = g_settings_get_boolean (s, "details-pane-stack-card");
+  c->details_pane_stack_border = g_settings_get_boolean (s, "details-pane-stack-border");
+  read_colour (s, "details-pane-stack-border-colour", defaults.details_pane_stack_border_colour,
+               &c->details_pane_stack_border_colour);
+  c->details_pane_stack_border_width = CLAMP (g_settings_get_double (s, "details-pane-stack-border-width"), 0.5, 8.0);
+  c->details_pane_stack_corner_radius = CLAMP (g_settings_get_int (s, "details-pane-stack-corner-radius"), 0, 32);
+  c->details_pane_stack_media_square = g_settings_get_boolean (s, "details-pane-stack-media-square");
+  c->details_pane_stack_spacing = CLAMP (g_settings_get_int (s, "details-pane-stack-spacing"), 0, 48);
 }
 
 static gboolean
@@ -316,6 +413,16 @@ nu_settings_init_full (const char       *schema_id,
       g_warning ("settings schema %s is not installed; using the defaults (see README: Settings)", schema_id);
       return;
     }
+  /* An older installed schema (module updated, schema not): reading a missing key would abort Files, so behave
+   * as if the schema were missing. */
+  for (gsize i = 0; i < G_N_ELEMENTS (key_groups); i++)
+    if (!g_settings_schema_has_key (ns->schema, key_groups[i].key))
+      {
+        g_warning ("settings schema %s is out of date (no key \"%s\"); using the defaults until it is "
+                   "reinstalled (see README: Settings)", schema_id, key_groups[i].key);
+        g_clear_pointer (&ns->schema, g_settings_schema_unref);
+        return;
+      }
   ns->settings = g_settings_new_full (ns->schema, ns->backend, NULL);
   read_all ();
   ns->changed_id = g_signal_connect (ns->settings, "changed", G_CALLBACK (on_changed), NULL);
@@ -428,6 +535,31 @@ nu_settings_remember_icon_rule_names (const char *const *names)
   guint drop = next->len > NU_ICON_RULE_HISTORY_MAX ? next->len - NU_ICON_RULE_HISTORY_MAX : 0;
   g_ptr_array_add (next, NULL);
   g_settings_set_strv (ns->settings, "folder-icon-rule-history", (const char *const *) next->pdata + drop);
+  return TRUE;
+}
+
+gboolean
+nu_settings_set_details_pane_state (gboolean visible,
+                                    int      width)
+{
+  if (!nu_settings_available ())
+    return FALSE;
+  width = CLAMP (width, NU_DETAILS_PANE_WIDTH_MIN, NU_DETAILS_PANE_WIDTH_MAX);
+  if (g_settings_get_boolean (ns->settings, "details-pane-visible") != visible)
+    g_settings_set_boolean (ns->settings, "details-pane-visible", visible);
+  if (g_settings_get_int (ns->settings, "details-pane-width") != width)
+    g_settings_set_int (ns->settings, "details-pane-width", width);
+  return TRUE;
+}
+
+gboolean
+nu_settings_set_details_pane_height (int height)
+{
+  if (!nu_settings_available ())
+    return FALSE;
+  height = CLAMP (height, NU_DETAILS_PANE_HEIGHT_MIN, NU_DETAILS_PANE_HEIGHT_MAX);
+  if (g_settings_get_int (ns->settings, "details-pane-height") != height)
+    g_settings_set_int (ns->settings, "details-pane-height", height);
   return TRUE;
 }
 

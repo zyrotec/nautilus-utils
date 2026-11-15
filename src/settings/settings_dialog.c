@@ -21,6 +21,8 @@ static const char *const layout_nicks[] = { "grid", "stacked", NULL };
 static const char *const stack_step_nicks[] = { "one", "three", NULL };
 static const char *const depth_nicks[] = { "none", "blur", "transparency", "darken", NULL };
 static const char *const position_nicks[] = { "top", "centre", "bottom", NULL };
+static const char *const pane_position_nicks[] = { "right", "bottom", NULL };
+static const char *const media_fit_nicks[] = { "shape", "box", NULL };
 
 /* ---- GSettings ↔ property mappings (all return TRUE when @value was set) ------------------------------ */
 
@@ -313,6 +315,46 @@ slider_row_d (GSettings  *settings,
 }
 
 /* A spin row for integer @key in [min, max] pixels (at the 64 × 64 icon size). */
+/* Snaps the slider to multiples of 16 while it moves (the icon size, PLAN.md §13.12 P16). */
+static void
+snap_16 (GtkRange *range, gpointer data)
+{
+  (void) data;
+  double v = gtk_range_get_value (range);
+  double snapped = CLAMP (round (v / 16.0) * 16.0, 16.0, 256.0);
+  if (fabs (v - snapped) > 0.01)
+    gtk_range_set_value (range, snapped);
+}
+
+/* A 16–256 px slider in steps of 16 (snapped while it moves), with a mark at every 64 px. */
+static GtkWidget *
+icon_size_row (GSettings  *settings,
+               const char *key,
+               const char *title,
+               const char *subtitle)
+{
+  GtkWidget *row = adw_action_row_new ();
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), title);
+  if (subtitle != NULL)
+    adw_action_row_set_subtitle (ADW_ACTION_ROW (row), subtitle);
+  GtkWidget *scale = gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL, 16, 256, 16);
+  gtk_scale_set_digits (GTK_SCALE (scale), 0);
+  gtk_scale_set_draw_value (GTK_SCALE (scale), TRUE);
+  gtk_scale_set_value_pos (GTK_SCALE (scale), GTK_POS_RIGHT);
+  gtk_scale_set_format_value_func (GTK_SCALE (scale), format_value, (gpointer) "px", NULL);
+  for (int v = 64; v <= 256; v += 64)
+    gtk_scale_add_mark (GTK_SCALE (scale), v, GTK_POS_BOTTOM, NULL);
+  gtk_range_set_increments (GTK_RANGE (scale), 16, 64);
+  gtk_widget_set_size_request (scale, 200, -1);
+  gtk_widget_set_valign (scale, GTK_ALIGN_CENTER);
+  gtk_accessible_update_property (GTK_ACCESSIBLE (scale), GTK_ACCESSIBLE_PROPERTY_LABEL, title, -1);
+  g_signal_connect (scale, "value-changed", G_CALLBACK (snap_16), NULL);
+  g_settings_bind_with_mapping (settings, key, gtk_range_get_adjustment (GTK_RANGE (scale)), "value",
+                                G_SETTINGS_BIND_DEFAULT, int_to_double, double_to_int, NULL, NULL);
+  adw_action_row_add_suffix (ADW_ACTION_ROW (row), scale);
+  return row;
+}
+
 static GtkWidget *
 px_row (GSettings  *settings,
         const char *key,
@@ -663,6 +705,153 @@ folder_views_page (GSettings *settings)
   return page;
 }
 
+/* P25: the folder previews' look into the pane's own stack options (pending until Apply, like every
+ * setting). Sizes given at the 64 × 64 icon size are scaled to the pane: its stack is about FP_TO_PANE times
+ * as wide as a 64 px folder's. */
+#define FP_TO_PANE 4.0
+static void
+on_copy_fp_look (AdwButtonRow *row, gpointer data)
+{
+  (void) row;
+  GSettings *s = data;
+  g_settings_set_boolean (s, "details-pane-stack-border", g_settings_get_boolean (s, "folder-preview-border"));
+  g_autofree char *colour = g_settings_get_string (s, "folder-preview-border-colour");
+  g_settings_set_string (s, "details-pane-stack-border-colour", colour);
+  double w = round (g_settings_get_double (s, "folder-preview-border-width") * FP_TO_PANE * 2) / 2;
+  g_settings_set_double (s, "details-pane-stack-border-width", CLAMP (w, 0.5, 8.0));
+  int r = (int) lround (g_settings_get_int (s, "folder-preview-corner-radius") * FP_TO_PANE);
+  g_settings_set_int (s, "details-pane-stack-corner-radius", CLAMP (r, 0, 32));
+  g_settings_set_boolean (s, "details-pane-stack-shadow", g_settings_get_boolean (s, "folder-preview-shadow"));
+  g_settings_set_boolean (s, "details-pane-stack-rotation", g_settings_get_boolean (s, "folder-preview-rotation"));
+  g_settings_set_boolean (s, "details-pane-stack-keep-aspect", g_settings_get_boolean (s, "folder-preview-keep-aspect"));
+  g_settings_set_enum (s, "details-pane-stack-depth-effect", g_settings_get_enum (s, "folder-preview-depth-effect"));
+  g_settings_set_int (s, "details-pane-stack-fade", g_settings_get_int (s, "folder-preview-fade"));
+  g_settings_set_boolean (s, "details-pane-stack-media-square", FALSE);
+}
+
+/* Details pane (PLAN.md §13.4, §13.10). Shown/hidden and width/height are UI state, kept as the user leaves
+ * them. */
+static GtkWidget *
+details_pane_page (GSettings *settings)
+{
+  GtkWidget *page = adw_preferences_page_new ();
+  GtkWidget *main_group = group (NULL, NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (main_group),
+                             switch_row (settings, "details-pane-enabled", "Details Pane",
+                                         "A button next to View Options (or Alt+Shift+P) shows the selected "
+                                         "item’s preview and properties next to the folder view"));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (main_group));
+
+  GtkWidget *pane_group = group ("Pane", NULL);
+  GtkWidget *position = enum_row (settings, "details-pane-position", "Position",
+                                  (const char *[]) { "Right", "Bottom", NULL }, pane_position_nicks);
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (position), "Bottom shows a wide strip, like Windows 7");
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group), position);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group),
+                             switch_row (settings, "details-pane-border", "Border",
+                                         "A line between the folder view and the pane"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group),
+                             px_row (settings, "details-pane-margin", "Margin",
+                                     "Space around the pane; above 0 it floats as a card", 0, 24));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group),
+                             px_row (settings, "details-pane-padding", "Padding", "Space inside the pane", 6, 36));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group),
+                             px_row (settings, "details-pane-radius", "Corner Radius", NULL, 0, 24));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group),
+                             switch_row (settings, "details-pane-header-border", "Line Under the Header Bar",
+                                         "While the pane is shown; not under the sidebar’s header"));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (pane_group));
+
+  GtkWidget *preview_group = group ("Preview", NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (preview_group),
+                             icon_size_row (settings, "details-pane-icon-size", "Icon Size",
+                                            "Files, folders and the front icon of a stack; pictures, videos and "
+                                            "documents fill the box"));
+  GtkWidget *fit = enum_row (settings, "details-pane-media-fit", "Pictures and Videos",
+                             (const char *[]) { "Box Takes Their Shape", "Inside a Fixed Box", NULL }, media_fit_nicks);
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (fit), "Either way they touch the box’s edges, without padding");
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (preview_group), fit);
+  GtkWidget *backdrop = switch_row (settings, "details-pane-preview-backdrop", "Blurred Background",
+                                    "Fill the box around a picture or video with a blurred, darker copy of it");
+  g_settings_bind_with_mapping (settings, "details-pane-media-fit", backdrop, "sensitive", G_SETTINGS_BIND_GET,
+                                nick_is, NULL, (gpointer) "box", NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (preview_group), backdrop);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (preview_group),
+                             switch_row (settings, "details-pane-show-icon", "Icon Next to the Name", NULL));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (preview_group),
+                             switch_row (settings, "details-pane-title-centered", "Centre the Name", NULL));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (preview_group),
+                             px_row (settings, "details-pane-preview-radius", "Corner Radius",
+                                     "Of the box around the preview", 0, 32));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (preview_group),
+                             px_row (settings, "details-pane-preview-margin", "Margin",
+                                     "Space around the box", 0, 32));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (preview_group));
+
+  /* Several selected (P24–P27): the stacked folder previews' options, the pane's own copies. Border, corners
+   * and box shadow only ever apply to pictures, videos and PDFs; icons and folders stay plain. */
+  GtkWidget *stack_group = group ("Several Selected", "Shown as a stack, like the stacked folder previews.");
+  GtkWidget *copy = adw_button_row_new ();
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (copy), "Copy the Folder Previews’ Look");
+  adw_preferences_row_set_use_underline (ADW_PREFERENCES_ROW (copy), FALSE);
+  adw_button_row_set_start_icon_name (ADW_BUTTON_ROW (copy), "edit-copy-symbolic");
+  gtk_widget_set_tooltip_text (copy, "Border, corners, shadow, depth, rotation, aspect ratio and fade from the "
+                                     "Folder Preview page, scaled to the pane; change them below");
+  g_signal_connect (copy, "activated", G_CALLBACK (on_copy_fp_look), settings);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group), copy);
+  GtkWidget *depth = enum_row (settings, "details-pane-stack-depth-effect", "Depth Effect",
+                               (const char *[]) { "None", "Blur", "Transparency", "Darken", NULL }, depth_nicks);
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (depth), "How the items further back look");
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group), depth);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             slider_row (settings, "details-pane-stack-spacing", "Spacing",
+                                         "How far each item behind shows above the one in front", 0, 48, "px"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             switch_row (settings, "details-pane-stack-shadow", "Shadow", NULL));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             switch_row (settings, "details-pane-stack-rotation", "Random Rotation",
+                                         "Tilt the items behind the front one by a small angle"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             slider_row (settings, "details-pane-stack-fade", "Bottom Fade",
+                                         "Fade the stack out towards the bottom", 0, 100, "%"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             switch_row (settings, "details-pane-stack-card", "Card Behind Icons",
+                                         "A translucent card behind files and folders without a thumbnail"));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (stack_group));
+
+  GtkWidget *media_group = group ("Several Selected: Pictures, Videos and PDFs",
+                                  "Icons and folders are never given a border or corners.");
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (media_group),
+                             switch_row (settings, "details-pane-stack-media-square", "Squares the Size of Icons",
+                                         "Instead of cards across the box; the picture fills the square, cropped"));
+  GtkWidget *keep = switch_row (settings, "details-pane-stack-keep-aspect", "Keep Aspect Ratio",
+                                "Whole pictures in their own shape instead of filling the card, cropped");
+  g_settings_bind (settings, "details-pane-stack-media-square", keep, "sensitive",
+                   G_SETTINGS_BIND_GET | G_SETTINGS_BIND_INVERT_BOOLEAN);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (media_group), keep);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (media_group),
+                             switch_row (settings, "details-pane-stack-border", "Border", NULL));
+  const NuConfig *d = nu_settings_defaults ();
+  GtkWidget *bcolour = colour_button_row (settings, "details-pane-stack-border-colour", "Border Colour",
+                                          &d->details_pane_stack_border_colour);
+  g_settings_bind (settings, "details-pane-stack-border", bcolour, "sensitive", G_SETTINGS_BIND_GET);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (media_group), bcolour);
+  GtkWidget *bwidth = slider_row_d (settings, "details-pane-stack-border-width", "Border Width", NULL, 0.5, 8.0,
+                                    0.5, "px");
+  g_settings_bind (settings, "details-pane-stack-border", bwidth, "sensitive", G_SETTINGS_BIND_GET);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (media_group), bwidth);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (media_group),
+                             px_row (settings, "details-pane-stack-corner-radius", "Corner Radius", NULL, 0, 32));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (media_group));
+
+  /* Options of a switched-off feature can't be edited (follows the pending switch). */
+  g_settings_bind (settings, "details-pane-enabled", pane_group, "sensitive", G_SETTINGS_BIND_GET);
+  g_settings_bind (settings, "details-pane-enabled", preview_group, "sensitive", G_SETTINGS_BIND_GET);
+  g_settings_bind (settings, "details-pane-enabled", stack_group, "sensitive", G_SETTINGS_BIND_GET);
+  g_settings_bind (settings, "details-pane-enabled", media_group, "sensitive", G_SETTINGS_BIND_GET);
+  return page;
+}
+
 /* Shown instead of the tabs when the schema isn't installed. */
 static GtkWidget *
 unavailable_page (void)
@@ -768,6 +957,8 @@ st_settings_dialog_present (GtkWidget *parent)
                                            "folder-views", "Folder Views", "view-grid-symbolic");
       adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), st_folder_icons_page (settings),
                                            "folder-icons", "Folder Icons", "folder-symbolic");
+      adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), details_pane_page (settings),
+                                           "details-pane", "Details Pane", "sidebar-show-right-symbolic");
 
       /* Sidebar pane: one row per feature. */
       GtkWidget *sidebar = adw_view_switcher_sidebar_new ();

@@ -249,7 +249,7 @@ theme_body (GdkPaintable *icon, graphene_rect_t *out)
 /* Where the frame goes for @hook's icon, without textures (cheap after the first call). Also returns the
  * folder body and whether the custom back SVG is used. */
 static void
-hook_geometry (ImageHook *hook, FpDecor *decor, graphene_rect_t *body, gboolean *custom_back)
+icon_geometry (GdkPaintable *icon, FpDecor *decor, graphene_rect_t *body, gboolean *custom_back)
 {
   *custom_back = FALSE;
   if (vh->style.layout != FP_LAYOUT_STACKED)
@@ -260,26 +260,38 @@ hook_geometry (ImageHook *hook, FpDecor *decor, graphene_rect_t *body, gboolean 
     }
   *custom_back = vh->back_art != NULL && fp_icon_art_get_body (vh->back_art, body);
   if (!*custom_back)
-    theme_body (hook->icon, body);
+    theme_body (icon, body);
   fp_decor_init_stacked (decor, &vh->style, body, vh->position, vh->offset);
 }
 
-/* The full decor for @hook at its current size and scale; *decor gets owned texture refs (release with
- * decor_clear). */
 static void
-hook_decor (ImageHook *hook, FpDecor *decor)
+hook_geometry (ImageHook *hook, FpDecor *decor, graphene_rect_t *body, gboolean *custom_back)
+{
+  icon_geometry (hook->icon, decor, body, custom_back);
+}
+
+/* The full decor for @icon at @size × @scale; *decor gets owned texture refs (release with decor_clear). */
+static void
+icon_decor (GdkPaintable *icon, int size, int scale, FpDecor *decor)
 {
   graphene_rect_t body;
   gboolean custom_back;
-  hook_geometry (hook, decor, &body, &custom_back);
-  if (decor->layout != FP_LAYOUT_STACKED || hook->size <= 0)
+  icon_geometry (icon, decor, &body, &custom_back);
+  if (decor->layout != FP_LAYOUT_STACKED || size <= 0)
     return;
-  int px = hook->size * gtk_widget_get_scale_factor (hook->image);
+  int px = size * scale;
   if (custom_back)
     decor->back = fp_icon_art_render (vh->back_art, px, px);
   /* Same size and place as the folder icon (V4): the SVG itself positions the overlay. */
   if (vh->overlay_art != NULL)
     decor->overlay = fp_icon_art_render (vh->overlay_art, px, px);
+}
+
+/* The full decor for @hook at its current size and scale (see icon_decor). */
+static void
+hook_decor (ImageHook *hook, FpDecor *decor)
+{
+  icon_decor (hook->icon, hook->size, gtk_widget_get_scale_factor (hook->image), decor);
 }
 
 static void
@@ -1656,4 +1668,70 @@ folder_changed_impl (const char *uri)
       if (g_strcmp0 (hook->uri, uri) == 0)
         schedule_sync (hook);
     }
+}
+
+/* ------------------------------------------------------------------------------------------------ */
+/* The details pane's large folder preview (PLAN.md §13.1.2, P4)                                    */
+
+static void
+on_pane_frame (GObject *source, GAsyncResult *res, gpointer data)
+{
+  (void) source;
+  GWeakRef *ref = data;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (FpFrame) frame = fp_cache_get_frame_finish (res, &error);
+  g_autoptr (FpFolderPaintable) paintable = g_weak_ref_get (ref);
+  g_weak_ref_clear (ref);
+  g_free (ref);
+  if (paintable == NULL || frame == NULL || frame->texture == NULL)
+    return;
+  const char *uri = g_object_get_data (G_OBJECT (paintable), "fp-pane-uri"); /* borrowed */
+  fp_folder_paintable_set_frame (paintable, frame->texture, uri);
+}
+
+GdkPaintable *
+fp_view_hook_render_folder (GFile        *folder,
+                            GdkPaintable *icon,
+                            int           size,
+                            int           scale)
+{
+  /* Same rules as the grid: feature on, local folder, the theme's plain folder icon (§6.1.1, §11.1). */
+  if (vh == NULL || vh->off || vh->disabled || folder == NULL || !g_file_is_native (folder) || size <= 0 ||
+      !is_plain_folder_icon (icon))
+    return NULL;
+  FpFolderPaintable *paintable = fp_folder_paintable_new (icon, size); /* returned: caller owns it */
+  FpDecor decor;
+  icon_decor (icon, size, MAX (scale, 1), &decor);
+  fp_folder_paintable_set_decor (paintable, &decor); /* takes its own refs */
+  guint px = fp_decor_frame_px (&decor, size, MAX (scale, 1));
+  decor_clear (&decor);
+
+  char *uri = g_file_get_uri (folder);
+  g_object_set_data_full (G_OBJECT (paintable), "fp-pane-uri", uri, g_free); /* the paintable owns @uri */
+  GdkTexture *texture = NULL;
+  guint hint = 0;
+  if (fp_cache_peek_frame (vh->cache, uri, 0, px, &texture, &hint))
+    {
+      fp_folder_paintable_set_frame (paintable, texture, uri);
+      g_clear_object (&texture);
+      return GDK_PAINTABLE (paintable);
+    }
+  /* Something sensible at once (a smaller frame from the grid), the exact size when it is built. */
+  texture = fp_cache_peek_frame_any_size (vh->cache, uri, 0);
+  if (texture != NULL)
+    fp_folder_paintable_set_frame (paintable, texture, uri);
+  g_clear_object (&texture);
+  GWeakRef *ref = g_new0 (GWeakRef, 1); /* freed by on_pane_frame */
+  g_weak_ref_init (ref, paintable);
+  fp_cache_get_frame_async (vh->cache, folder, 0, px, G_PRIORITY_DEFAULT, NULL, on_pane_frame, ref);
+  return GDK_PAINTABLE (paintable);
+}
+
+gboolean
+fp_view_hook_get_style (FpStyle *out)
+{
+  if (vh == NULL)
+    return FALSE;
+  *out = vh->style;
+  return TRUE;
 }

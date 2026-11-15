@@ -2,7 +2,7 @@
 
 # 🗂️ nautilus-utils
 
-**Extra features for GNOME Files (Nautilus): folder previews, drive usage bars, per-folder views and folder icons by name.**
+**Extra features for GNOME Files (Nautilus): folder previews, drive usage bars, per-folder views, folder icons by name and a details pane.**
 
 Shipped as one native C extension module (`libnautilus-utils.so`) with its own settings window.
 
@@ -25,6 +25,7 @@ Shipped as one native C extension module (`libnautilus-utils.so`) with its own s
   - [💽 Sidebar drives](#-sidebar-drives)
   - [👁️ Folder views](#️-folder-views)
   - [🎨 Folder icons by name](#-folder-icons-by-name)
+  - [📋 Details pane](#-details-pane)
   - [⚙️ Settings](#️-settings)
 - [📦 Installation](#-installation)
   - [✅ Requirements](#-requirements)
@@ -47,6 +48,7 @@ Shipped as one native C extension module (`libnautilus-utils.so`) with its own s
 | 💽 | **Sidebar drives** | Drives in the sidebar get a usage bar and "X free of Y", plus a row for your OS drive and your mounted network shares. |
 | 👁️ | **Folder views** | Every folder remembers its own view (grid or list) and icon size. |
 | 🎨 | **Folder icons by name** | Give every folder with a certain name (e.g. `node_modules`) its own icon, everywhere. |
+| 📋 | **Details pane** | A pane right of the folder view with the selected item's preview and properties, like Windows File Explorer. |
 | ⚙️ | **Settings** | One settings window for all features, opened from Files' main menu. |
 
 Every feature can be switched off on its own. Files keeps working normally if a Nautilus update changes
@@ -194,6 +196,61 @@ Properties.
 - 🧹 Like any custom icon, the icons stay if the extension is uninstalled: remove the rules first to restore
   the folders.
 
+### 📋 Details pane
+
+Like File Explorer's details pane: a **Details Pane** button left of *View Options* (or <kbd>Alt</kbd>
+<kbd>Shift</kbd> <kbd>P</kbd>) shows a pane right of the folder view with a large preview of the selected
+file or folder and its properties. Drag its left edge to resize it.
+
+- 🖼️ **Preview:** the file's thumbnail (made if missing, in the shared thumbnail cache, so Files benefits too),
+  filling a box of its own shape edge to edge (or flush inside a fixed box, optionally on a blurred, darker copy
+  of the picture); files without one
+  show their icon at the **icon size** you choose (16–256 px). Folders show their **folder preview** (same look
+  as in the grid) when folder previews are on. The name and type can be centred, the small icon hidden.
+- ▶️ **Videos:** a play button plays a small, muted, looping preview right in the pane, with pause and sound
+  buttons. Nothing plays until you click; selecting something else stops it.
+- 📄 **Details:** type, size, location, modified, created and accessed; for folders the number of items and
+  the total size (counted in the background).
+- 🎞️ **Media:** images (width, height, format, camera, date taken, exposure, aperture, ISO, focal length),
+  video (duration, width, height, frame rate, video and audio codecs, bitrates, sample rate, channels, format),
+  audio (title, artist, album, track, year, genre, codec, bitrate, sample rate, channels) and PDF (pages, page
+  size, title, author, subject, keywords, creator, producer, PDF version, dates).
+- 🔐 **Permissions** in words, as chips: what *you* can do, then the owner, group and others —
+  **Read / Write / Run** for files, **List files / Create & delete / Open** for folders — instead of
+  `drwxr-xr-x`.
+- 🗂️ **Several selected:** how many, a stack of the first three like the stacked folder previews — drawn
+  live from the icons (vector) and thumbnails, so it stays sharp at any size — the front one at the bottom, icons
+  getting smaller towards the back, folders with a folder preview drawn with their pictures — total size and what
+  kinds of files. Adding to the selection animates the stack: the items already there move back, the new one fades
+  in, thumbnails fade in over their icons. Pictures, videos and PDFs can have a border (colour, width) and
+  corners — icons and folders never do — or be squares the size of the icons; **Copy the Folder Previews' Look**
+  takes the Folder Preview page's options as a starting point. **Spacing** sets how far each item shows above
+  the one in front, measured between what you see (a folder's tab, a page's top edge, a picture's edge), so the
+  gaps stay even whatever the icons look like.
+  **Nothing selected:** the folder you are in.
+- ↔️ **Right or bottom:** at the bottom it becomes a short summary strip like Windows 7 — thumbnail, name and
+  type, then a few key properties in columns; drag its top edge to change the height.
+- 🎨 **Look:** border on/off, margin (the pane then floats as a card), padding and corner radius; the preview
+  box's corner radius and margin; an optional line under Files' header bar while the pane is shown, meeting the
+  pane's border (below the tab bar when several tabs are open; not under the sidebar's header).
+- 🪟 Shown or hidden in every window at once, and remembered (also its width). Hidden while the window is too
+  narrow for the header's view buttons.
+
+<details>
+<summary><b>⚠️ Known limitations</b></summary>
+
+- **Nautilus updates may switch the feature off.** It relies on Nautilus' private window, header bar and view
+  widgets (verified on Nautilus 51.1). If they change, it logs one warning ("details pane disabled: …") and Files
+  looks as before.
+- Network and other non-local files show the general details only (no media details, no new thumbnails).
+- EXIF details need gexiv2 0.16 and PDF details poppler-glib at build time; without them those rows are missing.
+- The button sits directly left of a separate View Options (⋮) button, as some extensions add one to the view
+  controls; with stock Files (a split button) it sits left of the view switcher.
+- Another extension's own views (e.g. a column view drawn by a Python extension) only update the pane as far as
+  that extension reports its selection to Files.
+
+</details>
+
 ### ⚙️ Settings
 
 Files' main menu (☰) gets a **Nautilus Utils Settings** entry above *Preferences*. The window lists the
@@ -217,6 +274,7 @@ press **Apply**; closing the window without Apply discards them.
 | 💽 **Sidebar Drives** | On/off, bar colour (accent colour, a custom colour, or a two-colour gradient), show/hide the usage bars and the size labels, slide the eject button in only on hover. |
 | 👁️ **Folder Views** | Remember the view per folder (on/off) and **Reset All Folder Views…**, which asks for confirmation and acts right away (it isn't a setting waiting for Apply). |
 | 🎨 **Folder Icons** | Icons by folder name (on/off) and the rules: folder name, icon (Choose Icon…), remove; add a rule with **+**. Invalid or duplicate names are marked red. |
+| 📋 **Details Pane** | On/off; position (right or bottom); border, margin, padding, corner radius; line under the header bar; icon size (16–256 px in steps of 16), pictures in a box of their shape or a fixed box, icon next to the name, centred name, preview box corner radius and margin; blurred background behind pictures; several selected: copy the folder previews' look, spacing, depth effect, shadow, rotation, bottom fade, card behind icons; for pictures, videos and PDFs: squares the size of icons, keep aspect ratio, border (colour, width), corner radius. Whether the pane is shown, its width and its height are kept as you leave them. |
 
 The settings are stored with GSettings (schema `io.github.zyrotec.NautilusUtils`; inspect them with
 `gsettings list-recursively io.github.zyrotec.NautilusUtils`). If the schema isn't installed, the features
@@ -260,7 +318,8 @@ schema, so no extra step is needed for it.
 ```bash
 # 1. Build tools and libraries
 sudo dnf install git meson ninja-build gcc nautilus-devel glib2-devel gtk4-devel libadwaita-devel \
-                 gnome-desktop4-devel gdk-pixbuf2-devel cairo-devel gst-thumbnailers
+                 gnome-desktop4-devel gdk-pixbuf2-devel cairo-devel gstreamer1-plugins-base-devel \
+                 poppler-glib-devel libgexiv2-devel gst-thumbnailers
 
 # 2. Get the source and build it
 git clone https://github.com/zyrotec/nautilus-utils.git
@@ -292,7 +351,8 @@ Needs **Ubuntu 26.10** or **Debian testing / unstable** (see [Requirements](#-re
 sudo apt update
 sudo apt install git meson ninja-build gcc pkg-config \
                  libnautilus-extension-dev libglib2.0-dev libgtk-4-dev libadwaita-1-dev \
-                 libgnome-desktop-4-dev libgdk-pixbuf-2.0-dev libcairo2-dev shared-mime-info
+                 libgnome-desktop-4-dev libgdk-pixbuf-2.0-dev libcairo2-dev libgstreamer-plugins-base1.0-dev \
+                 libpoppler-glib-dev libgexiv2-dev shared-mime-info
 sudo apt install gst-thumbnailers    # optional: album covers (skip if your release doesn't have it)
 
 # 2. Get the source and build it
@@ -319,7 +379,7 @@ On Manjaro, first check that `pacman -Q nautilus` shows 51 or newer.
 # 1. Build tools and libraries (libnautilus-extension holds the extension headers on Arch)
 sudo pacman -Syu --needed base-devel git meson ninja \
                  nautilus libnautilus-extension glib2 gtk4 libadwaita gnome-desktop-4 \
-                 gdk-pixbuf2 cairo gst-thumbnailers
+                 gdk-pixbuf2 cairo gst-plugins-base poppler-glib libgexiv2 gst-thumbnailers
 
 # 2. Get the source and build it
 git clone https://github.com/zyrotec/nautilus-utils.git
@@ -471,6 +531,9 @@ tools/smoke-nautilus.sh DIR              # isolated real Nautilus with an ASan b
 tools/smoke-nautilus.sh --auto 120 DIR   # unattended: scripted scroll/zoom/hover + sidebar steps + self-checks
 SMOKE_FAKE_NETWORK="User Drive" tools/smoke-nautilus.sh --auto 120 DIR   # also exercise the network list
 SMOKE_TOGGLES=5 tools/smoke-nautilus.sh --auto 60 DIR   # fewer settings on/off rounds (default 25)
+SMOKE_ONLY=dp tools/smoke-nautilus.sh --auto 20 DIR      # only the details-pane round
+SMOKE_PERF=1 SMOKE_ONLY=dp tools/smoke-nautilus.sh --auto 20 DIR   # optimised build, no sanitizers: timings + thumbnail checks
+DP_STALL_SAMPLER=1 SMOKE_PERF=1 SMOKE_ONLY=dp tools/smoke-nautilus.sh --auto 20 DIR   # log where slow pane steps wait
 ```
 
 Logs land in `safety-logs/`. The smoke test drives the settings (colours, show/hide, sliding eject,
@@ -521,6 +584,17 @@ build/tests/folder-preview/bench-core DIR  # per-stage timings of the pipeline o
 | `src/folder-views/fv_state.c` | Saved-value format, location kinds, zoom levels, in-memory cache |
 | `src/folder-views/view_mode_hook.c` | **Unsupported**: hooks into Nautilus' private tabs and views (switch view, zoom, detect the user's changes) |
 | `src/folder-views/config.h` | Tunable constants |
+| `src/details-pane/details_pane.c` | Details pane: set-up, tear-down, follows the settings |
+| `src/details-pane/dp_format.c` | Sizes, dates, durations, media values, page sizes, permission chips |
+| `src/details-pane/dp_meta.c` | Reads general info, image (gexiv2), video/audio (GStreamer), PDF (poppler) details and folder sizes |
+| `src/details-pane/dp_thumb.c` | Large thumbnails from the shared cache (made if missing) |
+| `src/details-pane/dp_pane.c` | The pane itself (preview, video player, details, chips, right/bottom layouts, look) |
+| `src/details-pane/dp_stack_view.c` | Several selected: the stack drawn live from icons and thumbnails, animated |
+| `src/details-pane/dp_backdrop.c` | The blurred picture behind the preview |
+| `src/details-pane/dp_stall.c` | Diagnostics: where slow main-thread steps wait (`DP_STALL_SAMPLER=1`) |
+| `src/details-pane/dp_box.c` | The preview box: media in their own shape, icons in a fixed box |
+| `src/details-pane/dp_hook.c` | **Unsupported**: hooks into Nautilus' private window (button, pane next to the tabs, selection) |
+| `src/details-pane/config.h` | Tunable constants |
 | `src/common/nu_settings.c` | Shared settings service (GSettings snapshot + change notifications) |
 | `src/settings/settings_dialog.c` | The "Nautilus Utils Settings" window |
 | `src/settings/folder_icons_page.c` | Its "Folder Icons" page |

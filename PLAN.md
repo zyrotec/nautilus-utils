@@ -147,6 +147,7 @@ findings and the smoke test is clean.
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 5 | Folder icons by name — every folder with a given name (e.g. `node_modules`) gets a chosen icon, as Files' own custom icon (§12) | `src/folder-icons/` | **v1 done** (2026-11-14), pending the owner's final check |
+| 6 | Details pane — a pane right of the folder view with the selected item's preview and properties (media, image, PDF), toggled from the header bar (§13) | `src/details-pane/` | **v1 done** (2026-11-14), pending the owner's final check |
 
 Open items:
 
@@ -1660,3 +1661,454 @@ Design refinements from the spike:
   0 errors, nothing left behind; previews 70/70, 0 wrong. Safety: strict, `-fanalyzer`, scan-build,
   ASan+UBSan, valgrind all PASS (Phase 2 fixes: a GCC -O2 null-dereference false positive in the fake
   backend, an -fanalyzer NULL check in a test — both fixed in code, not suppressed).
+
+---
+
+## 13. Feature 6 — Details pane
+
+Like Windows File Explorer's details pane (owner, 2026-11-14, with two Explorer screenshots as reference): a
+pane on the **right of the folder view** that shows a large preview of the selected file or folder and its
+properties. A toggle button **next to the View Options button** in the header bar shows and hides it. Prefix
+`dp_`, log domain `details-pane`, dir `src/details-pane/`, branch `dev-details-pane`.
+
+### 13.1 Behaviour
+
+#### 13.1.1 Toggle and placement
+
+- A `GtkToggleButton` (icon `sidebar-show-right-symbolic`, tooltip "Details Pane", accessible label the
+  same) placed directly **right of** Nautilus' view controls (`NautilusViewControls`) in the header bar (v1; since
+  2026-11-15 directly **left of** View Options ⋮, see §13.14 "button"). The
+  owner's View Options button (⋮) lives inside those view controls (another extension replaces the stock
+  split button with grid / list / columns / ⋮), so our button ends up right of ⋮; with stock Files it sits
+  right of the split button. It follows the view controls' visibility (hidden when Files moves them to the
+  bottom bar in a narrow window).
+- Keyboard shortcut **Alt+Shift+P** (Explorer's own details-pane shortcut; free in Files 51 — Ctrl+I, Alt+Return
+  are Properties, F9 the sidebar: §13.7 item 6).
+- The pane sits between the folder view and the window's right edge, below the header bar (and the tab bar),
+  across all tabs of the window (it shows the active tab's selection). Default width 320 px, resizable by
+  dragging its left edge (260 – 480 px); the width is remembered.
+- Open/closed is **one global state** (P8), remembered across windows and restarts: opening it in
+  one window opens it in every window, like Explorer.
+- Narrow windows (Files' 682 sp breakpoint, sidebar collapsed): the pane is hidden while narrow and comes
+  back when the window is wide again.
+
+#### 13.1.2 What it shows
+
+Top to bottom (Explorer layout, GNOME look: libadwaita colours, no hard-coded colours, dim labels):
+
+1. **Preview** (fills the pane's width, max 260 px high, aspect kept, rounded corners):
+   - Images, videos, PDFs, documents, audio with cover art: the freedesktop thumbnail at **x-large
+     (512 px)** from the shared `~/.cache/thumbnails` (made in a worker by `GnomeDesktopThumbnailFactory` if
+     missing, so Files benefits too); while it loads, and if none can be made, the file's themed icon.
+   - **Folders:** when folder previews are on and the folder qualifies (§6.1.1, §11.1), the **same folder
+     preview rendering** (layout, style, custom folder SVGs) drawn large — never just the plain icon.
+     Otherwise the folder's icon (custom icons included).
+   - **Videos:** a round **play button** over the thumbnail. Clicking it plays the video inline in the
+     preview area (GTK's own `GtkVideo`/`GtkMediaFile`, GStreamer — Phase 0 confirmed GTK 4.24 links it),
+     **muted, looping**, with a small overlay: pause/play and a sound toggle. Changing the selection,
+     closing the pane or the window stops and frees it. Nothing plays until clicked.
+2. **Name** (title, wraps, selectable) with the small type icon, and the type description below it.
+3. **Details** group — label left (dim), value right, like Explorer:
+
+| Kind | Rows (only rows with a value are shown) |
+|---|---|
+| All | Type (description + MIME type), Size (human, plus exact bytes in the tooltip), Location (path; click opens the folder), Modified, Created, Accessed, Owner, Group, Permissions (§13.1.3), Link target (symlinks) |
+| Folder | **Items** (count of direct children, hidden files counted separately: "12 items, 3 hidden"), **Total size** (computed in the background, bounded — §13.3.4; "Calculating…" meanwhile) |
+| Image | **Dimensions** (W × H px), **Width**, **Height**, **Format** (e.g. "JPEG"), Colour depth / alpha, Camera (make + model), Date taken, Exposure, Aperture, ISO, Focal length, Orientation |
+| Video | **Duration**, **Width**, **Height**, Frame rate, **Video codec**, Video bitrate, **Audio codec**, Channels, Sample rate, Audio bitrate, **Container format**, Title (if tagged) |
+| Audio | **Duration**, Title, Artist, Album, Track, Year, Genre, **Codec**, Bitrate, **Sample rate**, **Channels**, **Format** |
+| PDF | **Pages**, Page size (e.g. "A4, 210 × 297 mm"), Title, Author, Subject, Keywords, Creator, Producer, PDF version, Document created/modified, Encrypted / Linearized |
+
+   Media/image/PDF rows appear as they are read (async); the general rows show at once.
+4. **Multiple selection:** preview = up to 3 stacked thumbnails; title "N items selected"; rows: total size,
+   counts by kind (e.g. "3 images, 1 folder"), common location (P7).
+5. **Nothing selected:** the **current folder's** details (as if it were selected) (P6).
+
+#### 13.1.3 Permissions as chips (owner: human readable, never `drwxr-xr-x`)
+
+Three rows — **Owner** (*name*), **Group** (*name*), **Others** — each with libadwaita-style pill chips
+(rounded, `card`-coloured background, dim text; screenshot 3 style) for what that class may do:
+
+| | read | write | execute |
+|---|---|---|---|
+| File | **Read** | **Write** | **Run** |
+| Folder | **List files** | **Create & delete** | **Open** |
+
+No rights → one chip **No access**. Extra bits as chips on their own row "Special" when set: **Set user ID**,
+**Set group ID**, **Sticky**. A "**You can:** Read · Write" summary row comes first (from
+`access::can-read/can-write/can-execute`, which also covers ACLs and read-only mounts). Locations without
+Unix modes (e.g. some network shares) show only the summary row. Each chip has an accessible label
+("Owner can read").
+
+### 13.2 Data sources (no new runtime processes)
+
+| What | Source (all in worker threads) |
+|---|---|
+| General | `g_file_query_info` (standard, time, unix, owner, access, thumbnail attributes) |
+| Folder items / total size | `GFileEnumerator` in a worker, bounded (§13.3.4) |
+| Image | **gexiv2** (width, height, MIME type and EXIF in one read, ~0.2 ms); `gdk_pixbuf_get_file_info` only for formats exiv2 can't read (SVG, …): it goes through glycin's sandboxed loaders, 7–130 ms (§13.7 item 8) |
+| Video / audio | **GStreamer `GstDiscoverer`** (gstreamer-pbutils): duration, streams, caps → codec names via `gst_pb_utils_get_codec_description`, tags |
+| PDF | **poppler-glib** (`poppler_document_new_from_file`: pages, info dictionary, page size) |
+| Thumbnail | `GnomeDesktopThumbnailFactory` (x-large), shared cache |
+| Folder preview | the folder-preview feature's scan/thumb/cache pipeline, rendered at the pane size |
+| Video playback | `GtkMediaFile` (GTK's GStreamer backend, in process) |
+
+New build dependencies: `gstreamer-pbutils-1.0` (devel installed), `poppler-glib` and `gexiv2`
+(`sudo dnf install poppler-glib-devel libgexiv2-devel`; both runtime libraries are already installed on Fedora
+Workstation). Each is optional at build time: a missing one only hides its rows (meson `required: false`).
+
+### 13.3 Rules
+
+1. All §4 rules. The main thread only builds widgets; every read (file info, folder counting, EXIF, discoverer,
+   poppler, thumbnails) runs in a worker with a `GCancellable`; a new selection cancels the previous reads.
+2. **Debounce:** selection changes are applied after 80 ms of quiet, so dragging a rubber band or holding an
+   arrow key through 10k files reads nothing until it stops. At most one read set in flight per window.
+3. **Hard limits:** discoverer timeout 3 s; poppler only for files ≤ 200 MB; EXIF only for images ≤ 200 MB;
+   network/FUSE (non-native) files get general rows only plus the thumbnail if it already exists (never
+   generated over the network).
+4. Folder totals: stop after 100 000 entries or 5 s ("more than 120 GB" / "at least …"), no symlink following,
+   no crossing mount points; cached per URI + mtime for the session (bounded LRU, 256 entries).
+5. Nautilus internals only in `dp_hook.c` (window tree, header bar, selection); widgets in `dp_pane.c`
+   (plain GTK/libadwaita); readers and formatting (`dp_meta.c`, `dp_format.c`) Nautilus-free and
+   unit-tested. If the hook doesn't find what it expects: one warning ("details pane disabled: …"), no
+   button, Files unchanged.
+6. Video playback never starts by itself; at most one player per process; stopped and freed on selection
+   change, pane close, tab switch, window close and feature shutdown.
+7. Never alter existing Nautilus UI: we only add the button and the pane; nothing of Files' is hidden,
+   moved (except reparenting the tab view into our paned, Phase 0) or repurposed.
+
+### 13.4 Settings keys (added to `io.github.zyrotec.NautilusUtils`)
+
+| Key | Type | Default |
+|---|---|---|
+| `details-pane-enabled` | b | true (feature on: the button exists) |
+| `details-pane-visible` | b | false (the pane itself starts closed) |
+| `details-pane-width` | i | 320 |
+
+Settings tab **"Details Pane"**: on/off switch (§9 style, Apply). Visible/width are UI state, written live.
+
+### 13.5 Decisions (owner, 2026-11-14)
+
+| # | Decision |
+|---|---|
+| P1 | Pane on the right of the folder view; toggle button next to View Options (screenshot 4). |
+| P2 | Video thumbnails play a small preview on a play-button click (if possible — it is: §13.2). |
+| P3 | Permissions human-readable, several rights shown as chips (screenshot 3). |
+| P4 | Folders with a folder preview show that rendering, not the plain icon. |
+| P5 | Must show: item count, modified, created, width, height, audio, media codec, file format, and video / image / PDF / audio properties. |
+| P6 | Nothing selected → the current folder's details. |
+| P7 | Several selected → a summary (count, stacked thumbnails, total size, counts by kind). |
+| P8 | Open/closed is global and remembered across windows and restarts. |
+| P9 | Add poppler-glib and gexiv2 as (optional) build dependencies; the owner installs the -devel packages. |
+
+### 13.6 Phases
+
+| Phase | Work | Acceptance |
+|---|---|---|
+| 0 Spike | Where the pane goes (reparent `AdwTabView` into a `GtkPaned` inside the content `AdwToolbarView`, or an alternative that keeps Files' tab view untouched); inserting the button after `NautilusViewControls` (stock and with the owner's View Options extension); **selection source** (slot/files-view property or signal, else the menu-provider trick); narrow breakpoint; Ctrl+I free; `GtkVideo` in process (codecs, teardown, no leaks under ASan); timings of discoverer / gexiv2 / poppler on the NTFS drive; rendering the folder preview at pane size. | Every question answered here; anything infeasible reported before building. |
+| 1 Core | Schema keys; `dp_format.c` (sizes, dates, durations, permission chips, codec/format names, page sizes); `dp_meta.c` readers (general, folder count/total, image, media, PDF) with cancellation and limits; fixtures (tiny JPEG with EXIF, PNG, WebM/MP4, OGG/MP3, PDF made by script); unit tests. | Tests + `check-safety.sh` pass. |
+| 2 Pane widget | `dp_pane.c`: preview, title, details groups, chips, multi/none states, video player overlay; a standalone demo binary (`tests/details-pane/demo-pane`) for the owner to look at without Files. | Owner reviews the look; ASan clean on create/destroy stress. |
+| 3 Hook | Button, pane per window, selection tracking with debounce, global visible/width state, tab switches, narrow windows, feature on/off; folder-preview rendering for folders; debug driver (`dp-toggle`, `dp-select`, `dp-dump`). | Works in an isolated Nautilus on grid + list views, many tabs/windows; smoke clean. |
+| 4 Settings tab | "Details Pane" tab (§13.4). | On/off via Apply. |
+| 5 Hardening & docs | Smoke round (toggle, select through a 10k-file folder, play/stop videos, close windows mid-read); latency probe while arrow-keying through 10k files (no frame > 16 ms late from us); `check-safety.sh`; README section + screenshot. | All PASS. |
+
+### 13.7 Phase 0 findings (2026-11-14, Nautilus 51.1 / GTK 4.24.1 / libadwaita 1.10)
+
+Throwaway spike module run in an isolated Nautilus (own D-Bus session, private `XDG_RUNTIME_DIR`, own
+data/config, memory GSettings; the owner's nautilus-python extensions loaded as usual), plus a standalone
+timing program on the project drive (NTFS via `ntfs3`).
+
+1. **Header bar:** the header's `NautilusViewControls` (inside `NautilusToolbar` → `AdwHeaderBar`) sits in a
+   plain `GtkBox` (the header bar's end box). `gtk_widget_insert_after (button, box, view_controls)` puts our
+   button directly right of it (x 810 vs. view controls 658–804 at 890 px). The owner's View Options (⋮) is
+   inside the view controls (the other extension adds `MyComputerToggleButton` + a ⋮ `GtkMenuButton` and
+   hides the stock `AdwSplitButton`), so the button lands right of ⋮ as asked. A second
+   `NautilusViewControls` lives in the bottom `GtkActionBar` (narrow mode): we only use the one inside
+   `NautilusToolbar`.
+2. **Narrow windows:** binding the button's `visible` to the header view controls' `visible` hides it at
+   560 px and shows it again at 1200 px (Files' breakpoint toggles `show-view-controls`). The pane follows the
+   same flag.
+3. **Pane placement:** the window's content `AdwToolbarView` has the `AdwTabView` as its content. Moving the tab
+   view into a `GtkPaned` [tab view | pane] (ref, `adw_toolbar_view_set_content (NULL)`, set the paned) works:
+   the tab bar and header stay full width above, the pane starts below them (y 46 = header height), new tab /
+   switch / close tabs, view-mode switch and selection keep working, no warnings. Moving it back (feature off)
+   also works. Files' views get `notify::root` during the move, so it is done **once per window** (and undone
+   once on feature off); showing/hiding the pane only hides the paned's end child.
+4. **Selection source:** `NautilusWindowSlot` has a `selection` property (`gpointer`, a list of unknown
+   ownership — not read) that notifies on every change, once per change (select one, select all, unselect,
+   tab close). We use that notification as the **trigger** and read the selection from the files view's
+   `GtkSelectionModel` (public GTK API): `NautilusListBase:model` (a `NautilusViewModel`, the same object
+   across grid ↔ list switches) → selected `GtkTreeListRow` → `NautilusViewItem:file` → a `NautilusFile`,
+   which implements the public `NautilusFileInfo`. Active tab: `NautilusWindow:active-slot` (notify).
+5. **Owner's Column View:** the other extension's Miller columns are its own widgets inside the slot
+   (`MillerCanvas`, `MyComputerColumn` list views), not Nautilus' model. While it is shown, the pane shows what
+   Files' own selection reports (that extension mirrors some of it, `native_selection.py`); anything else is
+   that extension's view and out of scope.
+6. **Shortcut:** Ctrl+I is taken (`view.properties`, like Alt+Return), F9 is the sidebar, Shift+Ctrl+I invert
+   selection. **Alt+Shift+P** is free (no app accelerator, no shortcut controller in the window) → chosen.
+7. **Video:** `GtkMediaFile` + `GtkPicture` in the pane, muted + looping: prepared and playing after 2 s at the
+   real 1920 × 1080 (H.264 + AAC, MP4), no errors; pausing and removing it is clean. GTK links GStreamer
+   directly, so nothing extra is needed. Leak check under ASan follows in the Phase 5 smoke.
+8. **Readers (NTFS, second run, worker thread):**
+
+| Reader | File | Time | Result |
+|---|---|---|---|
+| gexiv2 | 4000 × 3000 JPEG with EXIF | 0.2 ms | size, MIME, Canon EOS R6, 1/250 s, F2.8, ISO 400 |
+| gexiv2 | 800 × 600 PNG | 0.1 ms | size, MIME |
+| gexiv2 | SVG | — | not supported → pixbuf |
+| gdk-pixbuf `get_file_info` | JPEG / PNG / SVG | 80–130 / 7 / 86 ms | glycin's sandboxed loaders: fallback only |
+| poppler | 1-page PDF | 1.2 ms | pages, 595 × 842 pt (A4), producer, PDF-1.4 |
+| GstDiscoverer | 5 s WebM (VP8 + Vorbis) | 32–89 ms | WebM, VP8 1280 × 720 30 fps, Vorbis 1 ch 44.1 kHz 80 kb/s |
+| GstDiscoverer | 6 s MP4 (H.264 + AAC) | 221–333 ms | Quicktime, H.264 (Constrained Baseline) 1920 × 1080 25 fps 7.06 Mb/s, AAC |
+| GstDiscoverer | 7 s OGG Vorbis | 6–8 ms | Ogg, Vorbis |
+
+   Codec names come straight from `gst_pb_utils_get_codec_description` ("H.264 (Constrained Baseline
+   Profile)", "MPEG-4 AAC"); the container "Quicktime" is shown as the file's format from the MIME type
+   ("MP4 video") instead. VP8 in WebM reports bitrate 0 → the row is hidden (or estimated from size ÷
+   duration, marked "≈"). All well inside the 3 s discoverer limit; one discoverer per worker, reused.
+9. **Folder preview at pane size:** `fp_cache_get_frame_async` takes any `frame_px`, and the decor/eligibility
+   code is in folder-preview's view hook; the pane needs one new folder-preview entry point
+   (`fp_view_hook_render_folder (GFile *, GtkIconPaintable *, int size, int scale)` → an `FpFolderPaintable`
+   that fills itself) so it uses exactly the grid's look. Source thumbnails are 256 px ("large"), so a
+   single photo at the pane's ~256 px logical size on a 2× screen is slightly soft; acceptable (folder
+   thumbnails stay small in Explorer too). Verified visually in Phase 3.
+
+Nothing infeasible. Plan changes from the spike: shortcut Alt+Shift+P (item 6), gexiv2 for image size (item
+8), selection trigger + model (item 4), reparent once per window (item 3).
+
+### 13.8 Decisions during the build (deviations from §13.1–§13.4)
+
+| # | Decision |
+|---|---|
+| D1 | **Location is plain (selectable) text**, not a link: opening a folder from the pane would need more of Files' internals than the one hook file; copy works. |
+| D2 | **No colour depth / alpha row** for images: neither gexiv2 nor a header read reports it without decoding the image. |
+| D3 | **The video preview loops by hand** (seek to 0 on "ended"): `gtk_media_stream_set_loop()` leaks a GstStructure in GTK 4.24's GStreamer backend on every call (`gtk_gst_media_file_update_loop` → `gst_play_get_config`), found by the ASan stress run. |
+| D4 | **Format row = the file type's description** ("MPEG-4 video", "WebM video"); GStreamer's container name says "Quicktime" for MP4. Codecs come from `gst_pb_utils_get_codec_description`. |
+| D5 | **Several selected: stacked previews use existing thumbnails only** (no thumbnailer runs for a multi-selection); icons otherwise. |
+| D6 | Folder totals are cached per URI + mtime for the session (256 entries, cleared when full); a direct-children count is capped by the same 100 000 limit ("more than …"). |
+| D7 | **Smoke filter: fontconfig allocations count as third-party** (like Python's, §10.8): Pango caches one FcPattern per font style for the process, created by whichever label first uses it — one block per run before this feature (Files' own labels), the pane's title now. |
+| D8 | Thumbnails can't be generated inside the smoke session (the thumbnailer children inherit the ASan `LD_PRELOAD` and exit with code 1, which also writes "failed" records for the smoke's test files). The thumbnail path is verified with the demo instead (§13.9 Phase 2). |
+| D9 | `details-pane-visible` / `-width` are written right away by `nu_settings_set_details_pane_state()` (UI state, not a pending dialog setting); the dialog only has the on/off switch. |
+| D11 | **Smoke filter: Mesa's EGL allocations count as third-party**: GTK initialises EGL for the display once, the first time something needs GL — in the smoke that is the pane's first video sink (`gtk_gst_paintable_video_renderer_create_video_sink` → `eglInitialize`) — and never terminates it at exit. |
+| D12 | **Main-thread budget:** a selection's rows are built in steps — details when the info arrives, permissions one main-loop turn later, media/PDF rows and folder totals each touching only their own group — instead of rebuilding everything per read; the MIME type is looked up in the worker (GIO's MIME database lock is held by other workers while they sniff content). |
+| D13 | **Value labels aren't selectable** (only the name is): every selectable label adds focus and gesture handling, which made building the rows slow; values stay readable in tooltips where exact (sizes). |
+| D10 | Nautilus registers `NautilusFilesView` / `NautilusListBase` when it builds its first view, after the window exists: the hook looks them up when it reads a selection, not when it scans windows (found by the smoke: "no selection model" until the feature was switched off and on). |
+
+### 13.9 Phase results (2026-11-14)
+
+- **Phase 1 (core):** schema keys + `nu_settings_set_details_pane_state`; `dp_format.c` (100 % covered) and
+  `dp_meta.c` (92 %) with committed fixtures (`tests/details-pane/data/make-fixtures.sh`: JPEG with EXIF, PNG,
+  SVG, WebM, MP4, tagged OGG, 2-page PDF, broken PDF). Safety: scan-build flagged an early return holding the
+  summary (restructured); under valgrind the 3 s discoverer limit ran out (tests now set 120 s; a timed-out
+  discovery still uses the streams it found). First `tools/valgrind.supp`, third-party only (GStreamer VA
+  probing the GPU, glibc `dlopen`, GLib's quark table).
+- **Phase 2 (widget):** `dp_thumb.c`, `dp_pane.c`, `fp_view_hook_render_folder` (folder preview at pane size,
+  same look). `demo-pane` shows the pane alone, renders it to PNG (`--png`) and stress-tests it (`--stress`).
+  ASan stress (8 rounds × 10 files, show / play / destroy): no errors; one leak attributable to us found and
+  fixed (D3, GTK's `set_loop`); everything left is fontconfig/Mesa process caches.
+- **Phase 3 (hook):** `dp_hook.c`, `details_pane.c`. Found by the smoke: Nautilus' view types are registered
+  after the window exists (D10). Smoke round `dp_round` (26 checks): every file kind, play/stop/auto-stop,
+  folder preview in the pane, several / nothing selected, list view, a second tab and back, width, feature
+  off/on (nothing left), the settings tab, 150 selection changes 20 ms apart in a 10 000-file folder.
+- **Phase 4 (settings):** "Details Pane" tab with the on/off switch (D9).
+- **Phase 5 (hardening):** smoke filter refined for third-party allocations (fontconfig D7, Mesa EGL D11,
+  libc/libgirepository frames under the owner's Python extension); the round no longer closes a tab (closing
+  one makes that extension keep GTK objects alive at exit). `SMOKE_PERF=1` runs the smoke on an optimised
+  build without sanitizers for timings. README section, build dependencies (Fedora/Debian/Arch, RPM spec).
+- **Main-thread timings** (`SMOKE_PERF=1`, debug log "slow main-thread step", 4 runs): a selection update takes
+  ≤ 14 ms wall; building rows ≤ 7 ms of main-thread **CPU** per step. 0–3 steps per run (of ~60) took 17–21 ms
+  **wall** time while using only 4–7 ms of CPU — the main thread was waiting, also with thumbnail generation
+  switched off; the cause is not identified (not our CPU work; candidates: allocator or other library locks
+  shared with the worker threads). **Open item.**
+- **Final:** `tools/check-safety.sh` all PASS (strict, `-fanalyzer`, scan-build, ASan+UBSan, valgrind,
+  coverage); full smoke `smoke-20261114-201555` **PASS** (all features; details pane 26/26).
+- **Owner's first run (2026-11-14):** Files aborted at start ("schema … does not contain a key named
+  'details-pane-enabled'"): the home-folder schema (README: Development) was older than the module. Fixed for
+  everyone: `nu_settings` now checks that the installed schema has every key it reads and otherwise behaves like a
+  missing schema (defaults + one warning) — test `settings-outdated-schema` with a schema missing one key.
+  Safety: all PASS.
+- Not covered by unit tests (needs a display / Files): `dp_pane.c`, `dp_hook.c`, `dp_thumb.c` — exercised by the
+  smoke round and the ASan demo stress instead.
+
+### 13.10 v2 — look options, bottom position (owner, 2026-11-14)
+
+Owner: "lets perfect it and add some settings" + screenshot of the preview box. Decisions (asked):
+
+| # | Decision |
+|---|---|
+| P10 | **Multi-selection stack = the folder-preview stacked look** (same renderer, `fp_composite_frame`), with the pane's **own copies** of its options: depth effect, shadow, rotation, keep aspect ratio, bottom fade. Not copied: border (off) and corner radius (fixed default). |
+| P11 | The translucent **card behind each stacked item** (icons of files without a thumbnail) is optional. |
+| P12 | **Preview box:** corner radius and **margin = space around the box**. |
+| P13 | "Sidebar" = **the details pane**: border on/off; margin (space around the pane, which then floats as a card), padding (inside), corner radius. |
+| P14 | **Position: right or bottom**; bottom = Windows 7 style: a wide strip, preview left, name/type next to it, the groups as columns (permissions as chips), height draggable and remembered. |
+| P15 | Optional **line under Files' header bar while the pane is shown**, only under the content header (not the navigation sidebar's). |
+
+Settings keys (pending + Apply, except the height, which is UI state like the width):
+
+| Key | Type | Default |
+|---|---|---|
+| `details-pane-position` | enum right / bottom | right |
+| `details-pane-height` | i 120–600 | 220 (UI state) |
+| `details-pane-border` | b | true |
+| `details-pane-margin` | i 0–24 | 0 |
+| `details-pane-padding` | i 6–36 | 18 |
+| `details-pane-radius` | i 0–24 | 0 |
+| `details-pane-header-border` | b | false |
+| `details-pane-preview-radius` | i 0–32 | 12 |
+| `details-pane-preview-margin` | i 0–32 | 0 |
+| `details-pane-stack-depth-effect` | enum (folder preview's) | blur |
+| `details-pane-stack-shadow` / `-rotation` / `-keep-aspect` | b | true / true / true |
+| `details-pane-stack-fade` | i 0–100 | 0 |
+| `details-pane-stack-card` | b | true |
+
+Implementation: `FpCompositeItem` gets an optional borrowed texture (used instead of a path), so icons go through
+the same renderer; the stack is rendered in a worker. The pane's look is CSS generated from the settings (one
+provider); its border replaces the paned's separator line (the paned is ours). The header line is a CSS class
+on Nautilus' content `AdwHeaderBar` (inside `NautilusToolbar`), added only while the pane is shown and removed on
+hide / feature off. Bottom: our paned turns vertical; DpPane switches to a horizontal layout.
+
+Phases: 1 settings + compositor textures + stack renderer (tests); 2 pane look + bottom layout (demo renders);
+3 hook (position, height, header line, border); 4 settings tab; 5 smoke round, safety, docs.
+
+### 13.11 v2 results (2026-11-15)
+
+- **Phase 1:** 15 schema keys (+ `nu_settings_set_details_pane_height`); `FpCompositeItem.texture` (test: a
+  texture draws exactly like its file); `dp_stack.c` renders the pane's stack with `fp_composite_frame` in a
+  worker (existing thumbnails, else the icon card made on the main thread). Settings tests pass.
+- **Phase 2:** `DpPaneStyle` (one CSS provider generated from the options; the pane draws the border that
+  replaces our paned's own line), right/bottom layouts (`dp_pane_set_layout`), demo `DP_DEMO_STYLE` /
+  `DP_DEMO_BOTTOM` renders.
+- **Phase 3:** hook: paned orientation per position, height saved, `dp-header-line` CSS class on Nautilus' content
+  `AdwHeaderBar` only while the pane is shown and the option is on (removed on hide / off / uninstall); driver
+  `dp-png` renders the test window (reviewed: floating card, bottom strip, stack).
+- **Phase 4:** Details Pane tab: groups Pane, Preview, Several Selected.
+- **Phase 5, found by the smoke:**
+  - A video stopped right after selecting another one: once a SEGV inside GstPlay's own thread, once a
+    **hang** (main thread in `gst_play_dispose` → `g_thread_join`; GstPlay's thread waiting for playsink's lock,
+    held by a thread opening ALSA's PipeWire device, which never returns in the private test session without a
+    sound server; stacks taken with `eu-stack`). The smoke session now uses GStreamer's `fakeaudiosink`
+    (`GST_PLUGIN_FEATURE_RANK`): 5 of 5 rounds clean afterwards. The pane also releases a stopped player 1.5 s
+    later instead of at once (and at once on feature shutdown). **Real-world note:** if the audio system
+    hangs, GTK's video player can freeze Files when a preview is stopped; the preview starts muted, but GTK
+    still opens the audio output.
+  - `-fanalyzer`: stack bounds made explicit; valgrind: a glycin (rayon/crossbeam) thread-local at exit,
+    suppressed as third-party.
+  - The sidebar-drives OS-menu popover leak (`gdk_popup_layout_new` under `show_os_menu`) appeared in 1 of 3 full
+    runs (also once in v1): intermittent, GTK-owned, from that feature's test step — not changed here.
+- **Final:** `check-safety.sh` all PASS; full smoke `smoke-20261115-002449` **PASS** (details pane 29/29).
+
+### 13.12 v3 — icon size, snug media, a real stack, Windows 7 summary (owner, 2026-11-15)
+
+Owner (with 4 screenshots): icons and folders have different sizes → an **icon size** option (slider 16–256 px,
+steps of 16); **media fit snug** in the preview box (no inner padding); in the stack, **icons get smaller towards
+the back like media**, scaling with the icon size; **the front item sits at the bottom** (a tall picture behind
+hung below it); the **bottom position must be a short summary** like Windows 7 (small thumbnail, name, type, a
+few properties) instead of the full columns. The owner was away; Claude decided the details below (marked C).
+
+| # | Decision |
+|---|---|
+| P16 | `details-pane-icon-size` (i, 16–256, steps of 16, default 128) sizes every icon in the preview box: file icons, plain folders and folder previews, and icons in the stack (the front one; the 2nd and 3rd scale with it). |
+| P17 (C) | "Media" = anything with a thumbnail (pictures, videos, audio covers, PDFs, documents): the **box takes the thumbnail's shape** and the thumbnail fills it edge to edge (rounded by the box's radius), up to the box's maximum height; icons keep the fixed-height box. |
+| P18 | Stack: pictures sit on their card's **bottom edge** (`FpStyle.bottom_align`, pane only — folder previews and their cache keys unchanged); icon items are drawn smaller per step back (× 0.85, like the cards' inset), so they look stacked too. |
+| P19 (C) | Bottom position = **Windows 7 summary**: thumbnail box as tall as the strip, name (bold) and type next to it, then the key properties as "Label  value" pairs in columns (rows = what fits the height); no group headings, no chips (your access as one "You can" pair). Default strip height 112 px (range 72–400). Pairs by kind: size / contents, modified; image: dimensions, taken, camera; video: duration, dimensions, codec; audio: duration, artist, album; PDF: pages, title, author; several: size, contains, location. |
+
+#### 13.12 results (2026-11-15)
+
+- **Settings:** `details-pane-icon-size` (rounded to steps of 16 when read; the slider snaps); the bottom strip's
+  height range is now 72–400 px, default 112 (a summary strip, not the full columns).
+- **Compositor:** `FpStyle.bottom_align` (stacked + keep aspect: pictures sit on their card's bottom edge); test
+  `/composite/bottom-align` (front on the bottom edge, nothing below it; off = old look; separate cache key only
+  when set).
+- **Pane:** `dp_box.c` (media in their own shape, icons in a fixed box of icon size + 48 px); no inner padding
+  around media; icons, plain folders and folder previews at the icon size. Stack: front icon at the icon size,
+  each one behind ×0.85 and lifted so its top peeks out ~7 % of a card above the one in front (the folder-preview
+  cards behind are only raised 4 %, which hid smaller icons completely — seen in the first render); icon textures
+  have their card's own shape, so they aren't stretched with "Keep Aspect Ratio" off; a stack of only icons
+  (no pictures, videos, PDFs) gets a frame sized from the icon size and a box of its own height instead of being
+  stretched to the pane's width (it looked blurry). Bottom: the Windows 7 summary (`render_pairs`).
+- **Bug found in Files:** switching right → bottom stored a width as the strip's height (the paned's position
+  changed while it was still laid out the old way and counted as a drag) → ~300 px tall strip. Position changes
+  are ignored from the switch until the stored size is applied.
+- Demo renders reviewed (icon sizes 64/128/256, mixed stacks, snug photo and PDF, the strip); Files renders
+  `dp-stack.png`, `dp-bottom.png` from the smoke. The smoke's snug-media check needs thumbnails, which can't be
+  made in that session (D8): covered by the demo.
+- **Final:** `check-safety.sh` all PASS; full smoke `smoke-20261115-012226` **PASS** (details pane 35/35).
+
+### 13.13 v4 — header options, media in a fixed box, folder-preview look for stacks (owner, 2026-11-15)
+
+| # | Decision |
+|---|---|
+| P20 | `details-pane-media-fit` (shape / box, default shape): **box** = one fixed box for everything (220 px, or icon size + 48 if larger); a picture touches its edges on one side and is centred on the other (no padding), the rest of the translucent box shows. |
+| P21 | `details-pane-title-centered` (b, false): name and type centred (right layout); `details-pane-show-icon` (b, true): the small icon next to the name. |
+| P22 | `details-pane-stack-folder-look` (b, false): the stack uses **the folder previews' own look** (border, colour, width, corners, shadow, depth, fade… read live from folder-preview, `fp_view_hook_get_style`), still front-at-the-bottom; the pane's own stack options then don't apply. Icons are drawn as same-size squares so the border frames them like photos. |
+| P23 | (C) In a stack, a folder that gets a folder preview is drawn **with its pictures** (the same renderer as the single-folder preview), redrawn once its frame arrives; always on when folder previews apply, no extra option. |
+
+#### 13.13 results (2026-11-15)
+
+- Settings keys + tests; `fp_view_hook_get_style`; pane: fixed-box mode (`CONTENT_FIT_CONTAIN`, box 220 px or icon
+  size + 48), centred name / hidden icon, stack in the folder previews' look (live: folder-preview style changes
+  redraw it), folder art in stacks (redrawn once a folder's frame arrives; 60 ms coalescing, handlers dropped on
+  every redraw / reset). Settings tab: the pane's own stack options grey out while the folder-preview look is on.
+- Verified: demo renders (centred, fixed box with a wide photo and a portrait PDF, folder-preview look with
+  pictures and with icons); in Files (smoke): `dp-centred.png`, `dp-folder-look.png`, and the owner's own
+  Pictures folders stacked with their previews (`dp-folder-art2.png`: Screenshots in front with its pictures).
+  Driver: `dp-select add NAME`.
+- Fixed on the way: `test-dp-meta` expected the fixtures' modified date to read "Today" (true only on the day they
+  were generated).
+- **Final:** `check-safety.sh` all PASS; full smoke `smoke-20261115-084600` **PASS** (details pane 39/39).
+
+### 13.14 v5 — a live stack, own media-card options, blurred background, the stalls (owner, 2026-11-15)
+
+Owner's feedback on v4: the folder-preview look was applied to folders and icons (image 16: two folders with white
+borders and the fade); it should only apply to media. "Same look" meant having the options to make it look like
+that, not reading the folder previews' settings. Plus: why is the stack rasterised; squares for media; adding to a
+selection flickers; a blurred background behind pictures; and look into the 17–21 ms stalls.
+
+| # | Decision |
+|---|---|
+| P24 | The stack is a widget (`DpStackView`) drawn every frame from live layers — theme icons (vector), folder previews, thumbnails — with GSK nodes for tilt, border, corners, shadow (`GskShadowNode` for icons: the shadow of their shape; outset shadow for cards), depth (blur / colour matrix / opacity) and the fade (mask). No worker, no rasterised frame (`dp_stack.c` removed). |
+| P25 | Border (on/off, colour, width in px), corner radius: **media cards only**; icons and folders are always plain. `details-pane-stack-folder-look` is removed; a **Copy the Folder Previews' Look** button copies the Folder Preview page's border, colour, width, corners, shadow, rotation, aspect ratio, depth and fade into the pane's own keys (pending until Apply; sizes at 64 px × 4). |
+| P26 | `details-pane-stack-media-square` (b, false): media as squares the size of the icons (picture cropped to fill), the icon stack's shape. |
+| P27 | Smooth changes: items are matched by URI; ones that stay move to their new place, new ones fade in, removed ones fade out, a thumbnail cross-fades over its icon (220 ms, ease-out; off with GTK's animations setting). While several items stay selected, the stack, the subtitle and the summary stay on screen until the new summary replaces them. The box keeps one shape for 2 or 3 items (no resize when adding one). |
+| P28 | `details-pane-preview-backdrop` (b, false): with the fixed box (P20), a picture's or video poster's copy fills the box behind it, scaled to cover, blurred (8 % of the box) and darkened (30 % black). The Settings row is only active with *Inside a Fixed Box*. |
+| P29 | (owner, after v5: "this distance on the stack differs") `details-pane-stack-spacing` (i, 0–48 px, default 12), a slider: the distance between neighbouring items' **visible** tops. Icons are measured once (rendered at 64 px, first/last row with alpha > 40/255), so a folder (drawn low in its square) and a document (filling it) are spaced alike; picture cards use their edges. Each one's bottom is also at least the spacing above the one in front's. The visible part is then fitted (shrunk around the front's bottom if needed) and centred. Replaces the fixed 10 % icon peek and the card step. |
+| S1 | Stalls: main-thread steps record wall time, CPU time, voluntary / involuntary context switches and page faults (`dp_timing.h`); `DP_STALL_SAMPLER=1` samples the main thread's stack every ms during a step that runs long and logs where a slow step was (`dp_stall.c`, diagnostics only). |
+
+#### 13.14 results (2026-11-15)
+
+- **P24–P27:** `dp_stack_view.c` (layers matched by URI, one animation clock, targets recomputed on resize
+  mid-animation), `dp_backdrop.c`; `dp_stack.c` and the pane's icon-card rasterising removed. Card stacks: each
+  item behind steps up at its top *and* bottom, icons peek out further than a card's step, and the whole stack
+  shrinks towards its bottom centre if a peeking icon would leave the box. Found with the demo: GTK draws a blur
+  pushed under a rotation in the wrong place (layers jumped sideways) — effects are now pushed under a plain
+  translation with the tilt inside them. Demo: `DP_DEMO_GL=1` (GL renderer, as in Files), `DP_DEMO_GROW=1`
+  (adding to a selection: the stack, subtitle and summary stay on screen in between).
+- **S1, the 17–21 ms stalls — cause found and fixed.** The new counters showed the slow steps were all
+  "render (info)" and *off*-CPU (17–22 ms wall, 5–6 ms CPU, 2–25 voluntary waits, no preemption). The stall
+  sampler's stacks: 9 of 17 samples in `__lll_lock_wait_private` under `malloc`/`g_malloc0` while the pane built
+  its labels (`gtk_label_new` → controllers), the rest in malloc internals — **glibc malloc lock contention** with
+  the worker threads started at the same moment: GStreamer's discoverer (clip.mp4) and poppler (doc.pdf), plus the
+  thumbnail load. Fix: a single item's workers (thumbnail, media/PDF readers, folder count) start in an idle after
+  the rows and permissions are built. Result, 3 × `SMOKE_PERF=1` dp rounds: no slow "render" step (before: 1–3
+  per run, every run); the one slow step left (21 ms, 9 ms CPU, 1 major fault) is FreeType loading a font's
+  glyphs the first time a size is used (`FT_Load_Glyph` under `pango_layout_get_size`), once per run.
+- Smoke (dp round, 50 checks in perf runs): live stack, adding without reset, square media, media borders, folders
+  with their pictures stacked plain (`dp-folder-art.png`), Wallpapers as cards with thumbnails
+  (`dp-stack-media.png`), squares (`dp-stack-square.png`), blurred background (`dp-backdrop.png`). Thumbnail
+  checks run in perf runs only (D8: the image loader's child processes inherit the ASan preload).
+- `check-safety.sh` all PASS. Full ASan smoke: details pane all checks except the two thumbnail ones (now
+  perf-only, see above); one leak flagged = the known intermittent GTK popover leak from the sidebar OS-menu test
+  (`gdk_popup_layout_new` under Nautilus' `show_row_popover`), unrelated.
+- **P29 (spacing):** the uneven gaps came from spacing the icons' *squares*: a folder icon is drawn in the lower
+  part of its square, a document fills it, so a document behind folders showed twice the gap. Now the visible tops
+  are spaced; demo renders at 4, 12 and 30 px with folders + a document and with picture cards are even.
+- **P15 fix (owner: the header line didn't meet the pane's border):** Files' header bar sits 3 px inside the toolbar
+  view's top bar (header y 3–43, top bar 0–46, content from 46; measured with the new driver command `dp-geom`), so
+  the line drawn on the header bar ended 3 px above the pane. It is now drawn on the top bar (libadwaita's
+  `top-bar` box), which ends where the content starts — also below the tab bar when several tabs are open.
+- **Button placement (owner, 2026-11-15: "on the left side of the View Options button", confirmed: directly left of
+  ⋮):** the button goes directly before the last `GtkMenuButton` in a `GtkBox` inside the view controls (the owner's
+  other extension: grid / list / columns, then ⋮); never inside an `AdwSplitButton` (stock Files), where it stays
+  left of the view controls. That extension adds ⋮ after Files builds the header, so placing is retried every
+  250 ms for up to 10 s after a window is hooked. Verified in Files (`dp-geom`: prev=MyComputerToggleButton
+  next=GtkMenuButton; `dp-header-line.png`).

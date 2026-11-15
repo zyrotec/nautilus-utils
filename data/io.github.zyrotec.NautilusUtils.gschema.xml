@@ -47,6 +47,17 @@
     <value nick="three" value="1"/>
   </enum>
 
+  <!-- Details pane v2 (PLAN.md §13.10). -->
+  <enum id="io.github.zyrotec.NautilusUtils.PanePosition">
+    <value nick="right" value="0"/>
+    <value nick="bottom" value="1"/>
+  </enum>
+
+  <enum id="io.github.zyrotec.NautilusUtils.MediaFit">
+    <value nick="shape" value="0"/>
+    <value nick="box" value="1"/>
+  </enum>
+
   <schema id="io.github.zyrotec.NautilusUtils" path="/io/github/zyrotec/NautilusUtils/">
     <key name="folder-preview-enabled" type="b">
       <default>true</default>
@@ -203,6 +214,166 @@
       <default>false</default>
       <summary>Slide the eject button in on hover or focus</summary>
     </key>
+    <!-- Details pane (PLAN.md §13.4). -->
+    <key name="details-pane-enabled" type="b">
+      <default>true</default>
+      <summary>Offer the details pane (its button in the header bar)</summary>
+    </key>
+
+    <key name="details-pane-visible" type="b">
+      <default>false</default>
+      <summary>Details pane shown (in every window)</summary>
+      <description>UI state, written when the pane is toggled.</description>
+    </key>
+
+    <key name="details-pane-width" type="i">
+      <range min="260" max="480"/>
+      <default>320</default>
+      <summary>Details pane width in pixels</summary>
+      <description>UI state, written when the pane is resized.</description>
+    </key>
+
+    <key name="details-pane-position" enum="io.github.zyrotec.NautilusUtils.PanePosition">
+      <default>'right'</default>
+      <summary>Where the details pane is: right of the folder view or below it</summary>
+    </key>
+
+    <key name="details-pane-height" type="i">
+      <range min="72" max="400"/>
+      <default>112</default>
+      <summary>Details pane height in pixels when at the bottom (UI state)</summary>
+    </key>
+
+    <key name="details-pane-border" type="b">
+      <default>true</default>
+      <summary>Draw a border line between the folder view and the details pane</summary>
+    </key>
+
+    <key name="details-pane-margin" type="i">
+      <range min="0" max="24"/>
+      <default>0</default>
+      <summary>Space around the details pane in pixels (it then floats as a card)</summary>
+    </key>
+
+    <key name="details-pane-padding" type="i">
+      <range min="6" max="36"/>
+      <default>18</default>
+      <summary>Space inside the details pane in pixels</summary>
+    </key>
+
+    <key name="details-pane-radius" type="i">
+      <range min="0" max="24"/>
+      <default>0</default>
+      <summary>Corner radius of the details pane in pixels</summary>
+    </key>
+
+    <key name="details-pane-header-border" type="b">
+      <default>false</default>
+      <summary>Draw a line under Files' header bar while the details pane is shown</summary>
+    </key>
+
+    <key name="details-pane-icon-size" type="i">
+      <range min="16" max="256"/>
+      <default>128</default>
+      <summary>Size in pixels of icons in the preview (files, folders, and the front icon of a stack); steps of 16</summary>
+    </key>
+
+    <key name="details-pane-media-fit" enum="io.github.zyrotec.NautilusUtils.MediaFit">
+      <default>'shape'</default>
+      <summary>shape = the preview box takes the picture's shape; box = a fixed box, the picture flush inside it</summary>
+    </key>
+
+    <key name="details-pane-title-centered" type="b">
+      <default>false</default>
+      <summary>Centre the name and type under the preview</summary>
+    </key>
+
+    <key name="details-pane-show-icon" type="b">
+      <default>true</default>
+      <summary>Show the small icon next to the name</summary>
+    </key>
+
+    <key name="details-pane-preview-backdrop" type="b">
+      <default>false</default>
+      <summary>Fill the preview box behind a picture with a blurred, darker copy of it</summary>
+    </key>
+
+    <key name="details-pane-preview-radius" type="i">
+      <range min="0" max="32"/>
+      <default>12</default>
+      <summary>Corner radius of the preview box in pixels</summary>
+    </key>
+
+    <key name="details-pane-preview-margin" type="i">
+      <range min="0" max="32"/>
+      <default>0</default>
+      <summary>Space around the preview box in pixels</summary>
+    </key>
+
+    <key name="details-pane-stack-depth-effect" enum="io.github.zyrotec.NautilusUtils.DepthEffect">
+      <default>'blur'</default>
+      <summary>Several selected: how cards further back look</summary>
+    </key>
+
+    <key name="details-pane-stack-shadow" type="b">
+      <default>true</default>
+      <summary>Several selected: drop shadow under each card</summary>
+    </key>
+
+    <key name="details-pane-stack-rotation" type="b">
+      <default>true</default>
+      <summary>Several selected: tilt the cards behind the front one</summary>
+    </key>
+
+    <key name="details-pane-stack-keep-aspect" type="b">
+      <default>true</default>
+      <summary>Several selected: cards keep their picture's aspect ratio</summary>
+    </key>
+
+    <key name="details-pane-stack-fade" type="i">
+      <range min="0" max="100"/>
+      <default>0</default>
+      <summary>Several selected: bottom fade over this % of the stack (0 = off)</summary>
+    </key>
+
+    <key name="details-pane-stack-card" type="b">
+      <default>true</default>
+      <summary>Several selected: a translucent card behind items without a thumbnail</summary>
+    </key>
+
+    <key name="details-pane-stack-border" type="b">
+      <default>false</default>
+      <summary>Several selected: a border around pictures, videos and PDFs (never around icons or folders)</summary>
+    </key>
+
+    <key name="details-pane-stack-border-colour" type="s">
+      <default>'#ffffff'</default>
+      <summary>Several selected: border colour (#rrggbb)</summary>
+    </key>
+
+    <key name="details-pane-stack-border-width" type="d">
+      <range min="0.5" max="8.0"/>
+      <default>2.0</default>
+      <summary>Several selected: border width in pixels</summary>
+    </key>
+
+    <key name="details-pane-stack-corner-radius" type="i">
+      <range min="0" max="32"/>
+      <default>4</default>
+      <summary>Several selected: corner radius of pictures, videos and PDFs in pixels</summary>
+    </key>
+
+    <key name="details-pane-stack-spacing" type="i">
+      <range min="0" max="48"/>
+      <default>12</default>
+      <summary>Several selected: distance in pixels between the visible tops of neighbouring items</summary>
+    </key>
+
+    <key name="details-pane-stack-media-square" type="b">
+      <default>false</default>
+      <summary>Several selected: pictures, videos and PDFs as squares the size of the icons</summary>
+    </key>
+
     <!-- Folder icons by name (PLAN.md §12.4). -->
     <key name="folder-icons-enabled" type="b">
       <default>true</default>

@@ -1,0 +1,270 @@
+<!-- Test fixture (tests/common/test-settings.c): the real schema minus one key, like an installed schema
+     older than the module. Regenerate when the schema changes is NOT needed: any missing key will do. -->
+<!-- nautilus-utils settings (PLAN.md §9.3). Defaults = the behaviour before settings existed. -->
+<schemalist>
+  <enum id="io.github.zyrotec.NautilusUtils.BarColourMode">
+    <value nick="accent" value="0"/>
+    <value nick="custom" value="1"/>
+    <value nick="gradient" value="2"/>
+  </enum>
+
+  <!-- Folder views (PLAN.md §10.4). Values match Nautilus' own enums (org.gnome.nautilus.FolderView,
+       GridZoomLevel, ListZoomLevel) so they can be copied across unchanged. -->
+  <enum id="io.github.zyrotec.NautilusUtils.FolderView">
+    <value nick="list" value="1"/>
+    <value nick="grid" value="2"/>
+  </enum>
+  <enum id="io.github.zyrotec.NautilusUtils.GridZoom">
+    <value nick="small" value="0"/>
+    <value nick="small-plus" value="1"/>
+    <value nick="medium" value="2"/>
+    <value nick="large" value="3"/>
+    <value nick="extra-large" value="4"/>
+  </enum>
+  <enum id="io.github.zyrotec.NautilusUtils.ListZoom">
+    <value nick="small" value="0"/>
+    <value nick="medium" value="1"/>
+    <value nick="large" value="2"/>
+  </enum>
+
+  <!-- Folder preview v2 (PLAN.md §11.3). -->
+  <enum id="io.github.zyrotec.NautilusUtils.PreviewLayout">
+    <value nick="grid" value="0"/>
+    <value nick="stacked" value="1"/>
+  </enum>
+  <enum id="io.github.zyrotec.NautilusUtils.DepthEffect">
+    <value nick="none" value="0"/>
+    <value nick="blur" value="1"/>
+    <value nick="transparency" value="2"/>
+    <value nick="darken" value="3"/>
+  </enum>
+  <enum id="io.github.zyrotec.NautilusUtils.StackPosition">
+    <value nick="top" value="0"/>
+    <value nick="centre" value="1"/>
+    <value nick="bottom" value="2"/>
+  </enum>
+  <enum id="io.github.zyrotec.NautilusUtils.StackStep">
+    <value nick="one" value="0"/>
+    <value nick="three" value="1"/>
+  </enum>
+
+  <schema id="io.github.zyrotec.NautilusUtils" path="/io/github/zyrotec/NautilusUtils/">
+    <key name="folder-preview-enabled" type="b">
+      <default>true</default>
+      <summary>Show previews on folder icons</summary>
+    </key>
+
+    <key name="folder-preview-layout" enum="io.github.zyrotec.NautilusUtils.PreviewLayout">
+      <default>'grid'</default>
+      <summary>Preview layout</summary>
+      <description>grid = up to 4 photos on the folder's front face; stacked = a stack of up to 3 cards.</description>
+    </key>
+
+    <key name="folder-preview-cycle" type="b">
+      <default>true</default>
+      <summary>Cycle through more photos while hovering</summary>
+    </key>
+
+    <key name="folder-preview-stack-step" enum="io.github.zyrotec.NautilusUtils.StackStep">
+      <default>'one'</default>
+      <summary>Photos per hover step in the stacked layout</summary>
+    </key>
+
+    <key name="folder-preview-border" type="b">
+      <default>true</default>
+      <summary>Draw a border around each photo</summary>
+    </key>
+
+    <key name="folder-preview-border-colour" type="s">
+      <default>'#ffffff'</default>
+      <summary>Photo border colour (#rrggbb)</summary>
+    </key>
+
+    <key name="folder-preview-border-width" type="d">
+      <range min="0.5" max="6.0"/>
+      <default>1.0</default>
+      <summary>Photo border width, in pixels at the 64 × 64 icon size (scaled with the icon)</summary>
+    </key>
+
+    <key name="folder-preview-shadow" type="b">
+      <default>true</default>
+      <summary>Draw a soft shadow under each photo</summary>
+    </key>
+
+    <key name="folder-preview-rotation" type="b">
+      <default>true</default>
+      <summary>Tilt each photo by a random (but stable) angle</summary>
+    </key>
+
+    <key name="folder-preview-keep-aspect" type="b">
+      <default>true</default>
+      <summary>Keep each picture's aspect ratio</summary>
+      <description>false = pictures fill their section (grid) or card (stacked), cropped.</description>
+    </key>
+
+    <key name="folder-preview-depth-effect" enum="io.github.zyrotec.NautilusUtils.DepthEffect">
+      <default>'blur'</default>
+      <summary>Depth effect in the stacked layout</summary>
+      <description>How cards further back look: blur = blurred and darkened; transparency = more transparent;
+        darken = darker; none = only slightly darker. The front card is always fully visible.</description>
+    </key>
+
+    <key name="folder-preview-corner-radius" type="i">
+      <range min="0" max="16"/>
+      <default>2</default>
+      <summary>Corner radius of each picture, in pixels at the 64 × 64 icon size (scaled with the icon)</summary>
+    </key>
+
+    <key name="folder-preview-fade" type="i">
+      <range min="0" max="100"/>
+      <default>0</default>
+      <summary>Stacked: fade out the bottom of the stack over this percentage of its height (0 = off)</summary>
+    </key>
+
+    <key name="folder-preview-view-top-radius" type="i">
+      <range min="0" max="16"/>
+      <default>0</default>
+      <summary>Stacked: top corner radius of the area that clips all pictures (px at 64 × 64)</summary>
+      <description>With both view radii 0 nothing is clipped.</description>
+    </key>
+
+    <key name="folder-preview-view-bottom-radius" type="i">
+      <range min="0" max="16"/>
+      <default>0</default>
+      <summary>Stacked: bottom corner radius of the area that clips all pictures (px at 64 × 64)</summary>
+    </key>
+
+    <key name="folder-preview-stack-position" enum="io.github.zyrotec.NautilusUtils.StackPosition">
+      <default>'centre'</default>
+      <summary>Stacked: vertical position of the stack</summary>
+      <description>top / bottom = 8 px from the icon's top / bottom at 64 × 64; centre = inside the folder.</description>
+    </key>
+
+    <key name="folder-preview-stack-padding" type="i">
+      <range min="0" max="20"/>
+      <default>8</default>
+      <summary>Stacked: space between the stack and the icon's left and right edges (px at 64 × 64)</summary>
+    </key>
+
+    <key name="folder-preview-stack-offset" type="i">
+      <range min="-16" max="16"/>
+      <default>0</default>
+      <summary>Stacked: vertical fine-tuning in pixels at 64 × 64 (positive = down)</summary>
+    </key>
+
+    <key name="folder-preview-folder-icon" type="s">
+      <default>''</default>
+      <summary>Custom folder icon (SVG path) for the stacked layout</summary>
+      <description>Empty = the theme's folder icon.</description>
+    </key>
+
+    <key name="folder-preview-overlay-icon" type="s">
+      <default>''</default>
+      <summary>Front overlay (SVG path) drawn over the stack in the stacked layout</summary>
+      <description>Empty = none. Drawn at the same size and position as the folder icon (the whole icon square).</description>
+    </key>
+
+    <key name="sidebar-drives-enabled" type="b">
+      <default>true</default>
+      <summary>Enhanced drive rows in the sidebar</summary>
+    </key>
+
+    <key name="bar-colour-mode" enum="io.github.zyrotec.NautilusUtils.BarColourMode">
+      <default>'accent'</default>
+      <summary>Usage bar colour</summary>
+      <description>accent = the GNOME accent colour; custom = bar-colour; gradient = bar-gradient-start to bar-gradient-end across the filled part.</description>
+    </key>
+
+    <key name="bar-colour" type="s">
+      <default>'#3584e4'</default>
+      <summary>Custom usage bar colour (#rrggbb)</summary>
+    </key>
+
+    <key name="bar-gradient-start" type="s">
+      <default>'#3584e4'</default>
+      <summary>Gradient start colour (#rrggbb)</summary>
+    </key>
+
+    <key name="bar-gradient-end" type="s">
+      <default>'#9141ac'</default>
+      <summary>Gradient end colour (#rrggbb)</summary>
+    </key>
+
+    <key name="show-usage-bars" type="b">
+      <default>true</default>
+      <summary>Show usage bars on drive rows</summary>
+    </key>
+
+    <key name="show-size-labels" type="b">
+      <default>true</default>
+      <summary>Show the "free of" size labels on drive rows</summary>
+    </key>
+
+    <key name="eject-slide" type="b">
+      <default>false</default>
+      <summary>Slide the eject button in on hover or focus</summary>
+    </key>
+    <!-- Details pane (PLAN.md §13.4). -->
+    <key name="details-pane-enabled" type="b">
+      <default>true</default>
+      <summary>Offer the details pane (its button in the header bar)</summary>
+    </key>
+
+    <key name="details-pane-visible" type="b">
+      <default>false</default>
+      <summary>Details pane shown (in every window)</summary>
+      <description>UI state, written when the pane is toggled.</description>
+    </key>
+
+    <!-- Folder icons by name (PLAN.md §12.4). -->
+    <key name="folder-icons-enabled" type="b">
+      <default>true</default>
+      <summary>Give folders with a rule's name the rule's icon</summary>
+    </key>
+
+    <key name="folder-icon-rules" type="a(ss)">
+      <default>[]</default>
+      <summary>Folder icon rules: (folder name, icon file path)</summary>
+      <description>Every folder whose name equals a rule's name exactly gets the rule's icon as its custom icon.
+        The path points at the copy in $XDG_DATA_HOME/nautilus-utils/folder-icons.</description>
+    </key>
+
+    <key name="folder-icon-rule-history" type="as">
+      <default>[]</default>
+      <summary>Names of removed folder icon rules (at most 100)</summary>
+      <description>Folders with these names are still checked, so icons set by a removed rule can be restored.</description>
+    </key>
+
+    <key name="folder-views-enabled" type="b">
+      <default>true</default>
+      <summary>Remember the view type and icon size per folder</summary>
+    </key>
+
+    <key name="folder-views-generation" type="u">
+      <default>0</default>
+      <summary>Folder views generation</summary>
+      <description>Incremented by "Reset All Folder Views"; saved folder views with an older generation are ignored.</description>
+    </key>
+
+    <key name="folder-views-default-view" enum="io.github.zyrotec.NautilusUtils.FolderView">
+      <default>'grid'</default>
+      <summary>View type for folders without a saved view</summary>
+    </key>
+
+    <key name="folder-views-default-grid-zoom" enum="io.github.zyrotec.NautilusUtils.GridZoom">
+      <default>'medium'</default>
+      <summary>Grid icon size for folders without a saved view</summary>
+    </key>
+
+    <key name="folder-views-default-list-zoom" enum="io.github.zyrotec.NautilusUtils.ListZoom">
+      <default>'medium'</default>
+      <summary>List icon size for folders without a saved view</summary>
+    </key>
+
+    <key name="folder-views-defaults-captured" type="b">
+      <default>false</default>
+      <summary>Whether the folder views default was copied from Files' settings</summary>
+      <description>Set once, the first time the feature runs (PLAN.md §10.1.1).</description>
+    </key>
+  </schema>
+</schemalist>

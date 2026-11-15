@@ -57,6 +57,7 @@ subdir('src/sidebar-drives')
 subdir('src/settings')
 subdir('src/folder-views')
 subdir('src/folder-icons')
+subdir('src/details-pane')
 
 # Built at the build root as build/libnautilus-utils.so, which is what the dev symlink points at (README.md).
 nu_module = shared_module('nautilus-utils',
@@ -75,6 +76,7 @@ subdir('tests/folder-preview')
 subdir('tests/sidebar-drives')
 subdir('tests/folder-views')
 subdir('tests/folder-icons')
+subdir('tests/details-pane')
 
 summary({
   'extensiondir': extensiondir,

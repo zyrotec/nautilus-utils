@@ -60,6 +60,9 @@ typedef struct
   guint    view_top_radius;  /* Stacked: the stack area clips all pictures with these corner radii (px at */
   guint    view_bottom_radius; /* 64 × 64); both 0 = no clipping. */
   guint    stack_padding;    /* Stacked: space to the icon's left and right edges, px at 64 × 64 (max 20). */
+  gboolean bottom_align;     /* Stacked, keep_aspect: each picture sits on its card's bottom edge instead of its
+                              * top, so nothing behind hangs below the front card (details pane, PLAN.md §13.12;
+                              * folder previews keep FALSE). */
 } FpStyle;
 
 /* The default look: grid, white border, shadow, rotation, aspect ratio kept, 2 px corners; stacked: blur
@@ -80,8 +83,10 @@ guint fp_style_step (const FpStyle *style);
 
 typedef struct
 {
-  const char *path; /* Borrowed: thumbnail file, or NULL for an empty slot. */
-  guint       seed; /* Stable per file (e.g. hash of its URI): picks its tilt. */
+  const char *path;    /* Borrowed: thumbnail file, or NULL for an empty slot. */
+  guint       seed;    /* Stable per file (e.g. hash of its URI): picks its tilt. */
+  GdkTexture *texture; /* Borrowed, optional: drawn instead of @path (the details pane's icon cards,
+                        * PLAN.md §13.10). Textures are immutable, so a worker may read them. */
 } FpCompositeItem;
 
 /* Frame height for a frame @width pixels wide in @style's layout (each layout has a fixed aspect ratio). */

@@ -58,6 +58,35 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
       g_assert_cmpstr (a->icon_rules[i].icon, ==, b->icon_rules[i].icon);
     }
   g_assert_cmpuint (g_strv_length ((char **) a->icon_rule_history), ==, g_strv_length ((char **) b->icon_rule_history));
+  g_assert_cmpint (a->details_pane_enabled, ==, b->details_pane_enabled);
+  g_assert_cmpint (a->details_pane_visible, ==, b->details_pane_visible);
+  g_assert_cmpint (a->details_pane_width, ==, b->details_pane_width);
+  g_assert_cmpint (a->details_pane_height, ==, b->details_pane_height);
+  g_assert_cmpint (a->details_pane_position, ==, b->details_pane_position);
+  g_assert_cmpint (a->details_pane_border, ==, b->details_pane_border);
+  g_assert_cmpint (a->details_pane_margin, ==, b->details_pane_margin);
+  g_assert_cmpint (a->details_pane_padding, ==, b->details_pane_padding);
+  g_assert_cmpint (a->details_pane_radius, ==, b->details_pane_radius);
+  g_assert_cmpint (a->details_pane_header_border, ==, b->details_pane_header_border);
+  g_assert_cmpint (a->details_pane_preview_radius, ==, b->details_pane_preview_radius);
+  g_assert_cmpint (a->details_pane_preview_margin, ==, b->details_pane_preview_margin);
+  g_assert_cmpint (a->details_pane_icon_size, ==, b->details_pane_icon_size);
+  g_assert_cmpint (a->details_pane_media_fit, ==, b->details_pane_media_fit);
+  g_assert_cmpint (a->details_pane_title_centered, ==, b->details_pane_title_centered);
+  g_assert_cmpint (a->details_pane_show_icon, ==, b->details_pane_show_icon);
+  g_assert_cmpint (a->details_pane_preview_backdrop, ==, b->details_pane_preview_backdrop);
+  g_assert_cmpint (a->details_pane_stack_depth, ==, b->details_pane_stack_depth);
+  g_assert_cmpint (a->details_pane_stack_shadow, ==, b->details_pane_stack_shadow);
+  g_assert_cmpint (a->details_pane_stack_rotation, ==, b->details_pane_stack_rotation);
+  g_assert_cmpint (a->details_pane_stack_keep_aspect, ==, b->details_pane_stack_keep_aspect);
+  g_assert_cmpint (a->details_pane_stack_fade, ==, b->details_pane_stack_fade);
+  g_assert_cmpint (a->details_pane_stack_card, ==, b->details_pane_stack_card);
+  g_assert_cmpint (a->details_pane_stack_border, ==, b->details_pane_stack_border);
+  g_assert_cmpmem (&a->details_pane_stack_border_colour, sizeof (NuRgb), &b->details_pane_stack_border_colour, sizeof (NuRgb));
+  g_assert_cmpfloat (a->details_pane_stack_border_width, ==, b->details_pane_stack_border_width);
+  g_assert_cmpint (a->details_pane_stack_corner_radius, ==, b->details_pane_stack_corner_radius);
+  g_assert_cmpint (a->details_pane_stack_media_square, ==, b->details_pane_stack_media_square);
+  g_assert_cmpint (a->details_pane_stack_spacing, ==, b->details_pane_stack_spacing);
   g_assert_cmpstr (a->preview_folder_icon, ==, b->preview_folder_icon);
   g_assert_cmpstr (a->preview_overlay_icon, ==, b->preview_overlay_icon);
 }
@@ -264,6 +293,19 @@ test_each_group (void)
     { "folder-preview-rotation", NU_CHANGED_PREVIEW_STYLE },
     { "folder-preview-keep-aspect", NU_CHANGED_PREVIEW_STYLE },
     { "folder-preview-cycle", NU_CHANGED_PREVIEW_ICONS },
+    { "details-pane-enabled", NU_CHANGED_DETAILS_PANE },
+    { "details-pane-visible", NU_CHANGED_DP_STATE },
+    { "details-pane-border", NU_CHANGED_DP_LOOK },
+    { "details-pane-header-border", NU_CHANGED_DP_LOOK },
+    { "details-pane-stack-shadow", NU_CHANGED_DP_LOOK },
+    { "details-pane-stack-rotation", NU_CHANGED_DP_LOOK },
+    { "details-pane-stack-keep-aspect", NU_CHANGED_DP_LOOK },
+    { "details-pane-stack-card", NU_CHANGED_DP_LOOK },
+    { "details-pane-title-centered", NU_CHANGED_DP_LOOK },
+    { "details-pane-show-icon", NU_CHANGED_DP_LOOK },
+    { "details-pane-preview-backdrop", NU_CHANGED_DP_LOOK },
+    { "details-pane-stack-border", NU_CHANGED_DP_LOOK },
+    { "details-pane-stack-media-square", NU_CHANGED_DP_LOOK },
   };
   g_autoptr (GSettingsBackend) backend = start ();
   g_autoptr (GSettings) s = direct_settings (backend);
@@ -535,6 +577,53 @@ test_icon_rules (void)
   nu_settings_shutdown ();
 }
 
+/* Details pane UI state (PLAN.md §13.4): written right away, clamped, unchanged keys not rewritten. */
+static void
+test_details_pane_state (void)
+{
+  g_autoptr (GSettingsBackend) backend = start ();
+  Counter counter = { 0 };
+  nu_settings_add_listener (count_listener, &counter);
+  g_assert_true (nu_settings_set_details_pane_state (TRUE, 400));
+  drain ();
+  g_assert_cmpuint (counter.calls, ==, 1);
+  g_assert_cmpuint (counter.last, ==, NU_CHANGED_DP_STATE);
+  g_assert_true (nu_settings_get ()->details_pane_visible);
+  g_assert_cmpint (nu_settings_get ()->details_pane_width, ==, 400);
+  counter.calls = 0;
+  g_assert_true (nu_settings_set_details_pane_state (TRUE, 400));
+  drain ();
+  g_assert_cmpuint (counter.calls, ==, 0);
+  g_assert_true (nu_settings_set_details_pane_state (FALSE, 9999));
+  drain ();
+  g_assert_false (nu_settings_get ()->details_pane_visible);
+  g_assert_cmpint (nu_settings_get ()->details_pane_width, ==, NU_DETAILS_PANE_WIDTH_MAX);
+  g_assert_true (nu_settings_set_details_pane_state (FALSE, 1));
+  drain ();
+  g_assert_cmpint (nu_settings_get ()->details_pane_width, ==, NU_DETAILS_PANE_WIDTH_MIN);
+
+  /* v2 (§13.10): bottom height; position and look values are read. */
+  counter.calls = 0;
+  g_assert_true (nu_settings_set_details_pane_height (5000));
+  drain ();
+  g_assert_cmpuint (counter.last, ==, NU_CHANGED_DP_STATE);
+  g_assert_cmpint (nu_settings_get ()->details_pane_height, ==, NU_DETAILS_PANE_HEIGHT_MAX);
+  g_autoptr (GSettings) s = direct_settings (backend);
+  g_settings_set_enum (s, "details-pane-position", NU_PANE_BOTTOM);
+  g_settings_set_int (s, "details-pane-margin", 8);
+  g_settings_set_int (s, "details-pane-icon-size", 70); /* rounded to a step of 16 */
+  g_settings_set_enum (s, "details-pane-media-fit", NU_MEDIA_FIT_BOX);
+  g_settings_set_enum (s, "details-pane-stack-depth-effect", NU_DEPTH_DARKEN);
+  drain ();
+  g_assert_cmpuint (counter.last, ==, NU_CHANGED_DP_LOOK);
+  g_assert_cmpint (nu_settings_get ()->details_pane_position, ==, NU_PANE_BOTTOM);
+  g_assert_cmpint (nu_settings_get ()->details_pane_margin, ==, 8);
+  g_assert_cmpint (nu_settings_get ()->details_pane_icon_size, ==, 64);
+  g_assert_cmpint (nu_settings_get ()->details_pane_media_fit, ==, NU_MEDIA_FIT_BOX);
+  g_assert_cmpint (nu_settings_get ()->details_pane_stack_depth, ==, NU_DEPTH_DARKEN);
+  nu_settings_shutdown ();
+}
+
 static void
 test_missing_schema (void)
 {
@@ -547,6 +636,8 @@ test_missing_schema (void)
   g_assert_false (nu_settings_capture_folder_view_default (&v));
   g_assert_false (nu_settings_reset_folder_views ());
   g_assert_false (nu_settings_remember_icon_rule_names ((const char *[]) { "x", NULL }));
+  g_assert_false (nu_settings_set_details_pane_state (TRUE, 300));
+  g_assert_false (nu_settings_set_details_pane_height (300));
   const NuConfig *d = nu_settings_defaults ();
   assert_config_equal (nu_settings_get (), d);
   /* Listeners can still be registered; they just never fire. */
@@ -555,6 +646,26 @@ test_missing_schema (void)
   drain ();
   g_assert_cmpuint (counter.calls, ==, 0);
   nu_settings_remove_listener (id);
+  nu_settings_shutdown ();
+}
+
+/* Installed schema older than the module (a key missing): like a missing schema, never an abort. Only runs
+ * in the "settings-outdated-schema" test, whose GSETTINGS_SCHEMA_DIR holds such a schema. */
+static void
+test_outdated_schema (void)
+{
+  if (g_getenv ("NU_TEST_OUTDATED_SCHEMA") == NULL)
+    {
+      g_test_skip ("needs the out-of-date schema (meson test settings-outdated-schema)");
+      return;
+    }
+  g_test_expect_message ("settings", G_LOG_LEVEL_WARNING, "*is out of date (no key \"details-pane-width\")*");
+  nu_settings_init_full (NU_SETTINGS_SCHEMA_ID, NULL);
+  g_test_assert_expected_messages ();
+  g_assert_false (nu_settings_available ());
+  g_assert_null (nu_settings_new_delayed ());
+  g_assert_false (nu_settings_set_details_pane_state (TRUE, 300));
+  assert_config_equal (nu_settings_get (), nu_settings_defaults ());
   nu_settings_shutdown ();
 }
 
@@ -656,6 +767,7 @@ main (int argc, char **argv)
 {
   g_test_init (&argc, &argv, NULL);
   g_test_add_func ("/settings/rgb-parse", test_rgb_parse);
+  g_test_add_func ("/settings/details-pane-state", test_details_pane_state);
   g_test_add_func ("/settings/defaults-match-schema", test_defaults_match_schema);
   g_test_add_func ("/settings/reads-stored-values", test_reads_stored_values);
   g_test_add_func ("/settings/invalid-colour-falls-back", test_invalid_colour_falls_back);
@@ -667,6 +779,7 @@ main (int argc, char **argv)
   g_test_add_func ("/settings/reset-folder-views", test_reset_folder_views);
   g_test_add_func ("/settings/icon-rules", test_icon_rules);
   g_test_add_func ("/settings/missing-schema", test_missing_schema);
+  g_test_add_func ("/settings/outdated-schema", test_outdated_schema);
   g_test_add_func ("/settings/without-init", test_without_init);
   g_test_add_func ("/settings/default-init-idempotent", test_default_init_idempotent);
   g_test_add_func ("/settings/listener-reentrancy", test_listener_reentrancy);

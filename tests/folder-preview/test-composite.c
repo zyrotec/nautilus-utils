@@ -124,7 +124,7 @@ test_tilt (void)
 static void
 test_four_slots (void)
 {
-  FpCompositeItem items[] = { { red_png, 11 }, { green_png, 22 }, { blue_png, 33 }, { yellow_png, 44 } };
+  FpCompositeItem items[] = { { red_png, 11, NULL }, { green_png, 22, NULL }, { blue_png, 33, NULL }, { yellow_png, 44, NULL } };
   const Px want[] = { RED, GREEN, BLUE, YELLOW };
   guint widths[] = { 16, 33, 64, 73, 146, 195, 512 };
   for (gsize s = 0; s < G_N_ELEMENTS (widths); s++)
@@ -156,7 +156,7 @@ test_aspect_ratio_kept (void)
   guint w = 400;
   for (guint seed = 0; seed < 8; seed++)
     {
-      FpCompositeItem wide[] = { { wide_png, seed } };
+      FpCompositeItem wide[] = { { wide_png, seed, NULL } };
       g_autoptr (GdkTexture) t = fp_composite_frame (&grid_style, wide, 1, w, NULL);
       double x, y, cw, ch;
       slot_center (w, 1, 0, &x, &y, &cw, &ch); /* one item: the whole face */
@@ -168,7 +168,7 @@ test_aspect_ratio_kept (void)
       if (seed == 0)
         debug_save (t, "wide-400.png");
 
-      FpCompositeItem tall[] = { { NULL, 0 }, { tall_png, seed } };
+      FpCompositeItem tall[] = { { NULL, 0, NULL }, { tall_png, seed, NULL } };
       g_autoptr (GdkTexture) u = fp_composite_frame (&grid_style, tall, 2, w, NULL);
       slot_center (w, 2, 1, &x, &y, &cw, &ch); /* two items: right half */
       assert_colour (u, x, y, GREEN, "tall centre");
@@ -188,7 +188,7 @@ test_layout_by_count (void)
   double x, y, cw, ch;
 
   /* 1: centred in the whole face; far corner of the frame stays clear. */
-  FpCompositeItem one[] = { { blue_png, 5 } };
+  FpCompositeItem one[] = { { blue_png, 5, NULL } };
   g_autoptr (GdkTexture) t1 = fp_composite_frame (&grid_style, one, 1, w, NULL);
   slot_center (w, 1, 0, &x, &y, &cw, &ch);
   g_assert_cmpfloat (fabs (x - w / 2.0), <, 1);
@@ -202,7 +202,7 @@ test_layout_by_count (void)
   debug_save (t1, "layout-1.png");
 
   /* 2: left half and right half. */
-  FpCompositeItem two[] = { { red_png, 1 }, { green_png, 2 } };
+  FpCompositeItem two[] = { { red_png, 1, NULL }, { green_png, 2, NULL } };
   g_autoptr (GdkTexture) t2 = fp_composite_frame (&grid_style, two, 2, w, NULL);
   slot_center (w, 2, 0, &x, &y, &cw, &ch);
   assert_colour (t2, x, y, RED, "left half");
@@ -211,7 +211,7 @@ test_layout_by_count (void)
   debug_save (t2, "layout-2.png");
 
   /* 3: two on top, one centred below — the bottom quarters' own centres stay clear. */
-  FpCompositeItem three[] = { { red_png, 1 }, { green_png, 2 }, { blue_png, 3 } };
+  FpCompositeItem three[] = { { red_png, 1, NULL }, { green_png, 2, NULL }, { blue_png, 3, NULL } };
   g_autoptr (GdkTexture) t3 = fp_composite_frame (&grid_style, three, 3, w, NULL);
   slot_center (w, 3, 0, &x, &y, &cw, &ch);
   assert_colour (t3, x, y, RED, "top left");
@@ -227,7 +227,7 @@ test_layout_by_count (void)
   debug_save (t3, "layout-3.png");
 
   /* 4 with NULL holes: holes stay empty, the others keep their quarters. */
-  FpCompositeItem holes[] = { { NULL, 0 }, { green_png, 1 }, { NULL, 0 }, { yellow_png, 2 } };
+  FpCompositeItem holes[] = { { NULL, 0, NULL }, { green_png, 1, NULL }, { NULL, 0, NULL }, { yellow_png, 2, NULL } };
   g_autoptr (GdkTexture) th = fp_composite_frame (&grid_style, holes, 4, w, NULL);
   slot_center (w, 4, 0, &x, &y, &cw, &ch);
   assert_clear (th, x, y, "hole");
@@ -253,8 +253,8 @@ test_layout_by_count (void)
 static void
 test_deterministic (void)
 {
-  FpCompositeItem a[] = { { red_png, 7 }, { green_png, 8 }, { blue_png, 9 } };
-  FpCompositeItem b[] = { { red_png, 7 }, { green_png, 8 }, { blue_png, 10 } };
+  FpCompositeItem a[] = { { red_png, 7, NULL }, { green_png, 8, NULL }, { blue_png, 9, NULL } };
+  FpCompositeItem b[] = { { red_png, 7, NULL }, { green_png, 8, NULL }, { blue_png, 10, NULL } };
   g_autoptr (GdkTexture) t1 = fp_composite_frame (&grid_style, a, 3, 146, NULL);
   g_autoptr (GdkTexture) t2 = fp_composite_frame (&grid_style, a, 3, 146, NULL);
   g_autoptr (GdkTexture) t3 = fp_composite_frame (&grid_style, b, 3, 146, NULL);
@@ -272,7 +272,7 @@ test_unreadable_and_bad_sizes (void)
   g_autofree char *missing = g_build_filename (dir, "missing.png", NULL);
   g_autofree char *garbage = g_build_filename (dir, "garbage.png", NULL);
   g_assert_true (g_file_set_contents (garbage, "not a png", -1, NULL));
-  FpCompositeItem items[] = { { missing, 1 }, { red_png, 2 }, { garbage, 3 }, { NULL, 4 } };
+  FpCompositeItem items[] = { { missing, 1, NULL }, { red_png, 2, NULL }, { garbage, 3, NULL }, { NULL, 4, NULL } };
   guint unreadable = 0;
   g_autoptr (GdkTexture) t = fp_composite_frame (&grid_style, items, 4, 200, &unreadable);
   g_assert_nonnull (t);
@@ -285,7 +285,7 @@ test_unreadable_and_bad_sizes (void)
 
   /* Absurdly large sources are refused (not decoded into huge buffers). */
   g_autofree char *huge = make_png ("huge.png", 2000, 10, RED);
-  FpCompositeItem hp[] = { { huge, 1 } };
+  FpCompositeItem hp[] = { { huge, 1, NULL } };
   g_autoptr (GdkTexture) th = fp_composite_frame (&grid_style, hp, 1, 64, &unreadable);
   g_assert_cmpuint (unreadable, ==, 1);
 
@@ -335,7 +335,7 @@ static void
 test_grid_style_options (void)
 {
   guint w = 300;
-  FpCompositeItem one[] = { { blue_png, 5 } };
+  FpCompositeItem one[] = { { blue_png, 5, NULL } };
   double cx, cy, cw, ch;
   slot_center (w, 1, 0, &cx, &cy, &cw, &ch);
   double pic = MIN (cw, ch) * 0.96; /* the square blue photo incl. border */
@@ -371,6 +371,65 @@ dimmed (Px c, double dim)
 
 /* Stacked layout: aspect ratio, card order (front on top), the back cards' top edges, blank cards, and
  * fewer cards for fewer photos. */
+/* A borrowed texture draws exactly like the file it came from (details pane icon cards, PLAN.md §13.10). */
+static void
+test_texture_items (void)
+{
+  FpStyle st = grid_style;
+  st.layout = FP_LAYOUT_STACKED;
+  st.rotation = FALSE;
+  st.depth = FP_DEPTH_NONE;
+  guint w = 200;
+  g_autoptr (GdkTexture) red = gdk_texture_new_from_filename (red_png, NULL);
+  g_assert_nonnull (red);
+  FpCompositeItem by_path[] = { { red_png, 1, NULL }, { green_png, 2, NULL } };
+  FpCompositeItem by_texture[] = { { NULL, 1, red }, { green_png, 2, NULL } };
+  g_autoptr (GdkTexture) a = fp_composite_frame (&st, by_path, 2, w, NULL);
+  g_autoptr (GdkTexture) b = fp_composite_frame (&st, by_texture, 2, w, NULL);
+  g_autoptr (GBytes) pa = gdk_texture_save_to_png_bytes (a);
+  g_autoptr (GBytes) pb = gdk_texture_save_to_png_bytes (b);
+  g_assert_true (g_bytes_equal (pa, pb));
+  /* The texture wins over a path. */
+  FpCompositeItem both[] = { { blue_png, 1, red }, { green_png, 2, NULL } };
+  g_autoptr (GdkTexture) c = fp_composite_frame (&st, both, 2, w, NULL);
+  g_autoptr (GBytes) pc = gdk_texture_save_to_png_bytes (c);
+  g_assert_true (g_bytes_equal (pa, pc));
+}
+
+/* bottom_align (details pane, PLAN.md §13.12): a short front picture sits on the stack's bottom edge, and a
+ * tall picture behind it never reaches below it. Off: the old top alignment (folder previews unchanged). */
+static void
+test_bottom_align (void)
+{
+  FpStyle st = grid_style;
+  st.layout = FP_LAYOUT_STACKED;
+  st.rotation = FALSE;
+  st.border = FALSE;
+  st.shadow = FALSE;
+  st.depth = FP_DEPTH_NONE;
+  st.keep_aspect = TRUE;
+  guint w = 300;
+  double fx, fy, fw, fh;
+  fp_composite_card_rect (0, w, &fx, &fy, &fw, &fh);
+  FpCompositeItem items[] = { { wide_png, 1, NULL }, { blue_png, 2, NULL } }; /* front wide (short), back square */
+  st.bottom_align = TRUE;
+  g_autoptr (GdkTexture) on = fp_composite_frame (&st, items, 2, w, NULL);
+  debug_save (on, "bottom-align-on.png");
+  /* Just above the front card's bottom edge: the front picture; just below it: nothing (no blue below). */
+  assert_colour (on, fx + fw / 2, fy + fh - 3, RED, "front picture on the bottom edge");
+  assert_clear (on, fx + fw / 2, fy + fh + 3, "nothing below the front card");
+  g_autofree char *key_on = fp_style_key (&st);
+  st.bottom_align = FALSE;
+  g_autoptr (GdkTexture) off = fp_composite_frame (&st, items, 2, w, NULL);
+  assert_colour (off, fx + fw / 2, fy + 3, RED, "off: front picture at the card's top");
+  g_autofree char *key_off = fp_style_key (&st);
+  g_assert_cmpstr (key_on, !=, key_off);
+  g_assert_null (strstr (key_off, "-B"));
+  FpStyle copy = st;
+  copy.bottom_align = TRUE;
+  g_assert_false (fp_style_equal (&st, &copy));
+}
+
 static void
 test_stacked (void)
 {
@@ -384,7 +443,7 @@ test_stacked (void)
   guint h = fp_composite_frame_height (&st, w);
   g_assert_cmpfloat (fabs ((double) h / w - (STACK_H + 2 * STACK_PAD) / (1 + 2 * STACK_PAD)), <, 0.01);
 
-  FpCompositeItem items[] = { { red_png, 1 }, { green_png, 2 }, { blue_png, 3 } };
+  FpCompositeItem items[] = { { red_png, 1, NULL }, { green_png, 2, NULL }, { blue_png, 3, NULL } };
   g_autoptr (GdkTexture) t = fp_composite_frame (&st, items, 3, w, NULL);
   debug_save (t, "stacked-3.png");
   g_assert_cmpint (gdk_texture_get_width (t), ==, (int) w);
@@ -416,7 +475,7 @@ test_stacked (void)
   /* A hole is a blank card in the border colour (border on) so the stack keeps its shape. */
   st.border = TRUE;
   st.border_r = 10, st.border_g = 200, st.border_b = 10;
-  FpCompositeItem holes[] = { { red_png, 1 }, { NULL, 0 }, { "/nonexistent.png", 3 } };
+  FpCompositeItem holes[] = { { red_png, 1, NULL }, { NULL, 0, NULL }, { "/nonexistent.png", 3, NULL } };
   guint unreadable = 0;
   g_autoptr (GdkTexture) th = fp_composite_frame (&st, holes, 3, w, &unreadable);
   debug_save (th, "stacked-holes.png");
@@ -435,7 +494,7 @@ test_stacked (void)
   g_assert_cmpint (memcmp (p1, p2, (gsize) w * 4 * h), ==, 0);
 
   /* Too many items for the layout is refused. */
-  FpCompositeItem four[] = { { red_png, 1 }, { red_png, 2 }, { red_png, 3 }, { red_png, 4 } };
+  FpCompositeItem four[] = { { red_png, 1, NULL }, { red_png, 2, NULL }, { red_png, 3, NULL }, { red_png, 4, NULL } };
   g_test_expect_message ("folder-preview", G_LOG_LEVEL_CRITICAL, "*n_items <= fp_style_slots*");
   g_assert_null (fp_composite_frame (&st, four, 4, w, NULL));
   g_test_assert_expected_messages ();
@@ -450,7 +509,7 @@ test_keep_aspect_option (void)
   FpStyle st = grid_style;
   st.keep_aspect = FALSE;
   st.rotation = FALSE;
-  FpCompositeItem wide[] = { { wide_png, 1 } };
+  FpCompositeItem wide[] = { { wide_png, 1, NULL } };
   g_autoptr (GdkTexture) t = fp_composite_frame (&st, wide, 1, w, NULL);
   debug_save (t, "grid-fill.png");
   double x, y, cw, ch;
@@ -485,7 +544,7 @@ test_depth (void)
   st.shadow = FALSE;
   st.keep_aspect = FALSE;
   guint w = 400;
-  FpCompositeItem items[] = { { red_png, 1 }, { green_png, 2 }, { blue_png, 3 } };
+  FpCompositeItem items[] = { { red_png, 1, NULL }, { green_png, 2, NULL }, { blue_png, 3, NULL } };
   st.depth = FP_DEPTH_NONE;
   g_autoptr (GdkTexture) flat = fp_composite_frame (&st, items, 3, w, NULL);
   st.depth = FP_DEPTH_BLUR;
@@ -526,7 +585,7 @@ test_drop_shadow_shape (void)
   FpStyle st = grid_style;
   st.border = FALSE;
   st.rotation = FALSE;
-  FpCompositeItem one[] = { { path, 1 } };
+  FpCompositeItem one[] = { { path, 1, NULL } };
   guint w = 400;
   g_autoptr (GdkTexture) t = fp_composite_frame (&st, one, 1, w, NULL);
   debug_save (t, "drop-shadow.png");
@@ -550,7 +609,7 @@ test_depth_presets (void)
   st.shadow = FALSE;
   st.keep_aspect = FALSE;
   guint w = 400;
-  FpCompositeItem items[] = { { red_png, 1 }, { green_png, 2 }, { blue_png, 3 } };
+  FpCompositeItem items[] = { { red_png, 1, NULL }, { green_png, 2, NULL }, { blue_png, 3, NULL } };
   double x[3], y[3], cw[3], ch[3];
   for (guint i = 0; i < 3; i++)
     fp_composite_card_rect (i, w, &x[i], &y[i], &cw[i], &ch[i]);
@@ -586,7 +645,7 @@ test_fade_clip_radius (void)
   st.depth = FP_DEPTH_NONE;
   st.corner_radius = 0;
   guint w = 400;
-  FpCompositeItem items[] = { { red_png, 1 } };
+  FpCompositeItem items[] = { { red_png, 1, NULL } };
   double ax, ay, aw, ah;
   fp_composite_stack_rect (w, &ax, &ay, &aw, &ah);
   double s64 = fp_composite_icon_px (&st, w) / 64; /* frame px per "px at 64 × 64" */
@@ -607,7 +666,7 @@ test_fade_clip_radius (void)
   st.view_top_radius = 8;
   st.shadow = TRUE;
   st.rotation = TRUE;
-  FpCompositeItem three[] = { { red_png, 1 }, { green_png, 2 }, { blue_png, 3 } };
+  FpCompositeItem three[] = { { red_png, 1, NULL }, { green_png, 2, NULL }, { blue_png, 3, NULL } };
   g_autoptr (GdkTexture) c3 = fp_composite_frame (&st, three, 3, w, NULL);
   debug_save (c3, "stacked-clip.png");
   g_assert_cmpuint (pixel (c3, mid, ay - 1).a, ==, 0);
@@ -642,7 +701,7 @@ test_front_upright_and_padding (void)
   st.shadow = FALSE;
   st.keep_aspect = FALSE;
   guint w = 300;
-  FpCompositeItem one[] = { { red_png, 12345 } };
+  FpCompositeItem one[] = { { red_png, 12345, NULL } };
   st.rotation = TRUE;
   g_autoptr (GdkTexture) tilted = fp_composite_frame (&st, one, 1, w, NULL);
   st.rotation = FALSE;
@@ -651,7 +710,7 @@ test_front_upright_and_padding (void)
   g_autofree guint8 *a = pixels (tilted);
   g_autofree guint8 *b = pixels (flat);
   g_assert_cmpint (memcmp (a, b, (gsize) w * 4 * h), ==, 0); /* front card alone: identical */
-  FpCompositeItem two[] = { { red_png, 12345 }, { green_png, 777 } };
+  FpCompositeItem two[] = { { red_png, 12345, NULL }, { green_png, 777, NULL } };
   st.rotation = TRUE;
   g_autoptr (GdkTexture) t2 = fp_composite_frame (&st, two, 2, w, NULL);
   st.rotation = FALSE;
@@ -685,7 +744,7 @@ test_border_width (void)
   st.shadow = FALSE;
   st.corner_radius = 0;
   st.border_r = st.border_g = st.border_b = 0;
-  FpCompositeItem one[] = { { blue_png, 5 } };
+  FpCompositeItem one[] = { { blue_png, 5, NULL } };
   double cx, cy, cw, ch;
   slot_center (w, 1, 0, &cx, &cy, &cw, &ch);
   double edge = cx - MIN (cw, ch) * 0.96 / 2; /* left edge of the square photo incl. border */
@@ -713,7 +772,7 @@ test_border_width (void)
 static void
 test_stress (void)
 {
-  FpCompositeItem items[] = { { red_png, 1 }, { green_png, 2 }, { blue_png, 3 }, { yellow_png, 4 } };
+  FpCompositeItem items[] = { { red_png, 1, NULL }, { green_png, 2, NULL }, { blue_png, 3, NULL }, { yellow_png, 4, NULL } };
   for (guint i = 0; i < 2000; i++)
     {
       items[0].seed = i;
@@ -766,6 +825,8 @@ main (int argc, char **argv)
   g_test_add_func ("/composite/border-width", test_border_width);
   g_test_add_func ("/composite/drop-shadow-shape", test_drop_shadow_shape);
   g_test_add_func ("/composite/stress", test_stress);
+  g_test_add_func ("/composite/texture-items", test_texture_items);
+  g_test_add_func ("/composite/bottom-align", test_bottom_align);
   int ret = g_test_run ();
 
   g_clear_pointer (&red_png, g_free);

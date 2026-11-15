@@ -1,0 +1,55 @@
+# Valgrind suppressions for tools/check-safety.sh. THIRD-PARTY ONLY (PLAN.md §4.3): never add an entry whose
+# stack points into our code. Each entry says where it comes from.
+
+# GStreamer's VA plugin (gst-plugins-bad, va) probes the GPU when GstDiscoverer loads it (details pane,
+# PLAN.md §13): the Intel media driver passes partly initialised structs to DRM ioctls and closes unset fds.
+{
+   gst-va-probe-ioctl
+   Memcheck:Param
+   ioctl(generic)
+   ...
+   fun:gst_va_*
+}
+{
+   gst-va-probe-close
+   Memcheck:Param
+   close(fd)
+   ...
+   fun:_close_fds
+   fun:*va*
+}
+
+# glibc keeps the dependency list of a library dlopen()ed by GStreamer's plugin loader (lives for the process).
+{
+   glibc-dlopen-gst-plugin
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   fun:malloc
+   fun:_dl_map_object_deps
+   ...
+   fun:_priv_gst_plugin_load_file_for_registry
+}
+
+# GLib's quark table, allocated by GLib's library constructor; valgrind loses the pointer once GStreamer /
+# glycin threads are still running at exit (reproduced only in test-dp-meta, which loads both).
+{
+   glib-quark-table
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   fun:g_malloc
+   fun:g_quark_init
+}
+
+# glycin (gdk-pixbuf's loader, used for SVG sizes in test-dp-meta) runs a rayon thread pool; a worker's
+# crossbeam-epoch thread-local handle is still registered when the test exits (seen intermittently).
+{
+   glycin-rayon-crossbeam-epoch-local
+   Memcheck:Leak
+   match-leak-kinds: definite
+   ...
+   fun:*crossbeam_epoch*Collector*register*
+   ...
+   fun:*rayon_core*
+}

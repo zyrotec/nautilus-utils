@@ -43,4 +43,15 @@ void fp_view_hook_set_look (const FpStyle   *style,
 /* Nautilus reported that the folder @uri changed: forget its cached frames and refresh visible icons. */
 void fp_view_hook_folder_changed (const char *uri);
 
+/* For the details pane (PLAN.md §13.1.2, P4): a new paintable showing @folder's preview with the current look
+ * on @icon (its themed folder icon) at @size logical px and @scale; it fills in its frame when ready. NULL when
+ * the folder gets no preview (feature off or disabled, not local, not the plain folder icon). Main thread. */
+GdkPaintable *fp_view_hook_render_folder (GFile        *folder,
+                                          GdkPaintable *icon,
+                                          int           size,
+                                          int           scale);
+
+/* The folder previews' current look (PLAN.md §13.13: the details pane's stack can copy it). FALSE before init. */
+gboolean fp_view_hook_get_style (FpStyle *out);
+
 G_END_DECLS

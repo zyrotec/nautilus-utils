@@ -68,7 +68,7 @@ main (int argc, char **argv)
         continue;
       g_autoptr (FpResolved) res = fp_thumbs_resolve (thumbs, scan, PREVIEW_SLOTS, NULL, NULL);
       gint64 t2 = g_get_monotonic_time ();
-      FpCompositeItem items[PREVIEW_SLOTS] = { { NULL, 0 } };
+      FpCompositeItem items[PREVIEW_SLOTS] = { { NULL, 0, NULL } };
       guint k = MIN (res->thumbs->len, (guint) PREVIEW_SLOTS);
       for (guint j = 0; j < k; j++)
         {

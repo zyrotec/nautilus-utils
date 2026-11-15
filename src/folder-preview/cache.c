@@ -593,7 +593,7 @@ build_frame (FpCache       *cache,
 
   if (n_thumbs > first)
     {
-      FpCompositeItem items[PREVIEW_SLOTS] = { { NULL, 0 } }; /* paths borrowed from @resolved */
+      FpCompositeItem items[PREVIEW_SLOTS] = { { NULL, 0, NULL } }; /* paths borrowed from @resolved */
       guint n;
       if (stacked)
         n = exact ? MIN (slots, n_thumbs) : slots; /* when not exact, n_thumbs >= first + slots */
