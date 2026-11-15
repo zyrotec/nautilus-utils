@@ -24,6 +24,10 @@ void gt_bar_set_info (GtBar  *self,
                       GtInfo *info);
 GtInfo *gt_bar_get_info (GtBar *self);
 
+/* Outside a repository: the folder whose operations (a clone) the bar shows, alone (NULL: none). */
+void gt_bar_set_scope (GtBar      *self,
+                       const char *folder);
+
 /* The IDE for "Open in …" (NULL hides the button). */
 void gt_bar_set_ide (GtBar    *self,
                      GAppInfo *ide);

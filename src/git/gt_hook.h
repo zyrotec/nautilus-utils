@@ -14,6 +14,10 @@ void gt_hook_configure (gboolean    enabled,
 void gt_hook_set_below_all (gboolean below);
 void gt_hook_shutdown  (void);
 
+/* Selects @name in a window showing native folder @folder (retried for a few seconds while Files picks it up). */
+void gt_hook_reveal (const char *folder,
+                     const char *name);
+
 /* Debug driver: "gt-dump", "gt-expect TEXT", "gt-switch NAME", "gt-switch-remote NAME", "gt-create NAME",
  * "gt-push", "gt-pull", "gt-sync". TRUE if @cmd was one of ours. */
 gboolean gt_hook_debug_command (const char *cmd);

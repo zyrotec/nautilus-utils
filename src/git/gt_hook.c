@@ -11,11 +11,14 @@
 #include <string.h>
 
 #include "dp_pane.h"
+#include "gt_auth.h"
 #include "gt_bar.h"
+#include "gt_clone.h"
 #include "gt_page.h"
 #include "gt_columns.h"
 #include "gt_ide.h"
 #include "gt_info.h"
+#include "gt_ops.h"
 #include "gt_repo.h"
 #include "nu_content.h"
 
@@ -31,6 +34,7 @@ typedef struct
   gulong     active_id;
   gulong     location_id;
   char      *root;       /* repository shown, or NULL */
+  char      *folder;     /* the active tab's folder (native), or NULL */
 } WinHook;
 
 typedef struct
@@ -45,6 +49,11 @@ typedef struct
   gboolean    warned;
   gboolean    icons_added;
   gboolean    below_all;  /* the details pane is at the bottom: the bar goes below its strip (owner, 2026-11-15) */
+  gulong      ops_id;     /* items-changed on the operations list */
+  GType       files_view_type, list_base_type;
+  guint       reveal_id;  /* selecting a freshly cloned folder, or 0 */
+  char       *reveal_folder, *reveal_name;
+  guint       reveal_tries;
 } Hook;
 
 static Hook *gh;
@@ -108,7 +117,12 @@ update (WinHook *hook)
       g_autoptr (GtInfo) info = root != NULL ? gt_info_get (root, git_dir) : NULL;
       gt_bar_set_info (bar, info);
     }
-  gtk_widget_set_visible (GTK_WIDGET (bar), gh->show_bar && hook->root != NULL);
+  g_free (hook->folder);
+  hook->folder = g_strdup (path);
+  /* Outside a repository the bar still shows a clone running (or just finished) in this folder. */
+  gt_bar_set_scope (bar, hook->root == NULL ? path : NULL);
+  gboolean ops_here = hook->root == NULL && path != NULL && gt_ops_count_recent (path, 120 * G_USEC_PER_SEC) > 0;
+  gtk_widget_set_visible (GTK_WIDGET (bar), gh->show_bar && (hook->root != NULL || ops_here));
 }
 
 static void
@@ -152,6 +166,7 @@ win_hook_free (gpointer data)
   g_weak_ref_clear (&hook->bar);
   g_weak_ref_clear (&hook->slot);
   g_free (hook->root);
+  g_free (hook->folder);
   g_free (hook);
 }
 
@@ -313,6 +328,13 @@ uninstall_all (void)
     }
 }
 
+static void
+on_ops_changed (GListModel *list, guint position, guint removed, guint added, gpointer data)
+{
+  (void) list, (void) position, (void) removed, (void) added, (void) data;
+  for_each_hook (update); /* a clone outside a repository shows or hides the bar */
+}
+
 void
 gt_hook_init (void)
 {
@@ -321,6 +343,110 @@ gt_hook_init (void)
   gh = g_new0 (Hook, 1);
   gh->toplevels = gtk_window_get_toplevels (); /* borrowed */
   gh->changed_id = g_signal_connect (gh->toplevels, "items-changed", G_CALLBACK (on_toplevels_changed), NULL);
+  gh->ops_id = g_signal_connect (gt_ops_get_model (), "items-changed", G_CALLBACK (on_ops_changed), NULL);
+}
+
+/* ---- selecting a freshly cloned folder ---- */
+
+/* New ref: the GFile of a view item (GtkTreeListRow → NautilusViewItem → NautilusFileInfo). */
+static GFile *
+item_location (GObject *item)
+{
+  g_autoptr (GObject) inner = GTK_IS_TREE_LIST_ROW (item) ? gtk_tree_list_row_get_item (GTK_TREE_LIST_ROW (item))
+                                                          : g_object_ref (item);
+  if (inner == NULL || g_object_class_find_property (G_OBJECT_GET_CLASS (inner), "file") == NULL)
+    return NULL;
+  g_autoptr (GObject) file = NULL;
+  g_object_get (inner, "file", &file, NULL);
+  return file != NULL && NAUTILUS_IS_FILE_INFO (file) ? nautilus_file_info_get_location (NAUTILUS_FILE_INFO (file)) : NULL;
+}
+
+/* Selects @name in the active tab of a window showing @folder. TRUE once done. */
+static gboolean
+select_in_windows (const char *folder, const char *name)
+{
+  if (gh->files_view_type == 0)
+    gh->files_view_type = g_type_from_name ("NautilusFilesView");
+  if (gh->list_base_type == 0)
+    gh->list_base_type = g_type_from_name ("NautilusListBase");
+  for (guint w = 0; w < g_list_model_get_n_items (gh->toplevels); w++)
+    {
+      g_autoptr (GObject) win = g_list_model_get_item (gh->toplevels, w);
+      WinHook *hook = GTK_IS_WIDGET (win) ? get_hook (GTK_WIDGET (win)) : NULL;
+      g_autoptr (GObject) slot = hook != NULL ? g_weak_ref_get (&hook->slot) : NULL;
+      if (slot == NULL || g_strcmp0 (hook->folder, folder) != 0)
+        continue;
+      GtkWidget *view = find_type (GTK_WIDGET (slot), gh->files_view_type, 8);
+      GtkWidget *base = view != NULL ? find_type (view, gh->list_base_type, 4) : NULL;
+      if (base == NULL || g_object_class_find_property (G_OBJECT_GET_CLASS (base), "model") == NULL)
+        continue;
+      g_autoptr (GObject) model = NULL;
+      g_object_get (base, "model", &model, NULL);
+      if (!GTK_IS_SELECTION_MODEL (model))
+        continue;
+      for (guint i = 0; i < g_list_model_get_n_items (G_LIST_MODEL (model)); i++)
+        {
+          g_autoptr (GObject) item = g_list_model_get_item (G_LIST_MODEL (model), i);
+          g_autoptr (GFile) loc = item != NULL ? item_location (item) : NULL;
+          g_autofree char *base_name = loc != NULL ? g_file_get_basename (loc) : NULL;
+          if (g_strcmp0 (base_name, name) == 0)
+            {
+              gtk_selection_model_select_item (GTK_SELECTION_MODEL (model), i, TRUE);
+              return TRUE;
+            }
+        }
+    }
+  return FALSE;
+}
+
+/* The first selected item's name in @hook's active tab, or NULL (debug driver). Caller frees. */
+static char *
+selected_name (WinHook *hook)
+{
+  g_autoptr (GObject) slot = g_weak_ref_get (&hook->slot);
+  if (slot == NULL || gh->files_view_type == 0 || gh->list_base_type == 0)
+    return NULL;
+  GtkWidget *view = find_type (GTK_WIDGET (slot), gh->files_view_type, 8);
+  GtkWidget *base = view != NULL ? find_type (view, gh->list_base_type, 4) : NULL;
+  g_autoptr (GObject) model = NULL;
+  if (base != NULL && g_object_class_find_property (G_OBJECT_GET_CLASS (base), "model") != NULL)
+    g_object_get (base, "model", &model, NULL);
+  if (!GTK_IS_SELECTION_MODEL (model))
+    return NULL;
+  g_autoptr (GtkBitset) set = gtk_selection_model_get_selection (GTK_SELECTION_MODEL (model));
+  if (gtk_bitset_is_empty (set))
+    return NULL;
+  g_autoptr (GObject) item = g_list_model_get_item (G_LIST_MODEL (model), gtk_bitset_get_minimum (set));
+  g_autoptr (GFile) loc = item != NULL ? item_location (item) : NULL;
+  return loc != NULL ? g_file_get_basename (loc) : NULL;
+}
+
+static gboolean
+reveal_retry (gpointer data)
+{
+  (void) data;
+  /* The folder shows up once Files notices it: try for a few seconds. */
+  if (select_in_windows (gh->reveal_folder, gh->reveal_name) || ++gh->reveal_tries >= 20)
+    {
+      gh->reveal_id = 0;
+      return G_SOURCE_REMOVE;
+    }
+  return G_SOURCE_CONTINUE;
+}
+
+void
+gt_hook_reveal (const char *folder, const char *name)
+{
+  if (gh == NULL || folder == NULL || name == NULL)
+    return;
+  g_clear_handle_id (&gh->reveal_id, g_source_remove);
+  g_free (gh->reveal_folder);
+  g_free (gh->reveal_name);
+  gh->reveal_folder = g_strdup (folder);
+  gh->reveal_name = g_strdup (name);
+  gh->reveal_tries = 0;
+  if (!select_in_windows (folder, name))
+    gh->reveal_id = g_timeout_add (200, reveal_retry, NULL);
 }
 
 static void
@@ -371,7 +497,11 @@ gt_hook_shutdown (void)
   if (gh == NULL)
     return;
   g_clear_signal_handler (&gh->changed_id, gh->toplevels);
+  g_clear_signal_handler (&gh->ops_id, gt_ops_get_model ());
   g_clear_handle_id (&gh->scan_id, g_source_remove);
+  g_clear_handle_id (&gh->reveal_id, g_source_remove);
+  g_free (gh->reveal_folder);
+  g_free (gh->reveal_name);
   uninstall_all ();
   g_clear_object (&gh->ide);
   g_clear_pointer (&gh, g_free);
@@ -390,6 +520,14 @@ first_hook (void)
         return hook;
     }
   return NULL;
+}
+
+static void
+debug_cloned (const char *folder, const char *name, gpointer data)
+{
+  (void) data;
+  g_message ("gt cloned: %s", name);
+  gt_hook_reveal (folder, name);
 }
 
 gboolean
@@ -413,7 +551,9 @@ gt_hook_debug_command (const char *cmd)
   else if (g_str_has_prefix (cmd, "gt-expect "))
     {
       g_autofree char *d = gt_bar_describe (bar);
-      g_autofree char *full = g_strdup_printf ("bar=%d at=%s %s", gtk_widget_get_visible (GTK_WIDGET (bar)),
+      g_autofree char *sel = selected_name (hook);
+      g_autofree char *full = g_strdup_printf ("bar=%d selected=%s at=%s %s", gtk_widget_get_visible (GTK_WIDGET (bar)),
+                                               sel != NULL ? sel : "-",
                                                gtk_widget_has_css_class (gtk_widget_get_parent (GTK_WIDGET (bar)), "nu-content")
                                                  ? "column" : "bottom", d);
       const char *want = cmd + strlen ("gt-expect ");
@@ -467,6 +607,36 @@ gt_hook_debug_command (const char *cmd)
         g_message ("gt expect ok: %s %s", rest, want);
       else
         g_message ("gt expect FAIL: %s %s — %s", rest, want, full);
+    }
+  else if (g_str_equal (cmd, "gt-clone-open"))
+    {
+      /* As "Clone Repository…" in the shown folder's background menu. */
+      if (hook->folder != NULL)
+        gt_clone_dialog_present (hook->window, hook->folder, debug_cloned, NULL);
+      g_message ("gt clone dialog: %s", hook->folder != NULL ? "open" : "no folder");
+    }
+  else if (g_str_has_prefix (cmd, "gt-clone "))
+    {
+      /* "gt-clone URL [NAME]": fills the open dialog and presses Clone. */
+      g_auto (GStrv) parts = g_strsplit (cmd + strlen ("gt-clone "), " ", 2);
+      gboolean ok = parts[0] != NULL && gt_clone_debug_submit (parts[0], parts[1]);
+      g_message ("gt clone: %s", ok ? "started" : "not started");
+    }
+  else if (g_str_has_prefix (cmd, "gt-auth "))
+    {
+      /* "gt-auth USER TOKEN": fills the sign-in dialog and presses Sign In. */
+      g_auto (GStrv) parts = g_strsplit (cmd + strlen ("gt-auth "), " ", 2);
+      gboolean ok = parts[0] != NULL && parts[1] != NULL && gt_auth_debug_submit (parts[0], parts[1]);
+      g_message ("gt auth: %s", ok ? "submitted" : "no dialog");
+    }
+  else if (g_str_has_prefix (cmd, "gt-auth-expect "))
+    {
+      g_autofree char *d = gt_auth_debug_describe ();
+      const char *want = cmd + strlen ("gt-auth-expect ");
+      if (d != NULL && strstr (d, want) != NULL)
+        g_message ("gt expect ok: auth %s", want);
+      else
+        g_message ("gt expect FAIL: auth %s — %s", want, d != NULL ? d : "(no dialog)");
     }
   else if (g_str_has_prefix (cmd, "gt-card "))
     {

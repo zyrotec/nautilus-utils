@@ -24,6 +24,7 @@ typedef struct
 {
   const char *username;
   const char *token;
+  const char *store_helper; /* optional: a credential helper also asked to store them on success ("libsecret") */
 } GtCredentials;
 
 /* Called on the main context for each progress line git prints (percent -1 if the line has none). */

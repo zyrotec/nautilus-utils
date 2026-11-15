@@ -3,6 +3,7 @@
 
 #include <string.h>
 
+#include "gt_auth.h"
 #include "gt_ide.h"
 #include "gt_ops.h"
 #include "gt_run.h"
@@ -13,6 +14,7 @@ struct _GtBar
 {
   GtkWidget     parent_instance;
   GtInfo       *info;          /* owned or NULL */
+  char         *scope;         /* outside a repository: the folder whose operations are shown, or NULL */
   gulong        info_id;
   GAppInfo     *ide;           /* owned or NULL */
 
@@ -87,10 +89,11 @@ gt_bar_unload_style (void)
   g_clear_object (&css);
 }
 
+/* Where this bar's operations run: the repository, or (outside one) the scope folder. */
 static const char *
 root (GtBar *self)
 {
-  return self->info != NULL ? gt_info_get_root (self->info) : NULL;
+  return self->info != NULL ? gt_info_get_root (self->info) : self->scope;
 }
 
 static char *
@@ -126,6 +129,9 @@ update (GtBar *self)
                                         : g_strdup (loaded && branch != NULL ? "Not published" : "");
   gtk_label_set_text (GTK_LABEL (self->counts_label), counts_text);
   gtk_widget_set_visible (self->counts_button, loaded && error == NULL && *counts_text != '\0');
+  /* Outside a repository (a clone running here): only the progress. */
+  gtk_widget_set_visible (self->branch_button, info != NULL);
+  gtk_widget_set_visible (self->ide_button, info != NULL && self->ide != NULL);
   gtk_widget_set_tooltip_text (self->counts_button,
                                counts ? "Commits to push (↑) and to pull (↓) — Push, Pull, Sync" : "Push this branch");
 
@@ -200,12 +206,32 @@ on_info_changed (GtInfo *info, gpointer data)
 
 /* ---- operations ---- */
 
+static gpointer
+bar_ref (GtBar *self)
+{
+  GWeakRef *r = g_new0 (GWeakRef, 1);
+  g_weak_ref_init (r, self);
+  return r;
+}
+
+/* An operation from this bar ended: if it needs a sign-in, ask (over this window) and retry. */
+static void
+on_op_done (GtOp *op, gpointer data)
+{
+  GWeakRef *r = data;
+  g_autoptr (GtBar) self = g_weak_ref_get (r);
+  g_weak_ref_clear (r);
+  g_free (r);
+  if (self != NULL)
+    gt_auth_handle (GTK_WIDGET (self), op, NULL, NULL);
+}
+
 static void
 start (GtBar *self, const char *title, const char *const *args, GtRunFlags flags, const char *success)
 {
   if (root (self) == NULL)
     return;
-  gt_ops_start (root (self), title, args, flags, success, NULL, NULL);
+  gt_ops_start (root (self), title, args, flags, NULL, success, on_op_done, bar_ref (self));
   gtk_menu_button_popdown (GTK_MENU_BUTTON (self->counts_button));
   gtk_menu_button_popdown (GTK_MENU_BUTTON (self->branch_button));
 }
@@ -901,6 +927,7 @@ gt_bar_dispose (GObject *object)
   g_clear_object (&self->branch_cancel);
   g_clear_object (&self->remote_cancel);
   g_clear_object (&self->ide);
+  g_clear_pointer (&self->scope, g_free);
   g_clear_pointer (&self->remote, g_free);
   g_clear_pointer (&self->box, gtk_widget_unparent);
   g_clear_object (&self->my_ops);
@@ -945,6 +972,20 @@ gt_bar_set_info (GtBar *self, GtInfo *info)
   update_progress (self);
 }
 
+void
+gt_bar_set_scope (GtBar *self, const char *folder)
+{
+  g_return_if_fail (GT_IS_BAR (self));
+  if (g_strcmp0 (self->scope, folder) == 0)
+    return;
+  g_free (self->scope);
+  self->scope = g_strdup (folder);
+  if (self->my_ops != NULL)
+    gtk_filter_changed (gtk_filter_list_model_get_filter (self->my_ops), GTK_FILTER_CHANGE_DIFFERENT);
+  update (self);
+  update_progress (self);
+}
+
 GtInfo *
 gt_bar_get_info (GtBar *self)
 {
@@ -957,7 +998,7 @@ gt_bar_set_ide (GtBar *self, GAppInfo *ide)
 {
   g_return_if_fail (GT_IS_BAR (self));
   g_set_object (&self->ide, ide);
-  gtk_widget_set_visible (self->ide_button, ide != NULL);
+  gtk_widget_set_visible (self->ide_button, ide != NULL && self->info != NULL);
   if (ide == NULL)
     return;
   g_autofree char *label = g_strdup_printf ("Open in %s", g_app_info_get_name (ide));

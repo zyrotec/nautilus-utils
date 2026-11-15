@@ -123,7 +123,7 @@ test_info_ops (void)
 
   /* Sync (fetch): behind by one. */
   const char *fetch[] = { "fetch", "--progress", NULL };
-  GtOp *op = gt_ops_start (root, "Sync", fetch, GT_RUN_NETWORK, "Up to date", NULL, NULL);
+  GtOp *op = gt_ops_start (root, "Sync", fetch, GT_RUN_NETWORK, NULL, "Up to date", NULL, NULL);
   g_assert_cmpuint (gt_ops_count_running (root), ==, 1);
   g_assert_true (wait_for (op_finished, op));
   g_assert_cmpint (gt_op_get_state (op), ==, GT_OP_DONE);
@@ -132,7 +132,7 @@ test_info_ops (void)
 
   /* Pull --ff-only can't (diverged): failed with git's message; nothing changed. */
   const char *pull[] = { "pull", "--ff-only", NULL };
-  op = gt_ops_start (root, "Pull", pull, GT_RUN_NETWORK, "Pulled", NULL, NULL);
+  op = gt_ops_start (root, "Pull", pull, GT_RUN_NETWORK, NULL, "Pulled", NULL, NULL);
   g_assert_true (wait_for (op_finished, op));
   g_assert_cmpint (gt_op_get_state (op), ==, GT_OP_FAILED);
   g_assert_nonnull (gt_op_get_message (op));
@@ -142,7 +142,7 @@ test_info_ops (void)
   /* Rebase onto it, push: in sync. */
   sh (repo, "git rebase -q origin/main");
   const char *push[] = { "push", "--progress", NULL };
-  op = gt_ops_start (root, "Push", push, GT_RUN_NETWORK, "Pushed", NULL, NULL);
+  op = gt_ops_start (root, "Push", push, GT_RUN_NETWORK, NULL, "Pushed", NULL, NULL);
   g_assert_true (wait_for (op_finished, op));
   g_assert_cmpint (gt_op_get_state (op), ==, GT_OP_DONE);
   counts (info, 0, 0);

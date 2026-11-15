@@ -1,6 +1,8 @@
 /* Git operations. See gt_ops.h. */
 #include "gt_ops.h"
 
+#include <string.h>
+
 #include "gt_info.h"
 
 #define LOCAL_TIMEOUT_MS   (2 * 60 * 1000)
@@ -20,6 +22,10 @@ struct _GtOp
   GCancellable *cancel;
   GtOpDone      done;
   gpointer      done_data;
+  GStrv         args;       /* for a retry */
+  GtRunFlags    flags;
+  char         *error_text; /* git's own message (the auth target is in it) */
+  gint64        finished_at; /* monotonic µs, 0 while running */
 };
 
 enum { PROP_0, PROP_TITLE, PROP_ROOT, PROP_STATE, PROP_PHASE, PROP_PERCENT, PROP_MESSAGE, PROP_KIND, N_PROPS };
@@ -55,6 +61,8 @@ gt_op_finalize (GObject *object)
   g_free (self->success);
   g_free (self->phase);
   g_free (self->message);
+  g_strfreev (self->args);
+  g_free (self->error_text);
   G_OBJECT_CLASS (gt_op_parent_class)->finalize (object);
 }
 
@@ -150,11 +158,14 @@ on_finished (GObject *src, GAsyncResult *res, gpointer data)
     {
       self->state = GT_OP_FAILED;
       self->kind = r != NULL ? r->kind : GT_ERROR_OTHER;
+      g_free (self->error_text);
+      self->error_text = g_strdup (r != NULL ? r->error_text : NULL);
       self->message = g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED) ? g_strdup ("Stopped")
                                                                                 : failure_message (r, error);
     }
   g_clear_pointer (&self->phase, g_free);
   self->percent = -1;
+  self->finished_at = g_get_monotonic_time ();
   g_object_freeze_notify (G_OBJECT (self));
   for (int p = PROP_STATE; p <= PROP_KIND; p++)
     g_object_notify_by_pspec (G_OBJECT (self), props[p]);
@@ -180,9 +191,44 @@ trim (void)
     }
 }
 
+char *
+gt_op_get_auth_target (GtOp *self)
+{
+  g_return_val_if_fail (GT_IS_OP (self), NULL);
+  /* "fatal: could not read Username for 'https://github.com': …", "Authentication failed for 'https://…/x.git/'" */
+  const char *t = self->error_text != NULL ? strstr (self->error_text, " for '") : NULL;
+  if (t == NULL)
+    return NULL;
+  t += strlen (" for '");
+  const char *end = strchr (t, '\'');
+  return end != NULL && end > t ? g_strndup (t, (gsize) (end - t)) : NULL;
+}
+
+guint
+gt_ops_count_recent (const char *root, gint64 max_age_us)
+{
+  guint n = 0;
+  gint64 now = g_get_monotonic_time ();
+  for (guint i = 0; ops != NULL && i < g_list_model_get_n_items (G_LIST_MODEL (ops)); i++)
+    {
+      g_autoptr (GtOp) op = g_list_model_get_item (G_LIST_MODEL (ops), i);
+      n += (root == NULL || g_strcmp0 (op->root, root) == 0) &&
+           (op->state == GT_OP_RUNNING || now - op->finished_at < max_age_us);
+    }
+  return n;
+}
+
 GtOp *
-gt_ops_start (const char *root, const char *title, const char *const *args, GtRunFlags flags, const char *success,
-              GtOpDone done, gpointer user_data)
+gt_ops_retry (GtOp *op, const GtCredentials *credentials, GtOpDone done, gpointer user_data)
+{
+  g_return_val_if_fail (GT_IS_OP (op), NULL);
+  return gt_ops_start (op->root, op->title, (const char *const *) op->args, op->flags, credentials, op->success, done,
+                       user_data);
+}
+
+GtOp *
+gt_ops_start (const char *root, const char *title, const char *const *args, GtRunFlags flags,
+              const GtCredentials *credentials, const char *success, GtOpDone done, gpointer user_data)
 {
   g_return_val_if_fail (root != NULL && title != NULL && args != NULL, NULL);
   GListModel *model = gt_ops_get_model ();
@@ -194,9 +240,11 @@ gt_ops_start (const char *root, const char *title, const char *const *args, GtRu
   self->cancel = g_cancellable_new ();
   self->done = done;
   self->done_data = user_data;
+  self->args = g_strdupv ((char **) args);
+  self->flags = flags;
   g_list_store_insert (ops, 0, self);
   trim ();
-  gt_run_async (root, args, flags, NULL, (flags & GT_RUN_NETWORK) ? NETWORK_TIMEOUT_MS : LOCAL_TIMEOUT_MS,
+  gt_run_async (root, args, flags, credentials, (flags & GT_RUN_NETWORK) ? NETWORK_TIMEOUT_MS : LOCAL_TIMEOUT_MS,
                 self->cancel, on_progress, self, on_finished, g_object_ref (self));
   g_object_unref (self); /* the list keeps it */
   return self;

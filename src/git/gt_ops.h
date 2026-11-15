@@ -35,22 +35,36 @@ GtErrorKind gt_op_get_kind    (GtOp *self);
 /* Called once the operation has finished (any state). */
 typedef void (*GtOpDone) (GtOp *op, gpointer user_data);
 
-/* Starts `git <args…>` in @root as an operation titled @title ("Push", "Switch to main"…); @success is the message
- * on success. Afterwards the repository's GtInfo (if any) reads again. Returns the operation (borrowed: the list
- * keeps it). */
-GtOp *gt_ops_start (const char        *root,
-                    const char        *title,
-                    const char *const *args,
-                    GtRunFlags         flags,
-                    const char        *success,
-                    GtOpDone           done,
-                    gpointer           user_data);
+/* Starts `git <args…>` in @root as an operation titled @title ("Push", "Switch to main"…), with @credentials (may
+ * be NULL; copied for this run only); @success is the message on success. Afterwards the repository's GtInfo (if
+ * any) reads again. Returns the operation (borrowed: the list keeps it). */
+GtOp *gt_ops_start (const char          *root,
+                    const char          *title,
+                    const char *const   *args,
+                    GtRunFlags           flags,
+                    const GtCredentials *credentials,
+                    const char          *success,
+                    GtOpDone             done,
+                    gpointer             user_data);
+
+/* Runs @op's command again as a new operation (same title, folder, flags), with @credentials. */
+GtOp *gt_ops_retry (GtOp                *op,
+                    const GtCredentials *credentials,
+                    GtOpDone             done,
+                    gpointer             user_data);
+
+/* What git couldn't sign in to, from its message ("https://github.com"), or NULL. Caller frees. */
+char *gt_op_get_auth_target (GtOp *self);
 
 /* The list (GtOp, newest first). Borrowed, process-wide. */
 GListModel *gt_ops_get_model (void);
 
 /* Operations running in @root (NULL = anywhere). */
 guint gt_ops_count_running (const char *root);
+
+/* Operations in @root running, or finished less than @max_age_us ago. */
+guint gt_ops_count_recent (const char *root,
+                           gint64      max_age_us);
 
 /* Drops the list (feature off / shutdown). Running operations are left to finish: stopping a push or a checkout
  * halfway could leave the repository half done. */

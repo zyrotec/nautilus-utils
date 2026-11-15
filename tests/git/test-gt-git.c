@@ -285,14 +285,14 @@ test_credentials (void)
   g_assert_cmpint (r->kind, ==, GT_ERROR_NEEDS_CREDENTIALS); /* fails at once instead of prompting */
   wait_clear (&w);
 
-  GtCredentials wrong = { "u", "bad" };
+  GtCredentials wrong = { "u", "bad", NULL };
   const char *clone_b[] = { "clone", url, "cred-b", NULL };
   r = run (tmp, clone_b, GT_RUN_NETWORK, &wrong, 30000, NULL, &w);
   g_assert_cmpint (r->exit_status, !=, 0);
   g_assert_cmpint (r->kind, ==, GT_ERROR_AUTH_FAILED);
   wait_clear (&w);
 
-  GtCredentials right = { "u", "tok" };
+  GtCredentials right = { "u", "tok", NULL };
   const char *clone_c[] = { "clone", url, "cred-c", NULL };
   r = run (tmp, clone_c, GT_RUN_NETWORK, &right, 30000, NULL, &w);
   g_assert_cmpint (r->exit_status, ==, 0);

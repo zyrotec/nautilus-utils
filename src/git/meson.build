@@ -25,7 +25,9 @@ gt_resources = gnome.compile_resources('gt_resources', 'gt.gresource.xml', c_nam
 # Plain GTK widgets: the status bar (no Nautilus types).
 gt_ui_deps = gt_core_deps + [gtk_dep, adw_dep]
 gt_ui_lib = static_library('gt-ui',
+  'gt_auth.c',
   'gt_bar.c',
+  'gt_clone.c',
   gt_resources,
   c_args: gt_c_args,
   dependencies: gt_ui_deps,

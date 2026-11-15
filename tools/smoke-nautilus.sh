@@ -453,8 +453,29 @@ gt_round() {
   cmd "st-set git-status-bar true" 1; gt_expect 'bar=1'
   cmd "st-set git-enabled false" 1; cmd gt-dump 0.3
   cmd "st-set git-enabled true" 2; gt_expect 'bar=1'; gt_expect 'branch="main"'
+  # Clone Repository… (§14.2 items 5–6): into a folder outside any repository (the bar shows the clone there), the
+  # dialog's checks, then from a local smart-HTTP server with basic auth through the sign-in dialog.
+  # The driver splits "URL NAME" at a space, and this checkout's path has one: clone from a copy in the temp folder.
+  local src; src="$(mktemp -d "${TMPDIR:-/tmp}/nu-gt-src.XXXXXX")"; git clone -q --bare "$GT_DIR/remote.git" "$src/remote.git"
+  cmd "sd-open $plain" 2; cmd gt-clone-open 1
+  cmd "gt-clone not-a-url" 0.5; cmd "gt-clone $src/remote.git" 0.5           # a path, not a URL: refused
+  cmd "gt-clone file://$src/remote.git" 4; gt_expect 'bar=1'; gt_expect 'progress="Clone remote: done"'; gt_expect 'selected=remote'
+  [ -f "$GT_PLAIN/remote/README.md" ] && echo "gt clone: local OK" >> "$LOG/gt-checks" || echo "gt clone: local MISSING" >> "$LOG/gt-checks"
+  cmd gt-clone-open 1; cmd "gt-clone file://$src/remote.git" 0.5            # "remote" exists now: refused
+  ( cd "$GT_DIR" && git clone -q --bare remote.git srv/repo.git && git -C srv/repo.git config http.receivepack true )
+  local port_file="$GT_DIR/srv.port"
+  python3 -I "$ROOT/tests/git/data/authserver.py" "$GT_DIR/srv" > "$port_file" 2>/dev/null &
+  local srv_pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$port_file" ] && break; sleep 0.3; done
+  local port; port="$(head -1 "$port_file")"
+  cmd "gt-clone http://127.0.0.1:$port/repo.git authed" 4
+  cmd "gt-auth-expect Sign In to 127.0.0.1"; cmd "gt-auth u bad" 4
+  cmd "gt-auth-expect The remote refused them."; cmd "gt-auth u tok" 5
+  gt_expect 'progress="Clone authed: done"'; cmd gt-dump 1; gt_expect 'selected=authed'
+  [ -f "$GT_PLAIN/authed/README.md" ] && echo "gt clone: authed OK" >> "$LOG/gt-checks" || echo "gt clone: authed MISSING" >> "$LOG/gt-checks"
+  kill "$srv_pid" 2>/dev/null
   cmd "sd-open $DIR_URI" 2
-  rmdir "$GT_PLAIN" 2>/dev/null || true
+  rm -rf "$GT_PLAIN" "$src"
 }
 
 if [ -n "$AUTO" ] && [ "${SMOKE_ONLY:-}" = gt ]; then
@@ -628,7 +649,7 @@ n_fv_trans="$(grep -c 'transition: done' "$LOG/nautilus.log" || true)"
 if [ -n "$AUTO" ] && [ "$n_fv_checked" -eq 0 ]; then echo "FINDING: folder views never checked a tab"; fail=1; fi
 
 # Details pane: every expectation held; the button was shown; nothing of ours stays while switched off.
-gt_fail="$(grep -E 'gt expect FAIL|gt: unknown command' "$LOG/nautilus.log" || true)"
+gt_fail="$(grep -E 'gt expect FAIL|gt: unknown command' "$LOG/nautilus.log" || true)$(grep -h MISSING "$LOG/gt-checks" 2>/dev/null || true)"
 [ -z "$gt_fail" ] || { echo "FINDING: git:"; echo "$gt_fail" | head -10 | sed 's/^/    | /'; fail=1; }
 dp_fail="$(grep -E 'dp expect FAIL|dp: (no window|unknown command)' "$LOG/nautilus.log" || true)"
 [ -z "$dp_fail" ] || { echo "FINDING: details pane:"; echo "$dp_fail" | head -10 | sed 's/^/    | /'; fail=1; }

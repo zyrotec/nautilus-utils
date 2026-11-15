@@ -2370,3 +2370,29 @@ origin/HEAD left out, a root, a straight line, empty input). Driver `gt-card N`.
 leaves the screen (a row freed with the card attached made GTK warn). Smoke: 19 pane checks (card, mainline,
 history, chips, hover card with message and stats, modified item, two items, plain list), Git tab opened.
 - `check-safety.sh` all PASS; full ASan smoke **PASS** (folder views 86 / 0 wrong, details pane 67, git 45).
+
+### 14.12 Phase 5 results (2026-11-15) — Clone Repository…, sign-in
+
+- **Clone Repository…** (`gt_clone.c`; the menu item on the same provider type as the columns, so Files' module
+  test still finds every type an info provider): in the background menu of writable native folders when `git` is
+  installed (looked up once). Dialog: Repository URL (filled from the clipboard when it holds a Git URL and the field
+  is empty), Folder Name (from the URL until edited), "Into …", Clone (only for a cloneable URL and a free, plain
+  name; the reason is shown). Runs `git clone --progress -- URL NAME` as an operation in the folder; **outside a
+  repository the bar shows just the progress** (while a clone runs and for 2 min after); when it is done the new
+  folder is **selected** (retried while Files picks it up).
+- **Sign-in** (`gt_auth.c`, G3): an operation that failed because git needed credentials or they were refused opens
+  "Sign In to <host>" (host from git's message; GitHub: a personal-access-token hint and a link to create one) with
+  Username and Token; the operation runs again with them (one-shot helper, never the command line); refused again →
+  the dialog comes back ("The remote refused them."). **Remember**: with the user's own credential helper, git
+  stores them itself (said in the dialog); with `git-credential-libsecret` installed, a checkbox stores them in the
+  keyring and sets git's credential helper to libsecret (the user's global git config — only when ticked); with
+  neither (the owner's machine now) the dialog says they are used this time only and how to have them remembered.
+  The bar uses it for push / pull / sync, the clone dialog for clones.
+- Operations keep their command for a retry (`gt_ops_retry`), git's raw message (the sign-in target) and when they
+  finished.
+- Smoke (52 git checks): the dialog refuses "not-a-url" and a plain path; a local clone into a folder outside any
+  repository (bar shown with the progress, folder selected); the same name again is refused; a clone from the local
+  smart-HTTP server with basic auth: dialog → wrong token → "refused" → right token → cloned and selected. (The
+  driver splits "URL NAME" at a space and this checkout's path has one, so the clone source is copied to the temp
+  folder.)
+- `check-safety.sh` all PASS; full ASan smoke **PASS** (folder views 86 / 0 wrong, details pane 67, git 52).

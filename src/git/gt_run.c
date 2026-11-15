@@ -62,8 +62,14 @@ gt_run_result_free (GtRunResult *result)
 gboolean
 gt_run_have_git (void)
 {
-  g_autofree char *path = g_find_program_in_path ("git");
-  return path != NULL;
+  /* Asked for every folder's background menu: looked up once. */
+  static int have = -1;
+  if (have < 0)
+    {
+      g_autofree char *path = g_find_program_in_path ("git");
+      have = path != NULL;
+    }
+  return have;
 }
 
 static void
@@ -223,8 +229,17 @@ gt_run_async (const char          *cwd,
   if (flags & GT_RUN_READ)
     g_strv_builder_add (argv, "--no-optional-locks");
   gboolean creds = credentials != NULL && credentials->username != NULL && credentials->token != NULL;
+  g_autofree char *store = NULL;
   if (creds)
-    g_strv_builder_add_many (argv, "-c", CRED_HELPER, NULL);
+    {
+      g_strv_builder_add_many (argv, "-c", CRED_HELPER, NULL);
+      /* After ours: asked for nothing ours answers, but told to store them when the run succeeds. */
+      if (credentials->store_helper != NULL && *credentials->store_helper != '\0')
+        {
+          store = g_strdup_printf ("credential.helper=%s", credentials->store_helper);
+          g_strv_builder_add_many (argv, "-c", store, NULL);
+        }
+    }
   for (int i = 0; args[i] != NULL; i++)
     g_strv_builder_add (argv, args[i]);
   g_auto (GStrv) av = g_strv_builder_end (argv);

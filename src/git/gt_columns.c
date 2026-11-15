@@ -3,6 +3,8 @@
 
 #include <string.h>
 
+#include "gt_clone.h"
+#include "gt_hook.h"
 #include "gt_info.h"
 #include "gt_repo.h"
 #include "gt_run.h"
@@ -71,10 +73,13 @@ static guint       sweep_id;
 
 static void column_iface_init (NautilusColumnProviderInterface *iface);
 static void info_iface_init (NautilusInfoProviderInterface *iface);
+static void menu_iface_init (NautilusMenuProviderInterface *iface);
 
+/* One type for Files' public providers: the Git columns and "Clone Repository…" (PLAN.md §14.2 items 3, 5). */
 G_DEFINE_DYNAMIC_TYPE_EXTENDED (GtColumns, gt_columns, G_TYPE_OBJECT, G_TYPE_FLAG_FINAL,
                                 G_IMPLEMENT_INTERFACE_DYNAMIC (NAUTILUS_TYPE_COLUMN_PROVIDER, column_iface_init)
-                                G_IMPLEMENT_INTERFACE_DYNAMIC (NAUTILUS_TYPE_INFO_PROVIDER, info_iface_init))
+                                G_IMPLEMENT_INTERFACE_DYNAMIC (NAUTILUS_TYPE_INFO_PROVIDER, info_iface_init)
+                                G_IMPLEMENT_INTERFACE_DYNAMIC (NAUTILUS_TYPE_MENU_PROVIDER, menu_iface_init))
 
 /* ---- columns ---- */
 
@@ -463,6 +468,48 @@ info_iface_init (NautilusInfoProviderInterface *iface)
 {
   iface->update_file_info = update_file_info;
   iface->cancel_update = cancel_update;
+}
+
+/* ---- "Clone Repository…" in the folder's background menu ---- */
+
+static void
+on_cloned (const char *folder, const char *name, gpointer data)
+{
+  (void) data;
+  gt_hook_reveal (folder, name); /* select the new folder where it was cloned */
+}
+
+static void
+on_clone_activate (NautilusMenuItem *item, gpointer data)
+{
+  (void) data;
+  const char *folder = g_object_get_data (G_OBJECT (item), "gt-folder");
+  GApplication *app = g_application_get_default ();
+  GtkWindow *window = GTK_IS_APPLICATION (app) ? gtk_application_get_active_window (GTK_APPLICATION (app)) : NULL;
+  gt_clone_dialog_present (window != NULL ? GTK_WIDGET (window) : NULL, folder, on_cloned, NULL);
+}
+
+static GList *
+get_background_items (NautilusMenuProvider *provider, NautilusFileInfo *folder)
+{
+  (void) provider;
+  if (!enabled || folder == NULL || !nautilus_file_info_can_write (folder))
+    return NULL;
+  g_autoptr (GFile) location = nautilus_file_info_get_location (folder);
+  g_autofree char *path = location != NULL && g_file_is_native (location) ? g_file_get_path (location) : NULL;
+  if (path == NULL || !gt_run_have_git ())
+    return NULL;
+  NautilusMenuItem *item = nautilus_menu_item_new ("NuGit::clone", "Clone Repository…",
+                                                   "Clone a Git repository into this folder", NULL);
+  g_object_set_data_full (G_OBJECT (item), "gt-folder", g_steal_pointer (&path), g_free);
+  g_signal_connect (item, "activate", G_CALLBACK (on_clone_activate), NULL);
+  return g_list_append (NULL, item);
+}
+
+static void
+menu_iface_init (NautilusMenuProviderInterface *iface)
+{
+  iface->get_background_items = get_background_items;
 }
 
 static void gt_columns_class_init (GtColumnsClass *klass) { (void) klass; }
