@@ -293,9 +293,9 @@
       <summary>Show the small icon next to the name</summary>
     </key>
 
-    <key name="details-pane-stack-folder-look" type="b">
+    <key name="details-pane-preview-backdrop" type="b">
       <default>false</default>
-      <summary>Several selected: use the folder previews' thumbnail look (border, corners, …)</summary>
+      <summary>Fill the preview box behind a picture with a blurred, darker copy of it</summary>
     </key>
 
     <key name="details-pane-preview-radius" type="i">
@@ -339,6 +339,33 @@
     <key name="details-pane-stack-card" type="b">
       <default>true</default>
       <summary>Several selected: a translucent card behind items without a thumbnail</summary>
+    </key>
+
+    <key name="details-pane-stack-border" type="b">
+      <default>false</default>
+      <summary>Several selected: a border around pictures, videos and PDFs (never around icons or folders)</summary>
+    </key>
+
+    <key name="details-pane-stack-border-colour" type="s">
+      <default>'#ffffff'</default>
+      <summary>Several selected: border colour (#rrggbb)</summary>
+    </key>
+
+    <key name="details-pane-stack-border-width" type="d">
+      <range min="0.5" max="8.0"/>
+      <default>2.0</default>
+      <summary>Several selected: border width in pixels</summary>
+    </key>
+
+    <key name="details-pane-stack-corner-radius" type="i">
+      <range min="0" max="32"/>
+      <default>4</default>
+      <summary>Several selected: corner radius of pictures, videos and PDFs in pixels</summary>
+    </key>
+
+    <key name="details-pane-stack-media-square" type="b">
+      <default>false</default>
+      <summary>Several selected: pictures, videos and PDFs as squares the size of the icons</summary>
     </key>
 
     <!-- Folder icons by name (PLAN.md §12.4). -->

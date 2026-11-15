@@ -74,13 +74,18 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_cmpint (a->details_pane_media_fit, ==, b->details_pane_media_fit);
   g_assert_cmpint (a->details_pane_title_centered, ==, b->details_pane_title_centered);
   g_assert_cmpint (a->details_pane_show_icon, ==, b->details_pane_show_icon);
-  g_assert_cmpint (a->details_pane_stack_folder_look, ==, b->details_pane_stack_folder_look);
+  g_assert_cmpint (a->details_pane_preview_backdrop, ==, b->details_pane_preview_backdrop);
   g_assert_cmpint (a->details_pane_stack_depth, ==, b->details_pane_stack_depth);
   g_assert_cmpint (a->details_pane_stack_shadow, ==, b->details_pane_stack_shadow);
   g_assert_cmpint (a->details_pane_stack_rotation, ==, b->details_pane_stack_rotation);
   g_assert_cmpint (a->details_pane_stack_keep_aspect, ==, b->details_pane_stack_keep_aspect);
   g_assert_cmpint (a->details_pane_stack_fade, ==, b->details_pane_stack_fade);
   g_assert_cmpint (a->details_pane_stack_card, ==, b->details_pane_stack_card);
+  g_assert_cmpint (a->details_pane_stack_border, ==, b->details_pane_stack_border);
+  g_assert_cmpmem (&a->details_pane_stack_border_colour, sizeof (NuRgb), &b->details_pane_stack_border_colour, sizeof (NuRgb));
+  g_assert_cmpfloat (a->details_pane_stack_border_width, ==, b->details_pane_stack_border_width);
+  g_assert_cmpint (a->details_pane_stack_corner_radius, ==, b->details_pane_stack_corner_radius);
+  g_assert_cmpint (a->details_pane_stack_media_square, ==, b->details_pane_stack_media_square);
   g_assert_cmpstr (a->preview_folder_icon, ==, b->preview_folder_icon);
   g_assert_cmpstr (a->preview_overlay_icon, ==, b->preview_overlay_icon);
 }
@@ -297,7 +302,9 @@ test_each_group (void)
     { "details-pane-stack-card", NU_CHANGED_DP_LOOK },
     { "details-pane-title-centered", NU_CHANGED_DP_LOOK },
     { "details-pane-show-icon", NU_CHANGED_DP_LOOK },
-    { "details-pane-stack-folder-look", NU_CHANGED_DP_LOOK },
+    { "details-pane-preview-backdrop", NU_CHANGED_DP_LOOK },
+    { "details-pane-stack-border", NU_CHANGED_DP_LOOK },
+    { "details-pane-stack-media-square", NU_CHANGED_DP_LOOK },
   };
   g_autoptr (GSettingsBackend) backend = start ();
   g_autoptr (GSettings) s = direct_settings (backend);

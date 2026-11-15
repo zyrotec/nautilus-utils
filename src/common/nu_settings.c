@@ -57,13 +57,18 @@ static const NuConfig defaults = {
   .details_pane_media_fit = NU_MEDIA_FIT_SHAPE,
   .details_pane_title_centered = FALSE,
   .details_pane_show_icon = TRUE,
-  .details_pane_stack_folder_look = FALSE,
+  .details_pane_preview_backdrop = FALSE,
   .details_pane_stack_depth = NU_DEPTH_BLUR,
   .details_pane_stack_shadow = TRUE,
   .details_pane_stack_rotation = TRUE,
   .details_pane_stack_keep_aspect = TRUE,
   .details_pane_stack_fade = 0,
   .details_pane_stack_card = TRUE,
+  .details_pane_stack_border = FALSE,
+  .details_pane_stack_border_colour = { 0xff, 0xff, 0xff },
+  .details_pane_stack_border_width = 2.0,
+  .details_pane_stack_corner_radius = 4,
+  .details_pane_stack_media_square = FALSE,
 };
 
 /* Key name → group reported to listeners. */
@@ -126,12 +131,17 @@ static const struct
   { "details-pane-media-fit", NU_CHANGED_DP_LOOK },
   { "details-pane-title-centered", NU_CHANGED_DP_LOOK },
   { "details-pane-show-icon", NU_CHANGED_DP_LOOK },
-  { "details-pane-stack-folder-look", NU_CHANGED_DP_LOOK },
+  { "details-pane-preview-backdrop", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-shadow", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-rotation", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-keep-aspect", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-fade", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-card", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-border", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-border-colour", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-border-width", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-corner-radius", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-media-square", NU_CHANGED_DP_LOOK },
 };
 
 typedef struct
@@ -314,7 +324,7 @@ read_all (void)
                                 ? NU_MEDIA_FIT_BOX : NU_MEDIA_FIT_SHAPE;
   c->details_pane_title_centered = g_settings_get_boolean (s, "details-pane-title-centered");
   c->details_pane_show_icon = g_settings_get_boolean (s, "details-pane-show-icon");
-  c->details_pane_stack_folder_look = g_settings_get_boolean (s, "details-pane-stack-folder-look");
+  c->details_pane_preview_backdrop = g_settings_get_boolean (s, "details-pane-preview-backdrop");
   c->details_pane_icon_size = CLAMP ((g_settings_get_int (s, "details-pane-icon-size") + 8) / 16 * 16, 16, 256);
   int sdepth = g_settings_get_enum (s, "details-pane-stack-depth-effect");
   c->details_pane_stack_depth = (sdepth >= NU_DEPTH_NONE && sdepth <= NU_DEPTH_DARKEN)
@@ -324,6 +334,12 @@ read_all (void)
   c->details_pane_stack_keep_aspect = g_settings_get_boolean (s, "details-pane-stack-keep-aspect");
   c->details_pane_stack_fade = g_settings_get_int (s, "details-pane-stack-fade");
   c->details_pane_stack_card = g_settings_get_boolean (s, "details-pane-stack-card");
+  c->details_pane_stack_border = g_settings_get_boolean (s, "details-pane-stack-border");
+  read_colour (s, "details-pane-stack-border-colour", defaults.details_pane_stack_border_colour,
+               &c->details_pane_stack_border_colour);
+  c->details_pane_stack_border_width = CLAMP (g_settings_get_double (s, "details-pane-stack-border-width"), 0.5, 8.0);
+  c->details_pane_stack_corner_radius = CLAMP (g_settings_get_int (s, "details-pane-stack-corner-radius"), 0, 32);
+  c->details_pane_stack_media_square = g_settings_get_boolean (s, "details-pane-stack-media-square");
 }
 
 static gboolean

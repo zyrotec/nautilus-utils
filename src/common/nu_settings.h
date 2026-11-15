@@ -169,13 +169,18 @@ typedef struct
   NuMediaFit      details_pane_media_fit;
   gboolean        details_pane_title_centered;
   gboolean        details_pane_show_icon;
-  gboolean        details_pane_stack_folder_look;
+  gboolean        details_pane_preview_backdrop;
   NuDepthEffect   details_pane_stack_depth;
   gboolean        details_pane_stack_shadow;
   gboolean        details_pane_stack_rotation;
   gboolean        details_pane_stack_keep_aspect;
   int             details_pane_stack_fade;
   gboolean        details_pane_stack_card;
+  gboolean        details_pane_stack_border;
+  NuRgb           details_pane_stack_border_colour;
+  double          details_pane_stack_border_width; /* px, 0.5 … 8 */
+  int             details_pane_stack_corner_radius;
+  gboolean        details_pane_stack_media_square;
 } NuConfig;
 
 #define NU_DETAILS_PANE_WIDTH_MIN 260
