@@ -89,7 +89,9 @@ test_info_file (void)
   g_assert_cmpstr (dp_group_find (d, "Type")->tooltip, ==, "image/jpeg");
   g_assert_nonnull (dp_group_find (d, "Size"));
   g_assert_cmpstr (dp_group_find (d, "Location")->value, ==, work);
-  g_assert_true (g_str_has_prefix (dp_group_find (d, "Modified")->value, "Today, "));
+  /* The wording ("Today, …", "Yesterday, …", a date) is dp_format_date's, tested there: just present here. */
+  g_assert_nonnull (dp_group_find (d, "Modified"));
+  g_assert_cmpstr (dp_group_find (d, "Modified")->value, !=, "");
   g_assert_null (dp_group_find (d, "Contents"));
   g_assert_null (dp_group_find (d, "Link target"));
 }

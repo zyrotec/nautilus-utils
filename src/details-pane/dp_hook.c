@@ -803,9 +803,10 @@ debug_select (WinHook *hook, const char *arg)
     gtk_selection_model_select_all (model);
   else if (g_str_equal (arg, "none"))
     gtk_selection_model_unselect_all (model);
-  else if (g_str_has_prefix (arg, "name "))
+  else if (g_str_has_prefix (arg, "name ") || g_str_has_prefix (arg, "add "))
     {
-      const char *name = arg + 5;
+      gboolean add = g_str_has_prefix (arg, "add ");
+      const char *name = arg + (add ? 4 : 5);
       for (guint i = 0; i < n; i++)
         {
           g_autoptr (GObject) item = g_list_model_get_item (G_LIST_MODEL (model), i);
@@ -813,7 +814,7 @@ debug_select (WinHook *hook, const char *arg)
           g_autofree char *base = f != NULL ? g_file_get_basename (f) : NULL;
           if (g_strcmp0 (base, name) == 0)
             {
-              gtk_selection_model_select_item (model, i, TRUE);
+              gtk_selection_model_select_item (model, i, !add); /* "add": keep the others selected */
               return;
             }
         }

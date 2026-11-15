@@ -48,7 +48,8 @@ files_from_args (int argc, char **argv)
 static void
 demo_style (void)
 {
-  DpPaneStyle st = { TRUE, 0, 18, 0, 12, 0, 1, TRUE, TRUE, TRUE, 0, TRUE, 128 };
+  DpPaneStyle st = { TRUE, 0, 18, 0, 12, 0, 1, TRUE, TRUE, TRUE, 0, TRUE, 128, FALSE, FALSE, TRUE, FALSE, { 0 } };
+  fp_style_init_default (&st.fp_style);
   g_auto (GStrv) parts = g_strsplit (g_getenv ("DP_DEMO_STYLE") != NULL ? g_getenv ("DP_DEMO_STYLE") : "", " ", -1);
   for (guint i = 0; parts[i] != NULL; i++)
     {
@@ -69,6 +70,10 @@ demo_style (void)
       else if (g_str_equal (kv[0], "fade")) st.stack_fade = v;
       else if (g_str_equal (kv[0], "card")) st.stack_card = v;
       else if (g_str_equal (kv[0], "icon")) st.icon_size = v;
+      else if (g_str_equal (kv[0], "media_box")) st.media_box = v;
+      else if (g_str_equal (kv[0], "centre")) st.title_centered = v;
+      else if (g_str_equal (kv[0], "show_icon")) st.show_icon = v;
+      else if (g_str_equal (kv[0], "fp_look")) st.stack_fp_look = v;
     }
   dp_pane_set_style (&st);
 }

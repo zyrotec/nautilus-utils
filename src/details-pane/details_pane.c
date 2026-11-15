@@ -37,7 +37,13 @@ apply_look (void)
     .stack_fade = c->details_pane_stack_fade,
     .stack_card = c->details_pane_stack_card,
     .icon_size = c->details_pane_icon_size,
+    .media_box = c->details_pane_media_fit == NU_MEDIA_FIT_BOX,
+    .title_centered = c->details_pane_title_centered,
+    .show_icon = c->details_pane_show_icon,
+    .stack_fp_look = c->details_pane_stack_folder_look,
   };
+  if (!fp_view_hook_get_style (&st.fp_style))
+    fp_style_init_default (&st.fp_style);
   dp_pane_set_style (&st);
   dp_hook_set_look (c->details_pane_position == NU_PANE_BOTTOM, c->details_pane_header_border);
 }
@@ -47,7 +53,8 @@ on_settings_changed (NuChanged changed, gpointer data)
 {
   (void) data;
   const NuConfig *c = nu_settings_get ();
-  if (changed & NU_CHANGED_DP_LOOK)
+  /* Folder preview look changes reach the pane's stack too (P22); folder-preview's own listener ran first. */
+  if (changed & (NU_CHANGED_DP_LOOK | NU_CHANGED_PREVIEW_STYLE))
     apply_look ();
   if (changed & NU_CHANGED_DP_STATE)
     dp_hook_set_state (c->details_pane_visible, c->details_pane_width, c->details_pane_height);

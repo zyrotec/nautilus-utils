@@ -18,6 +18,7 @@
 
 #define ICON_BOX_SPACE    48  /* px: the icon box is the icon size plus this (right layout) */
 #define MEDIA_MAX_HEIGHT  300 /* px: the tallest a media box gets at the right */
+#define FIXED_BOX_HEIGHT  220 /* px: the box when media sit flush inside a fixed box (P20) */
 #define ICON_CARD_PX      256 /* px: an icon card of the multi-selection stack (PLAN.md §13.10 P11) */
 #define HEADER_ICON_SIZE  32
 
@@ -60,6 +61,8 @@ struct _DpPane
   DpSummary      *summary;       /* Owned or NULL: multiple selection */
   GdkPaintable   *still;         /* Owned or NULL: the preview when no video plays */
   gboolean        stack_icons;   /* The stack being drawn has only icons (box at its own size, not stretched) */
+  GPtrArray      *stack_folders; /* Owned or NULL: folder-preview paintables drawn into the stack (P23) */
+  guint           restack_id;    /* Idle redrawing the stack once a folder's preview arrived, or 0 */
   const char     *preview_kind;  /* Static: "none", "icon", "thumbnail", "folder-preview", "stack", "video" */
   GtkMediaStream *media;         /* Owned or NULL: the playing video */
 };
@@ -615,8 +618,18 @@ sync_box (DpPane *self)
       int scale = gtk_widget_get_scale_factor (GTK_WIDGET (self));
       icon_h = gdk_paintable_get_intrinsic_height (self->still) / MAX (scale, 1) + 24;
     }
+  gboolean media = is_media_kind (self->preview_kind) && self->still != NULL;
+  if (pane_style.media_box)
+    {
+      /* P20: one fixed box for everything; a picture touches its edges on one side, centred on the other. */
+      dp_box_set_icon_height (DP_BOX (self->box), MAX (FIXED_BOX_HEIGHT, pane_style.icon_size + ICON_BOX_SPACE));
+      dp_box_set_ratio (DP_BOX (self->box), 0);
+      gtk_picture_set_content_fit (GTK_PICTURE (self->picture),
+                                   media ? GTK_CONTENT_FIT_CONTAIN : GTK_CONTENT_FIT_SCALE_DOWN);
+      return;
+    }
   dp_box_set_icon_height (DP_BOX (self->box), icon_h);
-  if (is_media_kind (self->preview_kind) && self->still != NULL)
+  if (media)
     ratio = gdk_paintable_get_intrinsic_aspect_ratio (self->still); /* the video keeps its poster's shape */
   dp_box_set_ratio (DP_BOX (self->box), ratio);
   gtk_picture_set_content_fit (GTK_PICTURE (self->picture),
@@ -697,13 +710,14 @@ start_preview (DpPane *self)
  * Main thread (icon theme). Drawn with cairo: icon paintables only produce texture/mask nodes, which it
  * renders. */
 static GdkTexture *
-icon_card (DpPane *self, const DpInfo *info, int w, int h, int content, int top)
+icon_card (DpPane *self, const DpInfo *info, GdkPaintable *art, int w, int h, int content, int top)
 {
   content = CLAMP (content, 1, MIN (w, h));
   top = CLAMP (top, 0, h - content);
   int icon_px = pane_style.stack_card ? content * 3 / 4 : content;
   int scale = gtk_widget_get_scale_factor (GTK_WIDGET (self));
-  g_autoptr (GdkPaintable) icon = icon_paintable (self, info->icon, MAX (icon_px / scale, 1));
+  /* @art: a folder's preview (P23); otherwise the file's icon. */
+  g_autoptr (GdkPaintable) icon = art != NULL ? g_object_ref (art) : icon_paintable (self, info->icon, MAX (icon_px / scale, 1));
   GtkSnapshot *snap = gtk_snapshot_new (); /* consumed below */
   float x0 = (w - content) / 2.0f, y0 = (float) top;
   if (pane_style.stack_card)
@@ -772,6 +786,46 @@ stack_width (DpPane *self, const FpStyle *style, gboolean icons_only)
   return CLAMP (full, 60, 420);
 }
 
+static void start_stack (DpPane *self);
+
+static gboolean
+restack_idle (gpointer data)
+{
+  DpPane *self = data;
+  self->restack_id = 0;
+  if (self->summary != NULL)
+    start_stack (self);
+  return G_SOURCE_REMOVE;
+}
+
+/* A folder's preview arrived: draw the stack again (once; the frame is in the cache by then). */
+static void
+on_folder_art_changed (GdkPaintable *art, gpointer data)
+{
+  (void) art;
+  DpPane *self = data;
+  if (self->restack_id == 0)
+    self->restack_id = g_timeout_add (60, restack_idle, self);
+}
+
+/* P23: a folder with a folder preview is drawn with its pictures (new ref), else NULL (its icon). */
+static GdkPaintable *
+stack_folder_art (DpPane *self, const DpInfo *info, int content_px)
+{
+  if (!info->is_dir || info->custom_icon || folder_renderer == NULL)
+    return NULL;
+  int scale = gtk_widget_get_scale_factor (GTK_WIDGET (self));
+  int size = MAX (content_px / MAX (scale, 1), 16);
+  g_autoptr (GdkPaintable) folder_icon = icon_paintable (self, info->icon, size);
+  GdkPaintable *art = folder_icon != NULL ? folder_renderer (info->file, folder_icon, size, scale) : NULL;
+  if (art != NULL)
+    {
+      g_ptr_array_add (self->stack_folders, g_object_ref (art));
+      g_signal_connect (art, "invalidate-contents", G_CALLBACK (on_folder_art_changed), self);
+    }
+  return art;
+}
+
 /* Several selected: the folder-preview stack (P10) of the first items, rendered in a worker. The front item sits
  * at the bottom; icons get smaller towards the back like the cards (P18), the front one at the icon size. */
 static void
@@ -779,9 +833,22 @@ start_stack (DpPane *self)
 {
   guint n = MIN (self->summary->infos->len, DP_STACK_MAX);
   FpStyle style;
-  dp_stack_style_init (&style, pane_style.stack_depth, pane_style.stack_shadow, pane_style.stack_rotation,
-                       pane_style.stack_keep_aspect, pane_style.stack_fade);
+  if (pane_style.stack_fp_look)
+    {
+      /* P22: exactly the folder previews' thumbnails (border, colour, corners, shadow, depth…), stacked. */
+      style = pane_style.fp_style;
+      style.layout = FP_LAYOUT_STACKED;
+    }
+  else
+    dp_stack_style_init (&style, pane_style.stack_depth, pane_style.stack_shadow, pane_style.stack_rotation,
+                         pane_style.stack_keep_aspect, pane_style.stack_fade);
   style.bottom_align = TRUE;
+  g_clear_handle_id (&self->restack_id, g_source_remove);
+  if (self->stack_folders != NULL)
+    for (guint i = 0; i < self->stack_folders->len; i++)
+      g_signal_handlers_disconnect_by_data (g_ptr_array_index (self->stack_folders, i), self);
+  g_clear_pointer (&self->stack_folders, g_ptr_array_unref);
+  self->stack_folders = g_ptr_array_new_with_free_func (g_object_unref);
   int scale = gtk_widget_get_scale_factor (GTK_WIDGET (self));
   /* Pictures, videos, PDFs may have thumbnails (full width); folders and other files are icons. */
   gboolean icons_only = TRUE;
@@ -810,7 +877,15 @@ start_stack (DpPane *self)
       double x, y, cw, ch;
       fp_composite_card_rect (i, width, &x, &y, &cw, &ch);
       double top = front_top - i * peek; /* where this icon's top should be, in frame pixels */
-      cards[i] = icon_card (self, info, MAX ((int) cw, 8), MAX ((int) ch, 8), (int) size, (int) (top - y));
+      g_autoptr (GdkPaintable) art = stack_folder_art (self, info, (int) size);
+      if (pane_style.stack_fp_look)
+        {
+          /* Bordered like a photo: a card the icon's own size, all the same size, raised by the stack. */
+          int sq = MAX ((int) front, 8);
+          cards[i] = icon_card (self, info, art, sq, sq, sq, 0);
+        }
+      else
+        cards[i] = icon_card (self, info, art, MAX ((int) cw, 8), MAX ((int) ch, 8), (int) size, (int) (top - y));
       items[i].uri = info->uri;
       items[i].mtime = info->mtime_s;
       /* Existing thumbnails only: a selection of many files shouldn't start thumbnailers (D5). */
@@ -1096,6 +1171,11 @@ reset (DpPane *self)
   g_clear_pointer (&self->summary, dp_summary_free);
   self->has_count = FALSE;
   self->count_failed = FALSE;
+  g_clear_handle_id (&self->restack_id, g_source_remove);
+  if (self->stack_folders != NULL)
+    for (guint i = 0; i < self->stack_folders->len; i++)
+      g_signal_handlers_disconnect_by_data (g_ptr_array_index (self->stack_folders, i), self);
+  g_clear_pointer (&self->stack_folders, g_ptr_array_unref);
   self->details_w = self->perms_w = NULL;
   set_still (self, NULL, "none");
 }
@@ -1202,7 +1282,8 @@ dp_pane_describe (DpPane *self)
         }
       g_string_append_c (s, ']');
     }
-  g_string_append_printf (s, " box=%s", dp_box_get_ratio_is_media (DP_BOX (self->box)) ? "media" : "icon");
+  g_string_append_printf (s, " box=%s stack-art=%s", dp_box_get_ratio_is_media (DP_BOX (self->box)) ? "media" : "icon",
+                          self->stack_folders != NULL && self->stack_folders->len > 0 ? "yes" : "no");
   return g_string_free (s, FALSE);
 }
 
@@ -1245,7 +1326,13 @@ apply_style (DpPane *self)
   int strip = MAX (self->preferred_height - 2 * pane_style.padding, 24);
   dp_box_set_max_height (DP_BOX (self->box), bottom ? strip : MEDIA_MAX_HEIGHT);
   gtk_widget_set_valign (self->box, bottom ? GTK_ALIGN_FILL : GTK_ALIGN_START);
-  gtk_widget_set_visible (self->icon, !bottom); /* the box is the icon there */
+  gtk_widget_set_visible (self->icon, !bottom && pane_style.show_icon); /* the box is the icon at the bottom */
+  /* P21: centred name and type (right layout). */
+  gboolean centre = pane_style.title_centered && !bottom;
+  gtk_label_set_xalign (GTK_LABEL (self->title), centre ? 0.5f : 0.0f);
+  gtk_label_set_xalign (GTK_LABEL (self->subtitle), centre ? 0.5f : 0.0f);
+  gtk_label_set_justify (GTK_LABEL (self->title), centre ? GTK_JUSTIFY_CENTER : GTK_JUSTIFY_LEFT);
+  gtk_label_set_justify (GTK_LABEL (self->subtitle), centre ? GTK_JUSTIFY_CENTER : GTK_JUSTIFY_LEFT);
   gtk_widget_set_visible (self->groups, !bottom);
   gtk_widget_set_visible (self->pairs, bottom);
   gtk_widget_set_valign (self->names, bottom ? GTK_ALIGN_CENTER : GTK_ALIGN_FILL);
@@ -1277,6 +1364,8 @@ dp_pane_set_style (const DpPaneStyle *style)
                            style->stack_keep_aspect != pane_style.stack_keep_aspect ||
                            style->stack_fade != pane_style.stack_fade || style->stack_card != pane_style.stack_card;
   gboolean icon_changed = style->icon_size != pane_style.icon_size;
+  stack_changed = stack_changed || style->stack_fp_look != pane_style.stack_fp_look ||
+                  (style->stack_fp_look && !fp_style_equal (&style->fp_style, &pane_style.fp_style));
   pane_style = *style;
   pane_style.icon_size = CLAMP (pane_style.icon_size, 16, 256);
   pane_style.padding = CLAMP (pane_style.padding, 0, 64);
@@ -1286,6 +1375,7 @@ dp_pane_set_style (const DpPaneStyle *style)
     {
       DpPane *pane = g_ptr_array_index (panes, i);
       apply_style (pane);
+      sync_box (pane);
       if ((stack_changed || icon_changed) && pane->summary != NULL)
         start_stack (pane);
       else if (icon_changed && pane->info != NULL)
