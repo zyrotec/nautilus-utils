@@ -78,6 +78,7 @@ subdir('tests/sidebar-drives')
 subdir('tests/folder-views')
 subdir('tests/folder-icons')
 subdir('tests/details-pane')
+subdir('tests/git')
 
 summary({
   'extensiondir': extensiondir,

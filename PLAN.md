@@ -2231,3 +2231,22 @@ modified, added, untracked, ignored, a folder with changes).
    inside repositories, since Files asks the info provider about every folder.
 7. **Found in the spike:** `gtk_window_get_toplevels()` is borrowed — unref'ing it (a `g_autoptr`) broke Files'
    window list and crashed the next user of it; optimised `-Warray-bounds` caught reading past an empty string.
+
+### 14.6 Phase 1 results (2026-11-15)
+
+- `src/git/` core library `gt-core` (GLib/GIO only): `gt_parse.c` (porcelain v2 status with branch / upstream /
+  ahead-behind, per-path state with "contains changes" for folders and the state of untracked / ignored folders for
+  what is inside them; branches from `for-each-ref`; last commit per item of a folder from one `log --name-only -z`
+  walk, refcounted commits; error kinds; progress lines; clone URL validation and folder name), `gt_repo.c`
+  (repository root by stat only, `.git` files for worktrees / submodules, stops at filesystem boundaries; relative
+  paths), `gt_run.c` (async `git`: LC_ALL=C, own session — no terminal —, prompts and askpass off, optional locks off
+  for reads, progress lines to a callback and out of the error text, timeout and cancel, one-shot credentials from
+  the child's environment).
+- Found by the tests: killing git on a timeout left its children (here `sleep`; in real use ssh / remote helpers)
+  holding the pipes, so the run never ended → the whole process group is killed (git leads its own session), only
+  while something still holds the pipes (never a reused id).
+- Tests: `test-gt-parse` (6) and `test-gt-git` (5: detection incl. a linked worktree and a fake `.git`; status / log /
+  branches on a real repository, no `index.lock` left; a failing command; timeout and cancel incl. before start;
+  progress over file:// clone; credentials against the local smart-HTTP server: none → needs credentials, wrong →
+  refused, right → clone + push, nothing kept afterwards). Tests run git without the user's configuration.
+- `check-safety.sh` all PASS; coverage gt_parse 92 %, gt_repo 89 %, gt_run 96 %.
