@@ -231,8 +231,8 @@ file or folder and its properties. Drag its left edge to resize it.
 - ↔️ **Right or bottom:** at the bottom it becomes a short summary strip like Windows 7 — thumbnail, name and
   type, then a few key properties in columns; drag its top edge to change the height.
 - 🎨 **Look:** border on/off, margin (the pane then floats as a card), padding and corner radius; the preview
-  box's corner radius and margin; an optional line under Files' header bar while the pane is shown (not under
-  the sidebar's header).
+  box's corner radius and margin; an optional line under Files' header bar while the pane is shown, meeting the
+  pane's border (below the tab bar when several tabs are open; not under the sidebar's header).
 - 🪟 Shown or hidden in every window at once, and remembered (also its width). Hidden while the window is too
   narrow for the header's view buttons.
 
@@ -244,6 +244,8 @@ file or folder and its properties. Drag its left edge to resize it.
   looks as before.
 - Network and other non-local files show the general details only (no media details, no new thumbnails).
 - EXIF details need gexiv2 0.16 and PDF details poppler-glib at build time; without them those rows are missing.
+- The button sits directly left of a separate View Options (⋮) button, as some extensions add one to the view
+  controls; with stock Files (a split button) it sits left of the view switcher.
 - Another extension's own views (e.g. a column view drawn by a Python extension) only update the pane as far as
   that extension reports its selection to Files.
 
@@ -529,6 +531,9 @@ tools/smoke-nautilus.sh DIR              # isolated real Nautilus with an ASan b
 tools/smoke-nautilus.sh --auto 120 DIR   # unattended: scripted scroll/zoom/hover + sidebar steps + self-checks
 SMOKE_FAKE_NETWORK="User Drive" tools/smoke-nautilus.sh --auto 120 DIR   # also exercise the network list
 SMOKE_TOGGLES=5 tools/smoke-nautilus.sh --auto 60 DIR   # fewer settings on/off rounds (default 25)
+SMOKE_ONLY=dp tools/smoke-nautilus.sh --auto 20 DIR      # only the details-pane round
+SMOKE_PERF=1 SMOKE_ONLY=dp tools/smoke-nautilus.sh --auto 20 DIR   # optimised build, no sanitizers: timings + thumbnail checks
+DP_STALL_SAMPLER=1 SMOKE_PERF=1 SMOKE_ONLY=dp tools/smoke-nautilus.sh --auto 20 DIR   # log where slow pane steps wait
 ```
 
 Logs land in `safety-logs/`. The smoke test drives the settings (colours, show/hide, sliding eject,
