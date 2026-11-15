@@ -14,6 +14,7 @@
 # SMOKE_XDG_CACHE=DIR: give the test Nautilus its own cache dir (thumbnails + frames), e.g. the benchmark's.
 # SMOKE_FAKE_NETWORK=LABEL: show that local drive as a network share in the sidebar (exercises the network
 #   list; the smoke test never ejects anything).
+# DP_STALL_SAMPLER=1: log where slow details-pane main-thread steps were (stacks sampled every ms, PLAN.md §13.14).
 # SMOKE_PERF=1: an optimised build WITHOUT sanitizers (timings only, e.g. the details pane's main-thread steps,
 #   PLAN.md §13.9 Phase 5); sanitizer checks then find nothing by construction.
 # SMOKE_ONLY=dp (--auto only): run just the details-pane round (fast iteration on that feature).
@@ -124,6 +125,7 @@ cp "$ROOT"/tests/details-pane/data/{photo.jpg,pic.png} "$DP_TREE/pics/"
     G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings folder-views folder-icons details-pane" \
     GSETTINGS_BACKEND=memory GSETTINGS_SCHEMA_DIR="$ROOT/build/data" \
     GST_PLUGIN_FEATURE_RANK="fakeaudiosink:MAX" \
+    DP_STALL_SAMPLER="${DP_STALL_SAMPLER:-}" \
     SD_DEBUG_FAKE_NETWORK="${SMOKE_FAKE_NETWORK:-}" \
     FP_DEBUG_DIR="$CMD_DIR" FP_DEBUG_ROOT="$DIR" ${SMOKE_XDG_CACHE:+"XDG_CACHE_HOME=$SMOKE_XDG_CACHE"} \
     nautilus --new-window "$DIR" >"$LOG/nautilus.log" 2>&1 &
@@ -309,15 +311,33 @@ dp_round() {
   cmd "st-set details-pane-title-centered true" 0.5; cmd "st-set details-pane-show-icon false" 0.5
   cmd "st-set details-pane-media-fit 'box'" 0.5; dp_pick photo.jpg; dp_expect 'Camera=Canon EOS R6'
   cmd "dp-png $LOG/dp-centred.png" 1
-  cmd "st-set details-pane-stack-folder-look true" 1; cmd "dp-select all" 3; dp_expect 'preview=stack'
-  dp_expect 'stack-art=yes'; cmd "dp-png $LOG/dp-folder-look.png" 1
-  # DIR's own picture folders (thumbnails already cached there): folders drawn with their pictures in the stack.
-  cmd "sd-open $DIR_URI" 3; cmd "dp-select all" 4; cmd "dp-png $LOG/dp-folder-art.png" 1; cmd "dp-select none" 1
-  cmd "st-reset details-pane-stack-folder-look" 1
-  cmd "dp-select name Wallpapers" 1; cmd "dp-select add Screenshots" 4; cmd "dp-png $LOG/dp-folder-art2.png" 1
-  cmd "dp-select none" 1
+  # v5 (§13.14): the stack is live layers; adding to a selection keeps it on screen (no reset in between).
+  cmd "dp-select name photo.jpg" 0.5; cmd "dp-select add pic.png" 2; dp_expect 'stack=cards:2'
+  cmd "dp-select add notes.txt" 0.05; dp_expect 'preview=stack'; cmd dp-dump 1.5; dp_expect 'stack=cards:3'
+  cmd "st-set details-pane-stack-media-square true" 1; dp_expect 'stack=icons:3'
+  cmd "st-set details-pane-stack-border true" 0.5; cmd "st-set details-pane-stack-border-colour '#e01b24'" 0.5
+  cmd "st-set details-pane-stack-border-width 6.5" 0.5; cmd "st-set details-pane-stack-corner-radius 20" 0.5
+  cmd "st-set details-pane-stack-fade 50" 0.5; cmd "st-set details-pane-stack-media-square false" 1
+  dp_expect 'stack=cards:3'
+  cmd "dp-select all" 3; dp_expect 'stack-art=yes'; dp_expect 'stack=cards:3'; cmd "dp-png $LOG/dp-stack-mixed.png" 1
+  # DIR's own picture folders (thumbnails already cached there): folders with their pictures, plain (no border).
+  cmd "sd-open $DIR_URI" 3
+  cmd "dp-select name Wallpapers" 1; cmd "dp-select add Screenshots" 4; dp_expect 'stack=icons:2'
+  dp_expect 'stack-art=yes'; cmd "dp-png $LOG/dp-folder-art.png" 1
+  # Pictures with thumbnails: cards with the border; one picture with the blurred background.
+  # Loading thumbnails runs GTK's image loader in child processes, which inherit the ASan preload and fail (D8):
+  # the thumbnail checks run in SMOKE_PERF=1 runs only.
+  cmd "sd-open $DIR_URI/Wallpapers" 3; cmd "dp-select all" 4; dp_expect 'stack=cards:3'
+  [ -n "${SMOKE_PERF:-}" ] && dp_expect 'thumbs=3'
+  cmd "dp-png $LOG/dp-stack-media.png" 1
+  cmd "st-set details-pane-stack-media-square true" 2; dp_expect 'stack=icons:3'; cmd "dp-png $LOG/dp-stack-square.png" 1
+  cmd "st-set details-pane-preview-backdrop true" 0.5; cmd "dp-select 0" 3
+  [ -n "${SMOKE_PERF:-}" ] && dp_expect 'backdrop=yes'
+  cmd "dp-png $LOG/dp-backdrop.png" 1; cmd "dp-select none" 1
   cmd "sd-open $DP_URI" 2
-  for k in details-pane-title-centered details-pane-show-icon details-pane-media-fit details-pane-stack-folder-look; do
+  for k in details-pane-title-centered details-pane-show-icon details-pane-media-fit details-pane-preview-backdrop \
+           details-pane-stack-media-square details-pane-stack-border details-pane-stack-border-colour \
+           details-pane-stack-border-width details-pane-stack-corner-radius details-pane-stack-fade; do
     cmd "st-reset $k" 0.4
   done
   dp_pick photo.jpg; cmd "st-set details-pane-position 'bottom'" 2; cmd dp-dump 0.3

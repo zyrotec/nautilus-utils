@@ -2055,3 +2055,45 @@ few properties) instead of the full columns. The owner was away; Claude decided 
 - Fixed on the way: `test-dp-meta` expected the fixtures' modified date to read "Today" (true only on the day they
   were generated).
 - **Final:** `check-safety.sh` all PASS; full smoke `smoke-20261115-084600` **PASS** (details pane 39/39).
+
+### 13.14 v5 — a live stack, own media-card options, blurred background, the stalls (owner, 2026-11-15)
+
+Owner's feedback on v4: the folder-preview look was applied to folders and icons (image 16: two folders with white
+borders and the fade); it should only apply to media. "Same look" meant having the options to make it look like
+that, not reading the folder previews' settings. Plus: why is the stack rasterised; squares for media; adding to a
+selection flickers; a blurred background behind pictures; and look into the 17–21 ms stalls.
+
+| # | Decision |
+|---|---|
+| P24 | The stack is a widget (`DpStackView`) drawn every frame from live layers — theme icons (vector), folder previews, thumbnails — with GSK nodes for tilt, border, corners, shadow (`GskShadowNode` for icons: the shadow of their shape; outset shadow for cards), depth (blur / colour matrix / opacity) and the fade (mask). No worker, no rasterised frame (`dp_stack.c` removed). |
+| P25 | Border (on/off, colour, width in px), corner radius: **media cards only**; icons and folders are always plain. `details-pane-stack-folder-look` is removed; a **Copy the Folder Previews' Look** button copies the Folder Preview page's border, colour, width, corners, shadow, rotation, aspect ratio, depth and fade into the pane's own keys (pending until Apply; sizes at 64 px × 4). |
+| P26 | `details-pane-stack-media-square` (b, false): media as squares the size of the icons (picture cropped to fill), the icon stack's shape. |
+| P27 | Smooth changes: items are matched by URI; ones that stay move to their new place, new ones fade in, removed ones fade out, a thumbnail cross-fades over its icon (220 ms, ease-out; off with GTK's animations setting). While several items stay selected, the stack, the subtitle and the summary stay on screen until the new summary replaces them. The box keeps one shape for 2 or 3 items (no resize when adding one). |
+| P28 | `details-pane-preview-backdrop` (b, false): with the fixed box (P20), a picture's or video poster's copy fills the box behind it, scaled to cover, blurred (8 % of the box) and darkened (30 % black). The Settings row is only active with *Inside a Fixed Box*. |
+| S1 | Stalls: main-thread steps record wall time, CPU time, voluntary / involuntary context switches and page faults (`dp_timing.h`); `DP_STALL_SAMPLER=1` samples the main thread's stack every ms during a step that runs long and logs where a slow step was (`dp_stall.c`, diagnostics only). |
+
+#### 13.14 results (2026-11-15)
+
+- **P24–P27:** `dp_stack_view.c` (layers matched by URI, one animation clock, targets recomputed on resize
+  mid-animation), `dp_backdrop.c`; `dp_stack.c` and the pane's icon-card rasterising removed. Card stacks: each
+  item behind steps up at its top *and* bottom, icons peek out further than a card's step, and the whole stack
+  shrinks towards its bottom centre if a peeking icon would leave the box. Found with the demo: GTK draws a blur
+  pushed under a rotation in the wrong place (layers jumped sideways) — effects are now pushed under a plain
+  translation with the tilt inside them. Demo: `DP_DEMO_GL=1` (GL renderer, as in Files), `DP_DEMO_GROW=1`
+  (adding to a selection: the stack, subtitle and summary stay on screen in between).
+- **S1, the 17–21 ms stalls — cause found and fixed.** The new counters showed the slow steps were all
+  "render (info)" and *off*-CPU (17–22 ms wall, 5–6 ms CPU, 2–25 voluntary waits, no preemption). The stall
+  sampler's stacks: 9 of 17 samples in `__lll_lock_wait_private` under `malloc`/`g_malloc0` while the pane built
+  its labels (`gtk_label_new` → controllers), the rest in malloc internals — **glibc malloc lock contention** with
+  the worker threads started at the same moment: GStreamer's discoverer (clip.mp4) and poppler (doc.pdf), plus the
+  thumbnail load. Fix: a single item's workers (thumbnail, media/PDF readers, folder count) start in an idle after
+  the rows and permissions are built. Result, 3 × `SMOKE_PERF=1` dp rounds: no slow "render" step (before: 1–3
+  per run, every run); the one slow step left (21 ms, 9 ms CPU, 1 major fault) is FreeType loading a font's
+  glyphs the first time a size is used (`FT_Load_Glyph` under `pango_layout_get_size`), once per run.
+- Smoke (dp round, 50 checks in perf runs): live stack, adding without reset, square media, media borders, folders
+  with their pictures stacked plain (`dp-folder-art.png`), Wallpapers as cards with thumbnails
+  (`dp-stack-media.png`), squares (`dp-stack-square.png`), blurred background (`dp-backdrop.png`). Thumbnail
+  checks run in perf runs only (D8: the image loader's child processes inherit the ASan preload).
+- `check-safety.sh` all PASS. Full ASan smoke: details pane all checks except the two thumbnail ones (now
+  perf-only, see above); one leak flagged = the known intermittent GTK popover leak from the sidebar OS-menu test
+  (`gdk_popup_layout_new` under Nautilus' `show_row_popover`), unrelated.

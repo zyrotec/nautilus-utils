@@ -203,7 +203,8 @@ Like File Explorer's details pane: a **Details Pane** button right of *View Opti
 file or folder and its properties. Drag its left edge to resize it.
 
 - 🖼️ **Preview:** the file's thumbnail (made if missing, in the shared thumbnail cache, so Files benefits too),
-  filling a box of its own shape edge to edge (or flush inside a fixed box, if you prefer); files without one
+  filling a box of its own shape edge to edge (or flush inside a fixed box, optionally on a blurred, darker copy
+  of the picture); files without one
   show their icon at the **icon size** you choose (16–256 px). Folders show their **folder preview** (same look
   as in the grid) when folder previews are on. The name and type can be centred, the small icon hidden.
 - ▶️ **Videos:** a play button plays a small, muted, looping preview right in the pane, with pause and sound
@@ -217,11 +218,13 @@ file or folder and its properties. Drag its left edge to resize it.
 - 🔐 **Permissions** in words, as chips: what *you* can do, then the owner, group and others —
   **Read / Write / Run** for files, **List files / Create & delete / Open** for folders — instead of
   `drwxr-xr-x`.
-- 🗂️ **Several selected:** how many, a stack of the first three in the same look as the stacked folder
-  previews (with its own depth effect, shadow, rotation, aspect ratio and fade options, or exactly the folder
-  previews' thumbnail look, borders and all) — the front one at the bottom, icons getting smaller towards the
-  back like the pictures, folders with a folder preview drawn with their pictures — total size and what kinds of
-  files.
+- 🗂️ **Several selected:** how many, a stack of the first three like the stacked folder previews — drawn
+  live from the icons (vector) and thumbnails, so it stays sharp at any size — the front one at the bottom, icons
+  getting smaller towards the back, folders with a folder preview drawn with their pictures — total size and what
+  kinds of files. Adding to the selection animates the stack: the items already there move back, the new one fades
+  in, thumbnails fade in over their icons. Pictures, videos and PDFs can have a border (colour, width) and
+  corners — icons and folders never do — or be squares the size of the icons; **Copy the Folder Previews' Look**
+  takes the Folder Preview page's options as a starting point.
   **Nothing selected:** the folder you are in.
 - ↔️ **Right or bottom:** at the bottom it becomes a short summary strip like Windows 7 — thumbnail, name and
   type, then a few key properties in columns; drag its top edge to change the height.
@@ -267,7 +270,7 @@ press **Apply**; closing the window without Apply discards them.
 | 💽 **Sidebar Drives** | On/off, bar colour (accent colour, a custom colour, or a two-colour gradient), show/hide the usage bars and the size labels, slide the eject button in only on hover. |
 | 👁️ **Folder Views** | Remember the view per folder (on/off) and **Reset All Folder Views…**, which asks for confirmation and acts right away (it isn't a setting waiting for Apply). |
 | 🎨 **Folder Icons** | Icons by folder name (on/off) and the rules: folder name, icon (Choose Icon…), remove; add a rule with **+**. Invalid or duplicate names are marked red. |
-| 📋 **Details Pane** | On/off; position (right or bottom); border, margin, padding, corner radius; line under the header bar; icon size (16–256 px in steps of 16), pictures in a box of their shape or a fixed box, icon next to the name, centred name, preview box corner radius and margin; several selected: same look as folder previews, depth effect, shadow, keep aspect ratio, rotation, bottom fade, card behind icons. Whether the pane is shown, its width and its height are kept as you leave them. |
+| 📋 **Details Pane** | On/off; position (right or bottom); border, margin, padding, corner radius; line under the header bar; icon size (16–256 px in steps of 16), pictures in a box of their shape or a fixed box, icon next to the name, centred name, preview box corner radius and margin; blurred background behind pictures; several selected: copy the folder previews' look, depth effect, shadow, rotation, bottom fade, card behind icons; for pictures, videos and PDFs: squares the size of icons, keep aspect ratio, border (colour, width), corner radius. Whether the pane is shown, its width and its height are kept as you leave them. |
 
 The settings are stored with GSettings (schema `io.github.zyrotec.NautilusUtils`; inspect them with
 `gsettings list-recursively io.github.zyrotec.NautilusUtils`). If the schema isn't installed, the features
@@ -579,7 +582,9 @@ build/tests/folder-preview/bench-core DIR  # per-stage timings of the pipeline o
 | `src/details-pane/dp_meta.c` | Reads general info, image (gexiv2), video/audio (GStreamer), PDF (poppler) details and folder sizes |
 | `src/details-pane/dp_thumb.c` | Large thumbnails from the shared cache (made if missing) |
 | `src/details-pane/dp_pane.c` | The pane itself (preview, video player, details, chips, right/bottom layouts, look) |
-| `src/details-pane/dp_stack.c` | Several selected: the folder-preview stack, rendered in a worker |
+| `src/details-pane/dp_stack_view.c` | Several selected: the stack drawn live from icons and thumbnails, animated |
+| `src/details-pane/dp_backdrop.c` | The blurred picture behind the preview |
+| `src/details-pane/dp_stall.c` | Diagnostics: where slow main-thread steps wait (`DP_STALL_SAMPLER=1`) |
 | `src/details-pane/dp_box.c` | The preview box: media in their own shape, icons in a fixed box |
 | `src/details-pane/dp_hook.c` | **Unsupported**: hooks into Nautilus' private window (button, pane next to the tabs, selection) |
 | `src/details-pane/config.h` | Tunable constants |
