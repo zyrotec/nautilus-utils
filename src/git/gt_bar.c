@@ -502,9 +502,10 @@ on_remotes (GObject *src, GAsyncResult *res, gpointer data)
   g_clear_pointer (&self->remote, g_free);
   if (r != NULL && r->exit_status == 0)
     {
+      /* No remotes: git prints nothing, and the bytes may have no data at all (NULL). */
       gsize len = 0;
       const char *d = g_bytes_get_data (r->out, &len);
-      g_autofree char *text = g_strndup (d, len);
+      g_autofree char *text = d != NULL && len > 0 ? g_strndup (d, len) : g_strdup ("");
       g_auto (GStrv) lines = g_strsplit (text, "\n", -1);
       /* "origin" if there is one, else the first. */
       for (int i = 0; lines[i] != NULL; i++)

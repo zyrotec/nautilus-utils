@@ -106,7 +106,7 @@ fp_icon_art_new_from_file (const char *path, GError **error)
                                                   NULL, error);
   if (info == NULL)
     return NULL;
-  if (g_file_info_get_size (info) > MAX_SVG_BYTES)
+  if (g_file_info_get_attribute_uint64 (info, G_FILE_ATTRIBUTE_STANDARD_SIZE) > MAX_SVG_BYTES)
     {
       g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "%s is larger than %u bytes", path, MAX_SVG_BYTES);
       return NULL;

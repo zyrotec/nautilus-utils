@@ -43,7 +43,7 @@ nu_icon_store_import (GFile *source, const char *data_dir, GCancellable *cancell
                                                   cancellable, error);
   if (info == NULL)
     return NULL;
-  if (g_file_info_get_size (info) > NU_ICON_STORE_MAX_BYTES)
+  if (g_file_info_get_attribute_uint64 (info, G_FILE_ATTRIBUTE_STANDARD_SIZE) > NU_ICON_STORE_MAX_BYTES)
     {
       g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "%s is larger than %u bytes", base, NU_ICON_STORE_MAX_BYTES);
       return NULL;

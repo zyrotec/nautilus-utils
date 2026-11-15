@@ -30,6 +30,7 @@ static void
 apply (void)
 {
   const NuConfig *c = nu_settings_get ();
+  gt_hook_set_below_all (c->details_pane_enabled && c->details_pane_position == NU_PANE_BOTTOM);
   gt_hook_configure (c->git_enabled, c->git_status_bar, c->git_ide);
   gt_columns_set_enabled (c->git_enabled);
   /* The details pane's "Details | Git" (PLAN.md §14.2 item 4); the choice is remembered. */
@@ -44,7 +45,8 @@ static void
 on_settings_changed (NuChanged changed, gpointer data)
 {
   (void) data;
-  if (changed & NU_CHANGED_GIT)
+  /* The details pane's position decides where the bar goes. */
+  if (changed & (NU_CHANGED_GIT | NU_CHANGED_DP_LOOK | NU_CHANGED_DETAILS_PANE))
     apply ();
 }
 

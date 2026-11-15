@@ -692,7 +692,7 @@ on_prefetch_batch (GObject      *source,
     {
       GFileInfo *info = l->data;
       ctx->seen++;
-      if (g_file_info_get_file_type (info) != G_FILE_TYPE_DIRECTORY)
+      if (g_file_info_get_attribute_uint32 (info, G_FILE_ATTRIBUTE_STANDARD_TYPE) != G_FILE_TYPE_DIRECTORY)
         continue;
       g_autoptr (GFile) child = g_file_enumerator_get_child (ctx->enumerator, info);
       prefetch_store (child, info);

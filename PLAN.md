@@ -2339,3 +2339,18 @@ modified, added, untracked, ignored, a folder with changes).
   repository (the logs live in it), where the bar correctly showed that repository. The field is now `bar=`, and the
   outside folder is a temporary folder outside the checkout; the bar is really hidden there.
 - Details-pane smoke still 50/50; `check-safety.sh` all PASS.
+
+### 14.10 Owner's report after Phase 4 (2026-11-15)
+
+- **Crash (SIGSEGV) in the owner's Files** in a repository without remotes: the bar's `on_remotes` split git's empty
+  output — `g_bytes_get_data` gives NULL for no data — and read the result (`g_strsplit: assertion 'string != NULL'`
+  then the crash; core dumps of 4 restarts). Fixed; every other reader of git's output goes through the parsers,
+  which take empty input. Smoke: a repository without any remote (`local`), bar shown, `remote=-`.
+- `g_file_info_get_is_hidden … should not be reached` (also in the owner's log): the details pane's folder count
+  used GLib's convenience getters, which log when a file system leaves out an attribute that was asked for. All of
+  them (details pane, folder views' prefetch, icon store, folder-preview SVG size) now use the attribute getters.
+- **The bar below the details pane's bottom strip** (owner): with the pane at the bottom the bar is a bottom bar of
+  Files' content toolbar view, across the whole width, below the strip; at the right it stays under the folder view
+  (G1). Moves live with the pane's position. Smoke `at=bottom` / `at=column`, `gt-bar-bottom.png`.
+- `check-safety.sh` all PASS; full ASan smoke: folder views 86 / 0 wrong, details pane 62, git 45, no "should not be
+  reached" in the log; the flagged leak is the known sidebar OS-menu popover one.

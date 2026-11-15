@@ -380,6 +380,7 @@ gt_make_repo() {
     git checkout -q -b feature && echo f > feature.txt && git add feature.txt && git commit -qm "Feature work" && git push -q origin feature
     cd .. && git clone -q -b main remote.git repo && git clone -q -b main remote.git other
     cd other && echo two >> README.md && git commit -qam "Update from elsewhere" && git push -q origin main
+    cd "$GT_DIR" && git init -q -b main local && cd local && echo l > notes.txt && git add -A && git commit -qm "Local only"
     true ) || echo "gt: could not make the test repositories"
   # A folder outside any repository (the log folder is inside this checkout's own repository).
   GT_PLAIN="$(mktemp -d "${TMPDIR:-/tmp}/nu-gt-plain.XXXXXX")"
@@ -414,7 +415,8 @@ gt_round() {
   cmd "dp-select name src" 0.5; cmd "dp-select add README.md" 2; dp_expect '[Selected Items: Items=2; Changes=1 Modified'
   cmd "sd-open $uri/src" 2; cmd "dp-select none" 1.5; dp_expect '[This Folder: Status=Unchanged; Path=src;'
   cmd "st-set details-pane-position 'bottom'" 1.5; dp_expect 'view=details-only'
-  cmd "st-set details-pane-position 'right'" 1.5; dp_expect 'view=extra'
+  gt_expect 'at=bottom'; cmd "dp-png $LOG/gt-bar-bottom.png" 1                            # below the strip
+  cmd "st-set details-pane-position 'right'" 1.5; dp_expect 'view=extra'; gt_expect 'at=column'
   cmd "dp-extra off" 1; dp_expect 'view=details'; cmd "dp-extra on" 1
   cmd "sd-open $uri" 2; cmd "sd-open $plain" 2; dp_expect 'view=details-only'                # outside: no toggle
   cmd "sd-open $uri" 2; cmd "dp-select none" 1; dp_expect 'view=extra'                        # the choice is kept
@@ -435,6 +437,10 @@ gt_round() {
   gt_attr 'README.md status=|commit=Commit from a terminal|'; gt_attr 'README.md author=Col Test|'
   gt_attr 'src status=|commit=Commit from a terminal|'; gt_attr 'untracked.txt status=Untracked|'
   cmd "fv-view 2" 2
+  # A repository without any remote (`git remote` prints nothing): the bar, not a crash (owner's crash 2026-11-15).
+  local local_uri; local_uri="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_DIR/local")"
+  cmd "sd-open $local_uri" 2.5; cmd gt-dump 0.3; gt_expect 'bar=1'; gt_expect 'branch="main"'; gt_expect 'remote=-'
+  gt_expect 'counts="Not published"'
   cmd "sd-open $uri/src" 2; gt_expect 'bar=1'; gt_expect 'branch="main"'          # a folder inside
   cmd "sd-open $plain" 2; cmd gt-dump 0.3; gt_expect 'bar=0'                       # outside any repository
   cmd "sd-open $uri" 2; gt_expect 'bar=1'

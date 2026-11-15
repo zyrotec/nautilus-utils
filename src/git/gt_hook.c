@@ -42,6 +42,7 @@ typedef struct
   GType       window_type;
   gboolean    warned;
   gboolean    icons_added;
+  gboolean    below_all;  /* the details pane is at the bottom: the bar goes below its strip (owner, 2026-11-15) */
 } Hook;
 
 static Hook *gh;
@@ -162,6 +163,8 @@ ensure_icons (void)
                                     "/io/github/zyrotec/NautilusUtils/git/icons");
 }
 
+static void place_bar (WinHook *hook);
+
 static gboolean
 install (GtkWidget *window)
 {
@@ -184,13 +187,54 @@ install (GtkWidget *window)
   GtkWidget *bar = gt_bar_new ();
   gt_bar_set_ide (GT_BAR (bar), gh->ide);
   gtk_widget_set_visible (bar, FALSE);
-  nu_content_add_bottom (column, bar);
   g_weak_ref_init (&hook->bar, bar);
+  place_bar (hook);
   g_object_set_data_full (G_OBJECT (window), HOOK_KEY, hook, win_hook_free);
   hook->active_id = g_signal_connect (window, "notify::active-slot", G_CALLBACK (on_active_slot), NULL);
   watch_active_slot (hook);
   g_debug ("status bar installed in a window");
   return TRUE;
+}
+
+/* Takes @bar out of wherever it is (the column, or the content toolbar view's bottom bars). */
+static void
+detach_bar (GtkWidget *column, GtkWidget *bar)
+{
+  GtkWidget *parent = gtk_widget_get_parent (bar);
+  if (parent == NULL)
+    return;
+  if (parent == column)
+    {
+      gtk_box_remove (GTK_BOX (column), bar);
+      return;
+    }
+  GtkWidget *tv = gtk_widget_get_ancestor (bar, ADW_TYPE_TOOLBAR_VIEW);
+  if (tv != NULL)
+    adw_toolbar_view_remove (ADW_TOOLBAR_VIEW (tv), bar);
+}
+
+/* Right of the view (or no pane): the bar is under the folder view, in the content column. Pane at the bottom: a
+ * bottom bar of Files' content toolbar view, so it is below the pane's strip, across the whole width. */
+static void
+place_bar (WinHook *hook)
+{
+  g_autoptr (GtkWidget) column = g_weak_ref_get (&hook->column);
+  g_autoptr (GtBar) bar = hook_bar (hook);
+  if (column == NULL || bar == NULL)
+    return;
+  GtkWidget *tv = gtk_widget_get_ancestor (column, ADW_TYPE_TOOLBAR_VIEW);
+  gboolean below = gh->below_all && tv != NULL;
+  GtkWidget *w = GTK_WIDGET (bar);
+  GtkWidget *parent = gtk_widget_get_parent (w);
+  if (parent != NULL && (parent == column) == !below)
+    return; /* already there */
+  g_object_ref (w);
+  detach_bar (column, w);
+  if (below)
+    adw_toolbar_view_add_bottom_bar (ADW_TOOLBAR_VIEW (tv), w);
+  else
+    nu_content_add_bottom (column, w);
+  g_object_unref (w);
 }
 
 /* Removes the bar; the column puts Files' tab view back if nothing else uses it. */
@@ -207,8 +251,8 @@ uninstall (GtkWidget *window)
     g_clear_signal_handler (&hook->location_id, slot);
   g_autoptr (GtkWidget) column = g_weak_ref_get (&hook->column);
   g_autoptr (GtBar) bar = hook_bar (hook);
-  if (column != NULL && bar != NULL && gtk_widget_get_parent (GTK_WIDGET (bar)) == column)
-    gtk_box_remove (GTK_BOX (column), GTK_WIDGET (bar));
+  if (column != NULL && bar != NULL)
+    detach_bar (column, GTK_WIDGET (bar));
   if (column != NULL)
     nu_content_release (column);
   g_object_set_data (G_OBJECT (window), HOOK_KEY, NULL);
@@ -311,6 +355,15 @@ gt_hook_configure (gboolean enabled, gboolean show_bar, const char *ide)
 }
 
 void
+gt_hook_set_below_all (gboolean below)
+{
+  if (gh == NULL || gh->below_all == below)
+    return;
+  gh->below_all = below;
+  for_each_hook (place_bar);
+}
+
+void
 gt_hook_shutdown (void)
 {
   if (gh == NULL)
@@ -352,12 +405,15 @@ gt_hook_debug_command (const char *cmd)
   if (g_str_equal (cmd, "gt-dump"))
     {
       g_autofree char *d = gt_bar_describe (bar);
-      g_message ("gt dump: bar=%d %s", gtk_widget_get_visible (GTK_WIDGET (bar)), d);
+      g_message ("gt dump: bar=%d at=%s %s", gtk_widget_get_visible (GTK_WIDGET (bar)),
+                 gtk_widget_has_css_class (gtk_widget_get_parent (GTK_WIDGET (bar)), "nu-content") ? "column" : "bottom", d);
     }
   else if (g_str_has_prefix (cmd, "gt-expect "))
     {
       g_autofree char *d = gt_bar_describe (bar);
-      g_autofree char *full = g_strdup_printf ("bar=%d %s", gtk_widget_get_visible (GTK_WIDGET (bar)), d);
+      g_autofree char *full = g_strdup_printf ("bar=%d at=%s %s", gtk_widget_get_visible (GTK_WIDGET (bar)),
+                                               gtk_widget_has_css_class (gtk_widget_get_parent (GTK_WIDGET (bar)), "nu-content")
+                                                 ? "column" : "bottom", d);
       const char *want = cmd + strlen ("gt-expect ");
       if (strstr (full, want) != NULL)
         g_message ("gt expect ok: %s", want);

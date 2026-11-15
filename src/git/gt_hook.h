@@ -10,6 +10,8 @@ void gt_hook_init      (void);
 void gt_hook_configure (gboolean    enabled,
                         gboolean    show_bar,
                         const char *ide);
+/* The details pane is at the bottom: the bar goes below its strip (else under the folder view). */
+void gt_hook_set_below_all (gboolean below);
 void gt_hook_shutdown  (void);
 
 /* Debug driver: "gt-dump", "gt-expect TEXT", "gt-switch NAME", "gt-switch-remote NAME", "gt-create NAME",
