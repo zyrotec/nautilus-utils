@@ -147,7 +147,8 @@ findings and the smoke test is clean.
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 5 | Folder icons by name — every folder with a given name (e.g. `node_modules`) gets a chosen icon, as Files' own custom icon (§12) | `src/folder-icons/` | **v1 done** (2026-11-14), pending the owner's final check |
-| 6 | Details pane — a pane right of the folder view with the selected item's preview and properties (media, image, PDF), toggled from the header bar (§13) | `src/details-pane/` | **v1 done** (2026-11-14), pending the owner's final check |
+| 6 | Details pane — a pane right of the folder view with the selected item's preview and properties (media, image, PDF), toggled from the header bar (§13) | `src/details-pane/` | **v5 merged** (PR #8, 2026-11-15) |
+| 7 | Git — status bar (branch, ↑/↓, push/pull/sync, Open in IDE), branches, Git columns, Git view in the details pane, Clone Repository… (§14) | `src/git/` | **planned** (2026-11-15) |
 
 Open items:
 
@@ -2112,3 +2113,80 @@ selection flickers; a blurred background behind pictures; and look into the 17�
   left of the view controls. That extension adds ⋮ after Files builds the header, so placing is retried every
   250 ms for up to 10 s after a window is hooked. Verified in Files (`dp-geom`: prev=MyComputerToggleButton
   next=GtkMenuButton; `dp-header-line.png`).
+
+---
+
+## 14. Feature 7 — Git
+
+Owner's request (2026-11-15), modelled on the Files app's Git integration (pasted docs): information about the
+current branch and commits, creating and switching branches, push / pull / sync with progress and git's message on
+failure, Git columns in the list view, the repository and branch in the details pane, Open in IDE, plus a
+**Clone Repository…** item in the context menu (a dialog: paste the link, press **Clone**) and an **AdwToggleGroup**
+in the details pane (right position only) switching between the current details and the Git details.
+Prefix `gt_`, log domain `git`, dir `src/git/`, branch `dev-git`.
+
+### 14.1 Decisions (owner, 2026-11-15)
+
+| # | Decision |
+|---|---|
+| G1 | **Status bar:** a slim bar along the bottom of the folder view, only inside a Git repository (above the details pane's bottom strip when that is used; not under the details pane at the right). Adds UI only. |
+| G2 | **Engine: the installed `git` command**, run in the background (`GSubprocess`), so SSH keys, credential helpers and `gh` logins work exactly like in the terminal. No new build dependency. |
+| G3 | **Authorization:** when git needs credentials it doesn't have, a **username / token dialog**; what is entered is handed to git for that one run and saved by the user's credential helper if one is configured (never written by us). |
+| G4 | **Progress:** our own progress indicator on the status bar; clicking it lists running and finished operations (push, pull, sync, fetch, checkout, clone) with progress and, on failure, git's full message. |
+
+### 14.2 Behaviour
+
+1. **Repository detection** (native folders only, PLAN rule: never block on network paths): `git rev-parse
+   --show-toplevel --absolute-git-dir` for the slot's folder, async, cached per folder; a file monitor on the repo's
+   `HEAD`, `index` and `refs/` (and `packed-refs`) refreshes the bar, columns and pane. Reads run with
+   `GIT_OPTIONAL_LOCKS=0` (never take `index.lock` from the user's own git), `LC_ALL=C`, a timeout, and are
+   cancelled when the folder changes.
+2. **Status bar** (G1), left to right:
+   - **Branch button** (branch icon + name; detached HEAD: short hash) → **Branches** popover: search entry, local
+     branches (current one ticked) and remote branches; selecting one checks it out (a remote one: a tracking local
+     branch); a **Create** button (name entry, from the current commit, switch to it).
+   - **Commit counts** `↑2 ↓1` (ahead / behind the upstream; "no upstream" otherwise) → popover with **Push**,
+     **Pull** and **Sync** (fetch: updates the counts without changing anything else), and the last commit (short
+     hash, subject, author, relative date).
+   - **Progress** (G4): a spinner with the number of running operations, or the last result; its popover lists
+     operations with their progress (git's `--progress` lines) and, on failure, git's message (selectable text,
+     copy button).
+   - **Open in IDE** (`code`, `zed`, GNOME Builder… detected from installed apps; chosen in Settings).
+3. **Git columns** (Files' public column + info providers): **Git Status** (Modified, Added, Deleted, Renamed,
+   Untracked, Ignored, Conflict; folders: "Contains changes"), **Last Commit** (subject and date), **Commit Hash**
+   (short), **Commit Author**. Shown and hidden with Files' own *Visible Columns* (right-click the column headers).
+   Per folder, one `git status --porcelain=v2 -z` and one bounded `git log --name-only -z` walk fill the values for
+   all files at once (cached per folder + HEAD; unknown values stay empty rather than blocking).
+4. **Details pane** (right position only): an **AdwToggleGroup** *Details | Git* at the top, shown only inside a
+   repository. *Git*: repository name and path, current branch and upstream (↑/↓), last commit, the selected item's
+   Git status and last commit (hash, author, date, subject). The choice is remembered. At the bottom position no
+   toggle (the strip stays the short summary).
+5. **Clone Repository…** in the folder background context menu (writable native folders): a dialog with the URL
+   (pasted; HTTPS or SSH, validated), the new folder's name (from the URL, editable; must not exist) and a **Clone**
+   button. Progress in the status bar's progress list (also outside a repository while a clone runs); when done the
+   new folder is selected.
+6. **Authorization** (G3): every network operation runs with `GIT_TERMINAL_PROMPT=0` (git never waits for a
+   terminal). If it fails for want of credentials (HTTPS), the dialog asks for username and token (password field;
+   GitHub: a personal access token, with a link to create one) and the operation is retried once with them passed
+   through a one-shot credential helper reading them from the child's environment (not its command line, so
+   they never show in process lists); git then asks the user's configured credential helper to store them. SSH
+   failures show git's message with instructions (add the key to the agent / to GitHub).
+7. **Never** changes a repository except on an explicit click (checkout, create branch, push, pull, clone); no
+   automatic fetch. Checkout with conflicting local changes: git refuses, its message is shown.
+
+### 14.3 Settings keys
+
+`git-enabled` (b, true), `git-status-bar` (b, true), `git-ide` (s, desktop ID or "" = first detected),
+`git-pane-view` (enum details | git: last choice in the pane).
+
+### 14.4 Phases
+
+| Phase | Work | Acceptance |
+|---|---|---|
+| 0 Spike | Bar placement (in our paned's start side under the tab view, or Files' toolbar view; Files' own narrow bottom bar; the details pane's bottom strip); column + async info provider in Nautilus 51 (columns appear in *Visible Columns*, async `update_file_info` with a handle); background menu item; the one-shot credential helper and the "needs credentials" detection against a local HTTP git server (`git http-backend`) with basic auth; `AdwToggleGroup` in the pane; timings of status / log on a big repository on the NTFS drive. | Every question answered; anything infeasible reported before building. |
+| 1 Core | `gt_repo.c` (detection, cache, monitors), `gt_run.c` (async git runner: env, timeout, cancel, progress lines, error text), parsers (porcelain v2, branch list, ahead/behind, log records); unit tests on temporary repositories. | Tests + `check-safety.sh` pass. |
+| 2 Status bar | Bar, Branches popover (switch, create), push / pull / sync, progress popover, Open in IDE; debug driver (`gt-dump`, `gt-branch`, `gt-op`). | Works in an isolated Nautilus on a test repo with a local remote; smoke clean. |
+| 3 Columns | Column + info providers, per-folder batch reads, refresh on change. | Columns correct in a test repo (every status kind); no stall browsing a big repository. |
+| 4 Details pane | Toggle group + Git view (needs a small hook from the details pane: an optional "Git" page). | Owner reviews the look. |
+| 5 Clone + auth | Context-menu item, clone dialog, credentials dialog + retry. | Clone from a local server with and without credentials; wrong token → git's message. |
+| 6 Settings, hardening, docs | Settings tab "Git"; smoke round; `check-safety.sh`; README. | All PASS. |
