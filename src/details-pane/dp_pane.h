@@ -86,12 +86,18 @@ void dp_pane_unload_style (void);
 /* An extra view (PLAN.md §14.2 item 4: the Git details): with the pane at the right and the extra page available
  * for what is shown, a toggle group at the pane's top switches between the details and the extra page. ---------- */
 
-/* Builds the extra page for @folder / @files (as given to dp_pane_show; @files may be NULL or empty), or returns NULL
- * when there is none for them (e.g. not in a Git repository). A new floating widget, shown instead of the detail
- * groups; *@header (optional, may be left NULL) receives a floating widget shown instead of the preview box.
- * Main thread. */
+/* Whether there is an extra page for @folder / @files (as given to dp_pane_show; @files may be NULL or empty), e.g.
+ * "is this in a Git repository". Cheap: asked on every show. Main thread. */
+typedef gboolean (*DpExtraAvailableFunc) (GFile     *folder,
+                                          GPtrArray *files,
+                                          gpointer   user_data);
+
+/* The extra page for @folder / @files, asked only while the extra view is the one shown. @current is the page shown
+ * now (or NULL): return it (updated in place) to keep it, or a new floating widget, shown instead of the detail
+ * groups — then *@header may receive a floating widget shown instead of the preview box. NULL: none after all. */
 typedef GtkWidget *(*DpExtraFunc) (GFile      *folder,
                                    GPtrArray  *files,
+                                   GtkWidget  *current,
                                    GtkWidget **header,
                                    gpointer    user_data);
 
@@ -104,6 +110,7 @@ typedef char *(*DpExtraDescribeFunc) (GtkWidget *page);
 
 /* Process-wide: @title names the toggle ("Git"); NULL @func removes the extra view from every pane. */
 void dp_pane_set_extra (const char          *title,
+                        DpExtraAvailableFunc available,
                         DpExtraFunc          func,
                         DpExtraSelectedFunc  on_selected,
                         DpExtraDescribeFunc  describe,

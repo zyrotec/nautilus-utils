@@ -26,6 +26,7 @@
 #define NODE_Y          17.0   /* px from a row's top to its node (the middle of the message line) */
 #define HOVER_OPEN_MS   500
 #define HOVER_CLOSE_MS  250
+#define ROWS_PER_STEP   40     /* history rows added per main-loop turn (216 at once took 20 ms) */
 
 static const char *const lane_colors[] = { "#33d17a", "#62a0ea", "#ffa348", "#c061cb", "#f66151", "#f8e45c", "#2ec27e", "#99c1f1" };
 
@@ -39,6 +40,7 @@ typedef struct
   char         *root;
   GPtrArray    *rels;       /* root-relative paths of what is selected (nothing selected: empty) */
   gboolean      sel_is_dir;
+  guint         sel_gen;    /* bumped by every new selection: only the newest selection read is applied */
   /* header */
   GtkWidget    *branch, *subject, *meta, *mainline, *selection;
   GtkWidget    *card_spinner, *refresh, *head_chip;
@@ -51,6 +53,8 @@ typedef struct
   GPtrArray    *rows;       /* GtGraphRow* */
   int           max_lanes;
   GCancellable *cancel;     /* everything this page reads */
+  guint         append_id;  /* adding history rows in steps, or 0 */
+  guint         appended;
   /* hover card */
   GtkWidget    *hover_row;  /* borrowed: the row the pointer is over */
   GtkWidget    *popover;    /* borrowed (child of the row it was opened for) or NULL */
@@ -58,12 +62,15 @@ typedef struct
   guint         open_id, close_id;
 } Page;
 
+static void read_selection (Page *p);
+
 static void
 page_free (gpointer data)
 {
   Page *p = data;
   g_clear_handle_id (&p->open_id, g_source_remove);
   g_clear_handle_id (&p->close_id, g_source_remove);
+  g_clear_handle_id (&p->append_id, g_source_remove);
   if (p->cancel != NULL)
     g_cancellable_cancel (p->cancel);
   g_clear_object (&p->cancel);
@@ -175,6 +182,7 @@ typedef struct
   GWeakRef      page;
   GCancellable *cancel;
   ReadDone      done;
+  guint         sel_gen; /* a selection read: the selection it was for (0: not one) */
 } Read;
 
 static Page *
@@ -193,7 +201,8 @@ on_read (GObject *src, GAsyncResult *res, gpointer data)
   g_autoptr (GtkWidget) widget = g_weak_ref_get (&r->page);
   Page *p = page_of (widget);
   /* Only this page's current reads are applied. */
-  if (p != NULL && p->cancel == r->cancel && !g_cancellable_is_cancelled (r->cancel) && result != NULL)
+  if (p != NULL && p->cancel == r->cancel && !g_cancellable_is_cancelled (r->cancel) && result != NULL &&
+      (r->sel_gen == 0 || r->sel_gen == p->sel_gen))
     r->done (p, result);
   g_weak_ref_clear (&r->page);
   g_clear_object (&r->cancel);
@@ -201,13 +210,20 @@ on_read (GObject *src, GAsyncResult *res, gpointer data)
 }
 
 static void
-page_read (Page *p, const char *const *args, ReadDone done)
+page_read_full (Page *p, const char *const *args, ReadDone done, guint sel_gen)
 {
   Read *r = g_new0 (Read, 1);
+  r->sel_gen = sel_gen;
   g_weak_ref_init (&r->page, p->page);
   r->cancel = g_object_ref (p->cancel);
   r->done = done;
   gt_run_async (p->root, args, GT_RUN_READ, NULL, READ_TIMEOUT_MS, p->cancel, NULL, NULL, on_read, r);
+}
+
+static void
+page_read (Page *p, const char *const *args, ReadDone done)
+{
+  page_read_full (p, args, done, 0);
 }
 
 /* ---- header ---- */
@@ -758,6 +774,27 @@ commit_row (Page *p, guint index)
   return row;
 }
 
+/* Adds the next ROWS_PER_STEP history rows (one main-loop turn each, so a long history never stalls a frame).
+ * TRUE while rows are left. */
+static gboolean
+append_rows (gpointer data)
+{
+  Page *p = data;
+  gint64 t0 = g_get_monotonic_time ();
+  guint end = p->entries != NULL ? MIN (p->entries->len, p->appended + ROWS_PER_STEP) : 0;
+  for (; p->appended < end; p->appended++)
+    gtk_list_box_append (GTK_LIST_BOX (p->list), commit_row (p, p->appended));
+  gint64 dt = g_get_monotonic_time () - t0;
+  if (dt > 16000)
+    g_debug ("slow main-thread step: git history rows took %" G_GINT64_FORMAT " µs", dt);
+  if (p->entries == NULL || p->appended >= p->entries->len)
+    {
+      p->append_id = 0;
+      return G_SOURCE_REMOVE;
+    }
+  return G_SOURCE_CONTINUE;
+}
+
 static void
 on_history (Page *p, GtRunResult *r)
 {
@@ -777,8 +814,10 @@ on_history (Page *p, GtRunResult *r)
   p->max_lanes = 1;
   for (guint i = 0; i < p->rows->len; i++)
     p->max_lanes = MAX (p->max_lanes, ((GtGraphRow *) g_ptr_array_index (p->rows, i))->n_lanes);
-  for (guint i = 0; i < p->entries->len; i++)
-    gtk_list_box_append (GTK_LIST_BOX (p->list), commit_row (p, i));
+  p->appended = 0;
+  g_clear_handle_id (&p->append_id, g_source_remove);
+  if (append_rows (p))
+    p->append_id = g_idle_add_full (G_PRIORITY_DEFAULT_IDLE, append_rows, p, NULL);
 }
 
 static void
@@ -797,6 +836,13 @@ read_all (Page *p)
                          "refs/remotes/origin/main", "refs/remotes/origin/master", "refs/heads/main", "refs/heads/master",
                          NULL };
   page_read (p, refs, on_mainline_refs);
+  read_selection (p);
+}
+
+/* The selection line (a new selection reads it again; the history and the card are left alone). */
+static void
+read_selection (Page *p)
+{
   if (p->rels->len > 0)
     {
       g_autoptr (GStrvBuilder) b = g_strv_builder_new ();
@@ -808,7 +854,7 @@ read_all (Page *p)
           g_strv_builder_add (b, *rel != '\0' ? rel : ".");
         }
       g_auto (GStrv) status = g_strv_builder_end (b);
-      page_read (p, (const char *const *) status, on_selection_status);
+      page_read_full (p, (const char *const *) status, on_selection_status, p->sel_gen);
     }
 }
 
@@ -821,33 +867,70 @@ on_info_changed (GtInfo *info, gpointer data)
   read_all (p); /* a commit, a checkout or a fetch changes the history and the counts */
 }
 
-GtkWidget *
-gt_page_new (GFile *folder, GPtrArray *files, GtkWidget **header, gpointer user_data)
+/* The repository of what is shown (a folder itself, or the selection's folder), or NULL. */
+static char *
+repo_of (GFile *folder, GPtrArray *files, char **git_dir, char **first_path)
 {
   gboolean own = files == NULL || files->len == 0;
   GFile *first = own ? folder : g_ptr_array_index (files, 0);
   if (first == NULL || !g_file_is_native (first))
     return NULL;
-  g_autofree char *first_path = g_file_get_path (first);
-  g_autofree char *dir = own ? g_strdup (first_path) : g_path_get_dirname (first_path);
-  g_autofree char *git_dir = NULL;
-  g_autofree char *root = dir != NULL ? gt_repo_find_root (dir, &git_dir) : NULL;
+  char *path = g_file_get_path (first);
+  g_autofree char *dir = path == NULL ? NULL : own ? g_strdup (path) : g_path_get_dirname (path);
+  if (first_path != NULL)
+    *first_path = path;
+  else
+    g_free (path);
+  return dir != NULL ? gt_repo_find_root (dir, git_dir) : NULL;
+}
+
+gboolean
+gt_page_available (GFile *folder, GPtrArray *files, gpointer user_data)
+{
+  (void) user_data;
+  g_autofree char *root = repo_of (folder, files, NULL, NULL);
+  return root != NULL;
+}
+
+/* What is selected, root-relative (nothing selected: empty). */
+static void
+set_selection (Page *p, GPtrArray *files, const char *first_path)
+{
+  gboolean own = files == NULL || files->len == 0;
+  p->sel_gen++;
+  g_ptr_array_set_size (p->rels, 0);
+  for (guint i = 0; !own && i < MIN (files->len, MAX_PATHS); i++)
+    {
+      g_autofree char *path = g_file_get_path (g_ptr_array_index (files, i));
+      char *rel = path != NULL ? gt_repo_relative (p->root, path) : NULL;
+      if (rel != NULL)
+        g_ptr_array_add (p->rels, rel);
+    }
+  p->sel_is_dir = !own && files->len == 1 && first_path != NULL && g_file_test (first_path, G_FILE_TEST_IS_DIR);
+  gtk_widget_set_visible (p->selection, FALSE);
+}
+
+GtkWidget *
+gt_page_new (GFile *folder, GPtrArray *files, GtkWidget *current, GtkWidget **header, gpointer user_data)
+{
+  g_autofree char *git_dir = NULL, *first_path = NULL;
+  g_autofree char *root = repo_of (folder, files, &git_dir, &first_path);
   if (root == NULL)
     return NULL;
+  /* The same repository (and look): keep the page — branch card and history stay; the selection line is read again. */
+  Page *old = page_of (current);
+  if (old != NULL && g_str_equal (old->root, root) && old->graph == GPOINTER_TO_INT (user_data))
+    {
+      set_selection (old, files, first_path);
+      read_selection (old);
+      return current;
+    }
   ensure_style ();
 
   Page *p = g_new0 (Page, 1);
   p->root = g_strdup (root);
   p->graph = GPOINTER_TO_INT (user_data);
   p->rels = g_ptr_array_new_with_free_func (g_free);
-  for (guint i = 0; !own && i < MIN (files->len, MAX_PATHS); i++)
-    {
-      g_autofree char *path = g_file_get_path (g_ptr_array_index (files, i));
-      char *rel = path != NULL ? gt_repo_relative (root, path) : NULL;
-      if (rel != NULL)
-        g_ptr_array_add (p->rels, rel);
-    }
-  p->sel_is_dir = !own && files->len == 1 && first_path != NULL && g_file_test (first_path, G_FILE_TEST_IS_DIR);
   p->page = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
   gtk_widget_add_css_class (p->page, "gt-pane-page");
   p->list = gtk_list_box_new ();
@@ -863,6 +946,7 @@ gt_page_new (GFile *folder, GPtrArray *files, GtkWidget **header, gpointer user_
   g_object_set_data_full (G_OBJECT (p->page), "gt-page", p, page_free);
   g_signal_connect (p->list, "unmap", G_CALLBACK (on_list_unmap), p);
   p->header = build_header (p);
+  set_selection (p, files, first_path);
   if (header != NULL)
     *header = p->header;
   p->info = gt_info_get (root, git_dir);

@@ -7,10 +7,17 @@
 
 G_BEGIN_DECLS
 
+/* DpExtraAvailableFunc: whether what is shown is inside a Git repository (native locations; stat only). */
+gboolean gt_page_available (GFile     *folder,
+                            GPtrArray *files,
+                            gpointer   user_data);
+
 /* DpExtraFunc: the page (the history) for @folder / @files and in *@header the branch card, or NULL outside a Git
- * repository (or for non-native locations). @user_data: GINT_TO_POINTER (TRUE) for the history with its graph. */
+ * repository. @current, if it is a page of the same repository (and look), is kept: only its selection line is read
+ * again. @user_data: GINT_TO_POINTER (TRUE) for the history with its graph. */
 GtkWidget *gt_page_new (GFile      *folder,
                         GPtrArray  *files,
+                        GtkWidget  *current,
                         GtkWidget **header,
                         gpointer    user_data);
 

@@ -208,6 +208,83 @@ on_cancelled (GCancellable *cancellable, gpointer data)
   kill_group (data); /* the reads then end and the task finishes as cancelled */
 }
 
+typedef struct
+{
+  GTask               *task;       /* the run's task (owned) */
+  GSubprocessLauncher *launcher;
+  GStrv                argv;
+  GtProgressFunc       progress;
+  gpointer             progress_data;
+  GCancellable        *cancellable;
+  guint                timeout_ms;
+} Spawn;
+
+static void
+spawn_free (Spawn *sp)
+{
+  g_clear_object (&sp->task);
+  g_clear_object (&sp->launcher);
+  g_strfreev (sp->argv);
+  g_clear_object (&sp->cancellable);
+  g_free (sp);
+}
+
+static void
+spawn_thread (GTask *task, gpointer source, gpointer data, GCancellable *cancellable)
+{
+  (void) source, (void) cancellable;
+  Spawn *sp = data;
+  GError *error = NULL;
+  GSubprocess *proc = g_subprocess_launcher_spawnv (sp->launcher, (const char *const *) sp->argv, &error);
+  if (proc == NULL)
+    g_task_return_error (task, error);
+  else
+    g_task_return_pointer (task, proc, g_object_unref);
+}
+
+/* Back on the caller's main context with the started process: read its output, wait for it. */
+static void
+on_spawned (GObject *src, GAsyncResult *res, gpointer data)
+{
+  (void) src;
+  Spawn *sp = data;
+  GError *error = NULL;
+  GSubprocess *proc = g_task_propagate_pointer (G_TASK (res), &error);
+  GTask *task = sp->task;
+  if (proc == NULL)
+    {
+      g_task_return_error (task, error);
+      spawn_free (sp);
+      return;
+    }
+  Job *job = g_new0 (Job, 1);
+  job->proc = proc;
+  job->out = g_memory_output_stream_new_resizable ();
+  job->err = g_subprocess_get_stderr_pipe (proc);
+  job->line = g_string_new (NULL);
+  job->error_text = g_string_new (NULL);
+  job->progress = sp->progress;
+  job->progress_data = sp->progress_data;
+  job->pending = 3;
+  const char *ident = g_subprocess_get_identifier (proc);
+  job->pid = ident != NULL ? strtol (ident, NULL, 10) : 0;
+  g_task_set_task_data (task, job, job_free);
+  if (sp->cancellable != NULL)
+    {
+      /* Cancelled meanwhile: connecting calls the handler at once, which kills it. */
+      job->cancellable = g_object_ref (sp->cancellable);
+      job->cancel_id = g_cancellable_connect (sp->cancellable, G_CALLBACK (on_cancelled), job, NULL);
+    }
+  if (sp->timeout_ms > 0)
+    job->timeout_id = g_timeout_add (sp->timeout_ms, on_timeout, job);
+  /* No cancellable on the reads: a cancelled run is killed, which ends them. */
+  g_output_stream_splice_async (job->out, g_subprocess_get_stdout_pipe (proc), G_OUTPUT_STREAM_SPLICE_CLOSE_TARGET,
+                                G_PRIORITY_DEFAULT, NULL, on_spliced, g_object_ref (task));
+  g_input_stream_read_bytes_async (job->err, READ_CHUNK, G_PRIORITY_DEFAULT, NULL, on_err_read, g_object_ref (task));
+  g_subprocess_wait_async (proc, NULL, on_waited, g_object_ref (task));
+  spawn_free (sp);
+}
+
 void
 gt_run_async (const char          *cwd,
               const char *const   *args,
@@ -224,8 +301,22 @@ gt_run_async (const char          *cwd,
   g_autoptr (GTask) task = g_task_new (NULL, cancellable, callback, user_data);
   g_task_set_source_tag (task, gt_run_async);
 
+  /* Its own session (no controlling terminal: ssh and git can't prompt on one, and the process group can be killed
+   * as a whole) through the setsid program: a child_setup function would make GLib fork the whole of Files for every
+   * git run instead of using posix_spawn, which cost several ms per run on the main thread (PLAN.md §14.14). setsid
+   * execs git in place (same pid), so the pid is the group. Without the program: child_setup. */
+  static int have_setsid = -1;
+  static char *setsid_path;
+  if (have_setsid < 0)
+    {
+      setsid_path = g_find_program_in_path ("setsid");
+      have_setsid = setsid_path != NULL;
+    }
   g_autoptr (GStrvBuilder) argv = g_strv_builder_new ();
-  g_strv_builder_add_many (argv, "git", "-c", "core.askPass=", NULL);
+  if (have_setsid)
+    g_strv_builder_add (argv, setsid_path);
+  /* "-C": a working directory for the child would also make GLib fork instead of posix_spawn. */
+  g_strv_builder_add_many (argv, "git", "-C", cwd, "-c", "core.askPass=", NULL);
   if (flags & GT_RUN_READ)
     g_strv_builder_add (argv, "--no-optional-locks");
   gboolean creds = credentials != NULL && credentials->username != NULL && credentials->token != NULL;
@@ -247,7 +338,6 @@ gt_run_async (const char          *cwd,
   /* stdin: /dev/null (the default). */
   g_autoptr (GSubprocessLauncher) l = g_subprocess_launcher_new (G_SUBPROCESS_FLAGS_STDOUT_PIPE |
                                                                  G_SUBPROCESS_FLAGS_STDERR_PIPE);
-  g_subprocess_launcher_set_cwd (l, cwd);
   g_subprocess_launcher_setenv (l, "LC_ALL", "C", TRUE);
   g_subprocess_launcher_unsetenv (l, "LANGUAGE");
   g_subprocess_launcher_setenv (l, "GIT_TERMINAL_PROMPT", "0", TRUE);
@@ -261,38 +351,22 @@ gt_run_async (const char          *cwd,
       g_subprocess_launcher_setenv (l, "NU_GIT_USER", credentials->username, TRUE);
       g_subprocess_launcher_setenv (l, "NU_GIT_TOKEN", credentials->token, TRUE);
     }
-  g_subprocess_launcher_set_child_setup (l, child_setup, NULL, NULL);
-  GError *error = NULL;
-  GSubprocess *proc = g_subprocess_launcher_spawnv (l, (const char *const *) av, &error);
-  if (proc == NULL)
-    {
-      g_task_return_error (task, error);
-      return;
-    }
-  Job *job = g_new0 (Job, 1);
-  job->proc = proc;
-  job->out = g_memory_output_stream_new_resizable ();
-  job->err = g_subprocess_get_stderr_pipe (proc);
-  job->line = g_string_new (NULL);
-  job->error_text = g_string_new (NULL);
-  job->progress = progress;
-  job->progress_data = progress_data;
-  job->pending = 3;
-  const char *ident = g_subprocess_get_identifier (proc);
-  job->pid = ident != NULL ? strtol (ident, NULL, 10) : 0;
-  g_task_set_task_data (task, job, job_free);
-  if (cancellable != NULL)
-    {
-      job->cancellable = g_object_ref (cancellable);
-      job->cancel_id = g_cancellable_connect (cancellable, G_CALLBACK (on_cancelled), job, NULL);
-    }
-  if (timeout_ms > 0)
-    job->timeout_id = g_timeout_add (timeout_ms, on_timeout, job);
-  /* No cancellable on the reads: a cancelled run is killed, which ends them. */
-  g_output_stream_splice_async (job->out, g_subprocess_get_stdout_pipe (proc), G_OUTPUT_STREAM_SPLICE_CLOSE_TARGET,
-                                G_PRIORITY_DEFAULT, NULL, on_spliced, g_object_ref (task));
-  g_input_stream_read_bytes_async (job->err, READ_CHUNK, G_PRIORITY_DEFAULT, NULL, on_err_read, g_object_ref (task));
-  g_subprocess_wait_async (proc, NULL, on_waited, g_object_ref (task));
+  if (!have_setsid)
+    g_subprocess_launcher_set_child_setup (l, child_setup, NULL, NULL);
+  /* Started from a worker thread: starting a process forks the whole of Files (GLib's fast posix_spawn path doesn't
+   * apply when the child must close Files' other file descriptors), several ms each, which the window shouldn't
+   * wait for (PLAN.md §14.14). The output is read on this main context as before. */
+  Spawn *sp = g_new0 (Spawn, 1);
+  sp->task = g_steal_pointer (&task);
+  sp->launcher = g_object_ref (l);
+  sp->argv = g_strdupv (av);
+  sp->progress = progress;
+  sp->progress_data = progress_data;
+  sp->cancellable = cancellable != NULL ? g_object_ref (cancellable) : NULL;
+  sp->timeout_ms = timeout_ms;
+  g_autoptr (GTask) spawn = g_task_new (NULL, NULL, on_spawned, sp);
+  g_task_set_task_data (spawn, sp, NULL);
+  g_task_run_in_thread (spawn, spawn_thread);
 }
 
 GtRunResult *

@@ -122,7 +122,7 @@ cp "$ROOT"/tests/details-pane/data/{photo.jpg,pic.png} "$DP_TREE/pics/"
     ASAN_OPTIONS="log_path='$LOG/asan':detect_leaks=1:verify_asan_link_order=0" \
     UBSAN_OPTIONS="log_path='$LOG/ubsan':print_stacktrace=1" \
     LSAN_OPTIONS="suppressions='$ROOT/tools/lsan.supp':print_suppressions=0" \
-    G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings folder-views folder-icons details-pane" \
+    G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings folder-views folder-icons details-pane git" \
     GSETTINGS_BACKEND=memory GSETTINGS_SCHEMA_DIR="$ROOT/build/data" \
     GST_PLUGIN_FEATURE_RANK="fakeaudiosink:MAX" \
     DP_STALL_SAMPLER="${DP_STALL_SAMPLER:-}" \
@@ -449,6 +449,9 @@ gt_round() {
   cmd "sd-open $uri/src" 2; gt_expect 'bar=1'; gt_expect 'branch="main"'          # a folder inside
   cmd "sd-open $plain" 2; cmd gt-dump 0.3; gt_expect 'bar=0'                       # outside any repository
   cmd "sd-open $uri" 2; gt_expect 'bar=1'
+  cmd "st-set git-ide 'org.gnome.Builder.desktop'" 1; gt_expect 'ide="Builder"'                  # Open In (settings)
+  cmd "st-set git-ide 'no-such.desktop'" 1; gt_expect 'ide="Visual Studio Code"'               # gone: the first installed
+  cmd "st-reset git-ide" 0.5
   cmd "st-set git-status-bar false" 1; gt_expect 'bar=0'
   cmd "st-set git-status-bar true" 1; gt_expect 'bar=1'
   cmd "st-set git-enabled false" 1; cmd gt-dump 0.3
@@ -472,6 +475,16 @@ gt_round() {
   dp_expect '[extra: loading=0 refresh=0 spinner=0 card=[main|'
   cmd "dp-extra off" 1; cmd dp-toggle 1
   rm -rf "$hook_dir"
+  # A long history (400 commits, two branches merged now and then): the Git view shows 300 rows; the time to build
+  # them is in the log ("git history: N rows in … µs").
+  ( cd "$GT_DIR" && git init -q -b main long && cd long && for i in $(seq 1 200); do
+      git -c user.name=L -c user.email=l@x.invalid commit -q --allow-empty -m "Commit $i"
+      if [ $((i % 25)) -eq 0 ]; then git checkout -q -b side$i && git -c user.name=L -c user.email=l@x.invalid commit -q --allow-empty -m "Side $i" \
+        && git checkout -q main && git -c user.name=L -c user.email=l@x.invalid merge -q --no-ff -m "Merge side$i" side$i; fi
+    done )
+  local long_uri; long_uri="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_DIR/long")"
+  cmd dp-toggle 1.5; cmd "dp-extra on" 1; cmd "sd-open $long_uri" 4; dp_expect 'graph=1 commits=216 lanes=2'
+  cmd "dp-png $LOG/gt-pane-long.png" 1; cmd "dp-extra off" 1; cmd dp-toggle 1
   # Clone Repository… (§14.2 items 5–6): into a folder outside any repository (the bar shows the clone there), the
   # dialog's checks, then from a local smart-HTTP server with basic auth through the sign-in dialog.
   # The driver splits "URL NAME" at a space, and this checkout's path has one: clone from a copy in the temp folder.
@@ -561,7 +574,9 @@ ours_pattern="libnautilus-utils[.]so|src/(${our_files})[.]c:"
 # with it: one from the pane's title). Never memory we own (PLAN.md §13.8 D7). And Mesa's EGL display: GTK
 # initialises GL once per process the first time something needs it (here: the details pane's first video
 # sink) and never terminates EGL at exit (D11).
-third_party_alloc='_gi[.]cpython|libpython|pygi_|libfontconfig|libEGL_mesa'
+# And libwayland-client: GTK presenting a popup (the sidebar's OS menu, the Git view's hover card) makes Wayland
+# protocol objects GTK may still hold at exit (PLAN.md §14.14); a popover we leaked would show up as its widget.
+third_party_alloc='_gi[.]cpython|libpython|pygi_|libfontconfig|libEGL_mesa|libwayland-client'
 for r in "${reports[@]}"; do
   hits="$(awk -v RS= -v pat="$ours_pattern" -v tp="$third_party_alloc" '
     $0 !~ pat { next }

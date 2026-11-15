@@ -26,6 +26,14 @@ on_pane_view (gboolean git, gpointer data)
   nu_settings_set_git_pane_git (git);
 }
 
+/* What was applied last: only what changed is applied again — rebuilding every pane's Git page or looking up the
+ * installed IDEs on any Git setting change kept the main loop busy for about a second under ASan (PLAN.md §14.14). */
+static struct
+{
+  gboolean applied;
+  gboolean enabled, graph, pane_git;
+} last;
+
 static void
 apply (void)
 {
@@ -34,11 +42,20 @@ apply (void)
   gt_hook_configure (c->git_enabled, c->git_status_bar, c->git_ide);
   gt_columns_set_enabled (c->git_enabled);
   /* The details pane's "Details | Git" (PLAN.md §14.2 item 4); the choice is remembered. */
-  dp_pane_set_extra_selected (c->git_pane_git);
-  if (c->git_enabled)
-    dp_pane_set_extra ("Git", gt_page_new, on_pane_view, gt_page_describe, GINT_TO_POINTER (c->git_history_graph));
-  else
-    dp_pane_set_extra (NULL, NULL, NULL, NULL, NULL);
+  if (!last.applied || last.pane_git != c->git_pane_git)
+    dp_pane_set_extra_selected (c->git_pane_git);
+  if (!last.applied || last.enabled != c->git_enabled || last.graph != c->git_history_graph)
+    {
+      if (c->git_enabled)
+        dp_pane_set_extra ("Git", gt_page_available, gt_page_new, on_pane_view, gt_page_describe,
+                           GINT_TO_POINTER (c->git_history_graph));
+      else
+        dp_pane_set_extra (NULL, NULL, NULL, NULL, NULL, NULL);
+    }
+  last.applied = TRUE;
+  last.enabled = c->git_enabled;
+  last.graph = c->git_history_graph;
+  last.pane_git = c->git_pane_git;
 }
 
 static void
@@ -91,7 +108,8 @@ gt_feature_shutdown (void)
 #endif
   nu_settings_remove_listener (settings_listener);
   settings_listener = 0;
-  dp_pane_set_extra (NULL, NULL, NULL, NULL, NULL);
+  dp_pane_set_extra (NULL, NULL, NULL, NULL, NULL, NULL);
+  last.applied = FALSE;
   gt_hook_shutdown ();
   gt_columns_shutdown ();
   gt_ops_shutdown ();

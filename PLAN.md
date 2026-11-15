@@ -148,7 +148,7 @@ findings and the smoke test is clean.
 | 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 5 | Folder icons by name — every folder with a given name (e.g. `node_modules`) gets a chosen icon, as Files' own custom icon (§12) | `src/folder-icons/` | **v1 done** (2026-11-14), pending the owner's final check |
 | 6 | Details pane — a pane right of the folder view with the selected item's preview and properties (media, image, PDF), toggled from the header bar (§13) | `src/details-pane/` | **v5 merged** (PR #8, 2026-11-15) |
-| 7 | Git — status bar (branch, ↑/↓, push/pull/sync, Open in IDE), branches, Git columns, Git view in the details pane, Clone Repository… (§14) | `src/git/` | **planned** (2026-11-15) |
+| 7 | Git — status bar (branch, ↑/↓, push/pull/sync, Open in IDE), branches, Git columns, Git view in the details pane, Clone Repository… (§14) | `src/git/` | **v1 done** (2026-11-15), PR pending the owner's review |
 
 Open items:
 
@@ -2410,3 +2410,39 @@ history, chips, hover card with message and stats, modified item, two items, pla
   first read takes 4 s (a slow fsmonitor hook — in the temp folder: git runs it through the shell and this checkout's
   path has a space) → spinner in the bar and the card, then the branch. Git 61 checks; full ASan smoke **PASS**
   (folder views 86 / 0 wrong, details pane 69, git 61); `check-safety.sh` all PASS.
+
+### 14.14 Phase 6 results (2026-11-15) — settings, docs, hardening
+
+- **Settings → Git:** "Open In" (First Installed (<name>), or any installed IDE by desktop ID; pending until Apply).
+  Smoke: choosing Builder switches the bar's button; a desktop ID that isn't installed falls back to the first one.
+- **README:** Git section (status bar, columns, Git view, clone, sign-in, limitations), features table, settings
+  table, requirements (git), project layout, `SMOKE_ONLY=gt`. RPM spec: `Recommends: git-core`; `git-core` and
+  `python3` for `%check`.
+- **Main-thread timings** (`SMOKE_PERF=1`, stall sampler, a 216-commit history with merges):
+  - Building the history's rows took ~20 ms in one go → added 40 per main-loop turn.
+  - Every selection change rebuilt the whole Git page (card, history, git reads), also while the Details view was
+    shown: "show" steps of 20–70 ms. The pane now only asks whether the extra view exists (stat only) on every show
+    and builds its page only while it is the view shown; within the same repository the page is kept and only its
+    selection line is read again.
+  - What remained (~20 ms when a Git page is made) was **starting git**: GLib forks the whole of Files for each git
+    process whenever posix_spawn can't be used (a child_setup function, a working directory, or closing the parent's
+    file descriptors in the child — the default, kept: git shouldn't inherit Files' files). git is now started
+    through the `setsid` program (no child_setup; falls back to it without the program) with `git -C <folder>` (no
+    working directory), **from a worker thread**; its output is read on the main context as before. Process-group
+    kills on timeout / cancel unchanged (setsid execs git in place). After this, the sampled slow steps were the
+    test session's own debug logging and freeing an old page when moving to another repository.
+- Smoke `gt_round`: 63 git + 22 pane checks (incl. the long history: 216 commits, 2 lanes).
+- **Found by the final full ASan runs:**
+  - The Git card's selection line could show a stale state ("Unchanged" after a change): an older, slower selection
+    read could land after a newer one. Selection reads now carry a generation; only the newest is applied.
+  - A Git setting change re-applied everything (every pane's Git page rebuilt, the installed IDEs looked up again),
+    which kept the main loop busy for about a second under ASan — long enough for the test driver's next command to
+    overwrite one it hadn't read yet (the "missed command" flake of §14.7). Only what changed is applied now.
+  - The sidebar's OS-menu test failed once ("OS menu UNAVAILABLE"; passed on the re-run and before): intermittent,
+    in the sidebar test, not Git.
+  - A 96-byte leak allocated by libwayland-client when GTK presented the Git view's hover card (like the sidebar's
+    known popover leak, GTK's own Wayland objects of a popup it showed); the popover itself isn't leaked. The smoke's
+    leak filter now counts libwayland-client allocations as third-party (a leaked popover would still show as its
+    widget).
+- **Final:** `check-safety.sh` all PASS; full ASan smoke: folder views 86 / 0 wrong, details pane 70, git 63 — PASS
+  with the filter above; Git rounds under ASan twice clean after the fixes.

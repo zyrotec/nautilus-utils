@@ -26,12 +26,17 @@ BuildRequires:  pkgconfig(gexiv2-0.16)
 # For %check: the natural-order test pins LC_ALL=en_US.utf8; type guessing by name needs the MIME database.
 BuildRequires:  glibc-langpack-en
 BuildRequires:  shared-mime-info
+# For %check: the Git tests run the real git (and a local HTTP remote in Python); they skip without them.
+BuildRequires:  git-core
+BuildRequires:  python3
 
 # The extension hooks into Nautilus' private grid widgets: it was verified against Nautilus 51.1 and
 # disables itself (one warning) if a Nautilus update changes them.
 Requires:       nautilus%{?_isa} >= 51
 # Audio cover art comes from the system audio thumbnailer (PLAN.md D2).
 Requires:       gst-thumbnailers
+# The Git features run the installed git (they stay off without it).
+Recommends:     git-core
 
 %description
 A Nautilus extension that adds extra features to GNOME Files.

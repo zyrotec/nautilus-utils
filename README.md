@@ -2,7 +2,7 @@
 
 # 🗂️ nautilus-utils
 
-**Extra features for GNOME Files (Nautilus): folder previews, drive usage bars, per-folder views, folder icons by name and a details pane.**
+**Extra features for GNOME Files (Nautilus): folder previews, drive usage bars, per-folder views, folder icons by name, a details pane and Git.**
 
 Shipped as one native C extension module (`libnautilus-utils.so`) with its own settings window.
 
@@ -26,6 +26,7 @@ Shipped as one native C extension module (`libnautilus-utils.so`) with its own s
   - [👁️ Folder views](#️-folder-views)
   - [🎨 Folder icons by name](#-folder-icons-by-name)
   - [📋 Details pane](#-details-pane)
+  - [🌿 Git](#-git)
   - [⚙️ Settings](#️-settings)
 - [📦 Installation](#-installation)
   - [✅ Requirements](#-requirements)
@@ -49,6 +50,7 @@ Shipped as one native C extension module (`libnautilus-utils.so`) with its own s
 | 👁️ | **Folder views** | Every folder remembers its own view (grid or list) and icon size. |
 | 🎨 | **Folder icons by name** | Give every folder with a certain name (e.g. `node_modules`) its own icon, everywhere. |
 | 📋 | **Details pane** | A pane right of the folder view with the selected item's preview and properties, like Windows File Explorer. |
+| 🌿 | **Git** | Inside a repository: a status bar (branch, commits to push and pull, push / pull / sync, Open in IDE), Git columns in the list view, a Git view with the history in the details pane, and *Clone Repository…*. |
 | ⚙️ | **Settings** | One settings window for all features, opened from Files' main menu. |
 
 Every feature can be switched off on its own. Files keeps working normally if a Nautilus update changes
@@ -251,6 +253,47 @@ file or folder and its properties. Drag its left edge to resize it.
 
 </details>
 
+### 🌿 Git
+
+Inside a Git repository Files gets a **status bar** under the folder view (below the details pane's strip when
+that is at the bottom). It uses the `git` you have installed, so your SSH keys, credential helpers and `gh` login
+work exactly as in a terminal, and it never changes a repository unless you click something.
+
+- 🌿 **Branch:** the branch checked out; its menu lists your branches and the remote ones (with search) —
+  click one to switch to it — and **Create** makes a new branch here and switches to it.
+- ↕️ **↑ / ↓:** commits to push and to pull. Its menu shows the last commit and **Push** (the first push of a new
+  branch publishes it), **Pull** (fast-forward only: never a merge or a conflict you didn't ask for) and **Sync**
+  (checks the remote for new commits and changes nothing else).
+- ⏳ **Progress:** what is running, and git's own message (with a copy button) when something fails.
+- 🧑‍💻 **Open in IDE:** VS Code, Zed, GNOME Builder, JetBrains IDEs… — the first one installed, or the one you
+  choose in Settings.
+- 🔄 **Up to date by itself:** commits, checkouts and fetches — in Files or in a terminal — show at once. A
+  spinner shows while a repository loads; if git fails, its message and a refresh button do.
+- 📊 **Git columns** for the list view (switch them on with Files' own *Visible Columns*, right-click the column
+  headers): **Git Status** (Modified, Added, Untracked, Ignored, Conflict…, "Contains changes" for folders), **Last
+  Commit**, **Commit Hash** and **Commit Author**.
+- 📋 **Git in the details pane:** a *Details | Git* switch at the top of the pane (at the right) shows the branch
+  (with how far it is ahead of / behind the main branch) instead of the preview, and the history: every commit with
+  its author, time and branch / tag labels, with a graph of the branch lines (or as a plain list). Hover a commit
+  for the whole message, its hashes and how much it changed.
+- 📥 **Clone Repository…** in the background menu of a folder: paste the link (or have it taken from the
+  clipboard), check the folder name, press **Clone**. The progress shows in the status bar; the new folder is
+  selected when it is done.
+- 🔐 **Sign in:** when a remote needs a username and token (HTTPS) that git doesn't have, a dialog asks for them
+  and the operation runs again (for GitHub: a personal access token). They are handed to git for that one run;
+  your credential helper — or, if you tick it, the keyring through `git-credential-libsecret` — keeps them.
+
+<details>
+<summary><b>⚠️ Known limitations</b></summary>
+
+- **Nautilus updates may switch the status bar off.** It sits in Nautilus' private window; the columns and *Clone
+  Repository…* use Files' public extension API.
+- Local folders only: network shares and other non-local locations get no Git features (git is never run on them).
+- The columns show the last commit of the last 5000 commits per folder; files changed only before that stay empty.
+- Merge conflicts, staging and committing are left to your terminal or IDE.
+
+</details>
+
 ### ⚙️ Settings
 
 Files' main menu (☰) gets a **Nautilus Utils Settings** entry above *Preferences*. The window lists the
@@ -274,6 +317,7 @@ press **Apply**; closing the window without Apply discards them.
 | 💽 **Sidebar Drives** | On/off, bar colour (accent colour, a custom colour, or a two-colour gradient), show/hide the usage bars and the size labels, slide the eject button in only on hover. |
 | 👁️ **Folder Views** | Remember the view per folder (on/off) and **Reset All Folder Views…**, which asks for confirmation and acts right away (it isn't a setting waiting for Apply). |
 | 🎨 **Folder Icons** | Icons by folder name (on/off) and the rules: folder name, icon (Choose Icon…), remove; add a rule with **+**. Invalid or duplicate names are marked red. |
+| 🌿 **Git** | On/off; status bar; history graph or plain list in the details pane; the IDE for *Open in IDE*. |
 | 📋 **Details Pane** | On/off; position (right or bottom); border, margin, padding, corner radius; line under the header bar; icon size (16–256 px in steps of 16), pictures in a box of their shape or a fixed box, icon next to the name, centred name, preview box corner radius and margin; blurred background behind pictures; several selected: copy the folder previews' look, spacing, depth effect, shadow, rotation, bottom fade, card behind icons; for pictures, videos and PDFs: squares the size of icons, keep aspect ratio, border (colour, width), corner radius. Whether the pane is shown, its width and its height are kept as you leave them. |
 
 The settings are stored with GSettings (schema `io.github.zyrotec.NautilusUtils`; inspect them with
@@ -294,6 +338,7 @@ run with their defaults, the window says so, and Files logs one warning.
 | 🧰 GLib | 2.80 or newer | |
 | 🔨 meson + ninja, a C11 compiler | meson 1.0 or newer | Building. |
 | 🎵 gst-thumbnailers | optional | Album covers in folder previews. |
+| 🌿 git | any recent | The Git features (without it they stay off). |
 
 In practice this means a distribution with **GNOME 51**:
 
@@ -532,6 +577,7 @@ tools/smoke-nautilus.sh --auto 120 DIR   # unattended: scripted scroll/zoom/hove
 SMOKE_FAKE_NETWORK="User Drive" tools/smoke-nautilus.sh --auto 120 DIR   # also exercise the network list
 SMOKE_TOGGLES=5 tools/smoke-nautilus.sh --auto 60 DIR   # fewer settings on/off rounds (default 25)
 SMOKE_ONLY=dp tools/smoke-nautilus.sh --auto 20 DIR      # only the details-pane round
+SMOKE_ONLY=gt tools/smoke-nautilus.sh --auto 20 DIR      # only the Git round (test repositories, a local HTTP remote)
 SMOKE_PERF=1 SMOKE_ONLY=dp tools/smoke-nautilus.sh --auto 20 DIR   # optimised build, no sanitizers: timings + thumbnail checks
 DP_STALL_SAMPLER=1 SMOKE_PERF=1 SMOKE_ONLY=dp tools/smoke-nautilus.sh --auto 20 DIR   # log where slow pane steps wait
 ```
@@ -595,6 +641,16 @@ build/tests/folder-preview/bench-core DIR  # per-stage timings of the pipeline o
 | `src/details-pane/dp_box.c` | The preview box: media in their own shape, icons in a fixed box |
 | `src/details-pane/dp_hook.c` | **Unsupported**: hooks into Nautilus' private window (button, pane next to the tabs, selection) |
 | `src/details-pane/config.h` | Tunable constants |
+| `src/git/gt_parse.c` | Git: parsers for git's output (status, branches, history, graph layout, errors, URLs) |
+| `src/git/gt_run.c` | Git: runs `git` in the background (no prompts, timeout, cancel, progress, one-shot credentials) |
+| `src/git/gt_info.c` | Git: a repository's branch / counts / last commit, re-read when its git folder changes |
+| `src/git/gt_ops.c` | Git: push / pull / sync / switch / clone operations and their progress |
+| `src/git/gt_bar.c` | Git: the status bar and its menus |
+| `src/git/gt_columns.c` | Git: the list-view columns and *Clone Repository…* (Files' public extension API) |
+| `src/git/gt_page.c` | Git: the details pane's Git view (branch card, history graph, hover card) |
+| `src/git/gt_clone.c`, `gt_auth.c` | Git: the clone and sign-in dialogs |
+| `src/git/gt_hook.c` | **Unsupported**: the status bar in Nautilus' private window |
+| `src/common/nu_content.c` | The column around Files' tabs that the details pane and the Git bar share |
 | `src/common/nu_settings.c` | Shared settings service (GSettings snapshot + change notifications) |
 | `src/settings/settings_dialog.c` | The "Nautilus Utils Settings" window |
 | `src/settings/folder_icons_page.c` | Its "Folder Icons" page |

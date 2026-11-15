@@ -45,6 +45,8 @@ typedef struct
   gboolean    enabled;
   gboolean    show_bar;
   GAppInfo   *ide;       /* owned or NULL */
+  char       *ide_choice; /* the desktop ID it was looked up for */
+  gboolean    ide_looked_up;
   GType       window_type;
   gboolean    warned;
   gboolean    icons_added;
@@ -462,11 +464,21 @@ gt_hook_configure (gboolean enabled, gboolean show_bar, const char *ide)
 {
   if (gh == NULL)
     return;
-  g_clear_object (&gh->ide);
-  gh->ide = gt_ide_get (ide);
-  for_each_hook (apply_ide);
-  gh->show_bar = show_bar;
-  for_each_hook (update);
+  /* The IDE is looked up again only when the choice changed (it scans the installed applications). */
+  if (!gh->ide_looked_up || g_strcmp0 (gh->ide_choice, ide) != 0)
+    {
+      gh->ide_looked_up = TRUE;
+      g_free (gh->ide_choice);
+      gh->ide_choice = g_strdup (ide);
+      g_clear_object (&gh->ide);
+      gh->ide = gt_ide_get (ide);
+      for_each_hook (apply_ide);
+    }
+  if (gh->show_bar != show_bar)
+    {
+      gh->show_bar = show_bar;
+      for_each_hook (update);
+    }
   if (enabled == gh->enabled)
     return;
   gh->enabled = enabled;
@@ -504,6 +516,7 @@ gt_hook_shutdown (void)
   g_free (gh->reveal_name);
   uninstall_all ();
   g_clear_object (&gh->ide);
+  g_free (gh->ide_choice);
   g_clear_pointer (&gh, g_free);
 }
 
