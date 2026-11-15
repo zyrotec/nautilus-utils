@@ -198,7 +198,7 @@ Properties.
 
 ### 📋 Details pane
 
-Like File Explorer's details pane: a **Details Pane** button right of *View Options* (or <kbd>Alt</kbd>
+Like File Explorer's details pane: a **Details Pane** button left of *View Options* (or <kbd>Alt</kbd>
 <kbd>Shift</kbd> <kbd>P</kbd>) shows a pane right of the folder view with a large preview of the selected
 file or folder and its properties. Drag its left edge to resize it.
 

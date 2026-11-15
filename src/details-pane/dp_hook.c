@@ -49,6 +49,8 @@ typedef struct
   gulong              slot_loc_id;   /* notify::location on @slot */
   gulong              active_id;     /* notify::active-slot on the window */
   gulong              vc_visible_id; /* notify::visible on @view_controls */
+  guint               place_id;      /* Retries placing the button left of View Options, or 0 */
+  guint               place_tries;
   gulong              position_id;   /* notify::position on @paned */
   guint               debounce_id;   /* Pending selection update, or 0 */
   guint               width_id;      /* Pending width apply / save, or 0 */
@@ -492,6 +494,7 @@ static void
 win_hook_free (gpointer data)
 {
   WinHook *hook = data;
+  g_clear_handle_id (&hook->place_id, g_source_remove);
   g_clear_handle_id (&hook->debounce_id, g_source_remove);
   g_clear_handle_id (&hook->width_id, g_source_remove);
   g_weak_ref_clear (&hook->toolbar_view);
@@ -510,6 +513,62 @@ win_hook_free (gpointer data)
 /* The widget the line under the header bar goes on (P15): the toolbar view's top bar (the box with libadwaita's
  * "top-bar" class) around Files' header bar, which ends exactly where the content (and the pane's border) starts;
  * the header bar itself sits 3 px inside it (Nautilus 51.1), so a line on it left a gap. Falls back to @header. */
+/* The View Options (⋮) button in the header's view controls: the last GtkMenuButton in a GtkBox there (the owner's
+ * other extension replaces Files' split button with grid / list / columns / ⋮). NULL with stock Files, whose menu
+ * button is part of an AdwSplitButton (never touched). */
+static GtkWidget *
+view_options_button (GtkWidget *w)
+{
+  if (ADW_IS_SPLIT_BUTTON (w) || GTK_IS_POPOVER (w))
+    return NULL;
+  GtkWidget *found = NULL;
+  for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL; c = gtk_widget_get_next_sibling (c))
+    {
+      if (GTK_IS_MENU_BUTTON (c) && GTK_IS_BOX (w))
+        found = c;
+      else
+        {
+          GtkWidget *inner = view_options_button (c);
+          if (inner != NULL)
+            found = inner;
+        }
+    }
+  return found;
+}
+
+/* Moves the button directly left of View Options (⋮) when that is a button of its own in the view controls (owner,
+ * 2026-11-15). The owner's other extension adds ⋮ after Files has built the header, so this is retried for a while
+ * after the window is hooked. With stock Files (no such button) the button stays left of the view controls.
+ * TRUE once placed. */
+static gboolean
+place_button (WinHook *hook)
+{
+  g_autoptr (GtkWidget) button = g_weak_ref_get (&hook->button);
+  g_autoptr (GtkWidget) vc = g_weak_ref_get (&hook->view_controls);
+  GtkWidget *options = vc != NULL ? view_options_button (vc) : NULL;
+  if (button == NULL || options == NULL)
+    return FALSE;
+  if (gtk_widget_get_next_sibling (button) != options)
+    {
+      /* @button (our ref) keeps it alive while it moves. */
+      gtk_widget_unparent (button);
+      gtk_widget_insert_before (button, gtk_widget_get_parent (options), options);
+    }
+  return TRUE;
+}
+
+static gboolean
+place_retry (gpointer data)
+{
+  WinHook *hook = data;
+  if (place_button (hook) || ++hook->place_tries >= 40) /* 10 s */
+    {
+      hook->place_id = 0;
+      return G_SOURCE_REMOVE;
+    }
+  return G_SOURCE_CONTINUE;
+}
+
 static GtkWidget *
 line_target (GtkWidget *header)
 {
@@ -587,9 +646,12 @@ install (GtkWidget *window)
                                   GTK_ACCESSIBLE_PROPERTY_KEY_SHORTCUTS, "Alt+Shift+P", -1);
   gtk_widget_set_valign (button, GTK_ALIGN_CENTER);
   gtk_actionable_set_action_name (GTK_ACTIONABLE (button), ACTION_PREFIX "." ACTION_NAME);
-  gtk_widget_insert_after (button, vc_box, vc);
+  /* Left of the view controls for now; moved directly left of View Options (⋮) once it exists (place_button). */
+  gtk_widget_insert_before (button, vc_box, vc);
   g_object_bind_property (vc, "visible", button, "visible", G_BINDING_SYNC_CREATE);
   g_weak_ref_init (&hook->button, button);
+  if (!place_button (hook))
+    hook->place_id = g_timeout_add (250, place_retry, hook);
   hook->vc_visible_id = g_signal_connect_object (vc, "notify::visible", G_CALLBACK (on_view_controls_visible),
                                                  window, 0);
 
@@ -930,6 +992,11 @@ dp_hook_debug_command (const char *cmd)
             g_message ("dp geom: %s.%s y=%.1f..%.1f x=%.1f..%.1f", G_OBJECT_TYPE_NAME (w), gtk_widget_get_css_name (w),
                        r.origin.y, r.origin.y + r.size.height, r.origin.x, r.origin.x + r.size.width);
         }
+      g_autoptr (GtkWidget) button = g_weak_ref_get (&hook->button);
+      GtkWidget *next = button != NULL ? gtk_widget_get_next_sibling (button) : NULL;
+      GtkWidget *prev = button != NULL ? gtk_widget_get_prev_sibling (button) : NULL;
+      g_message ("dp geom: button prev=%s next=%s", prev != NULL ? G_OBJECT_TYPE_NAME (prev) : "-",
+                 next != NULL ? G_OBJECT_TYPE_NAME (next) : "-");
       graphene_rect_t r;
       if (pane != NULL && gtk_widget_compute_bounds (GTK_WIDGET (pane), hook->window, &r))
         g_message ("dp geom: pane y=%.1f..%.1f x=%.1f..%.1f", r.origin.y, r.origin.y + r.size.height, r.origin.x,

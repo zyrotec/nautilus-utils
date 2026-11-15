@@ -1676,7 +1676,8 @@ properties. A toggle button **next to the View Options button** in the header ba
 #### 13.1.1 Toggle and placement
 
 - A `GtkToggleButton` (icon `sidebar-show-right-symbolic`, tooltip "Details Pane", accessible label the
-  same) placed directly **right of** Nautilus' view controls (`NautilusViewControls`) in the header bar. The
+  same) placed directly **right of** Nautilus' view controls (`NautilusViewControls`) in the header bar (v1; since
+  2026-11-15 directly **left of** View Options ⋮, see §13.14 "button"). The
   owner's View Options button (⋮) lives inside those view controls (another extension replaces the stock
   split button with grid / list / columns / ⋮), so our button ends up right of ⋮; with stock Files it sits
   right of the split button. It follows the view controls' visibility (hidden when Files moves them to the
@@ -2105,3 +2106,9 @@ selection flickers; a blurred background behind pictures; and look into the 17�
   view's top bar (header y 3–43, top bar 0–46, content from 46; measured with the new driver command `dp-geom`), so
   the line drawn on the header bar ended 3 px above the pane. It is now drawn on the top bar (libadwaita's
   `top-bar` box), which ends where the content starts — also below the tab bar when several tabs are open.
+- **Button placement (owner, 2026-11-15: "on the left side of the View Options button", confirmed: directly left of
+  ⋮):** the button goes directly before the last `GtkMenuButton` in a `GtkBox` inside the view controls (the owner's
+  other extension: grid / list / columns, then ⋮); never inside an `AdwSplitButton` (stock Files), where it stays
+  left of the view controls. That extension adds ⋮ after Files builds the header, so placing is retried every
+  250 ms for up to 10 s after a window is hooked. Verified in Files (`dp-geom`: prev=MyComputerToggleButton
+  next=GtkMenuButton; `dp-header-line.png`).
