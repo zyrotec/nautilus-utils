@@ -78,7 +78,7 @@ exercise_once (void)
   const GType *types = NULL;
   int n_types = 0;
   loader->list_types (&types, &n_types);
-  g_assert_cmpint (n_types, ==, 2); /* folder preview + folder icons info providers */
+  g_assert_cmpint (n_types, ==, 3); /* folder preview + folder icons info providers, Git columns (column + info) */
 
   g_autoptr (GPtrArray) objects = g_ptr_array_new_with_free_func (g_object_unref);
   for (int i = 0; i < n_types; i++)
@@ -91,6 +91,16 @@ exercise_once (void)
     {
       GObject *obj = g_ptr_array_index (objects, i);
       g_assert_true (NAUTILUS_IS_INFO_PROVIDER (obj));
+      if (NAUTILUS_IS_COLUMN_PROVIDER (obj))
+        {
+          /* The Git columns (PLAN.md §14.8). */
+          GList *cols = nautilus_column_provider_get_columns (NAUTILUS_COLUMN_PROVIDER (obj));
+          g_assert_cmpuint (g_list_length (cols), ==, 4);
+          g_autofree char *attr = NULL;
+          g_object_get (cols->data, "attribute", &attr, NULL);
+          g_assert_cmpstr (attr, ==, "nu_git_status");
+          g_list_free_full (cols, g_object_unref);
+        }
       g_autoptr (FakeFileInfo) dir = fake_file_info_new ("file:///tmp/module-test", TRUE);
       NautilusOperationHandle *handle = NULL;
       guint n_invoked = 0;

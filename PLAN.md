@@ -2311,4 +2311,9 @@ modified, added, untracked, ignored, a folder with changes).
   a terminal commit updates message, author and status. `gt-columns.png`.
 - Full ASan smoke (every round): all functional checks pass (folder views 86 tab checks / 0 wrong, details pane 48,
   git 39); the one flagged leak is the known intermittent GTK popover leak of the sidebar OS-menu test (Nautilus'
-  `show_row_popover`). `check-safety.sh` all PASS.
+  `show_row_popover`).
+- `check-safety.sh` first FAILED (asan, valgrind, coverage: the module test) — the Phase 3 commit was made before
+  reading that result (corrected in the next commit): the module now lists 3 types (expected 2), and the test calls
+  `cancel_update` with a handle the provider never handed out, which the columns provider treated as its own
+  (it would have written into it). Fixed: handles handed to Files are tracked and unknown ones ignored; the test
+  expects 3 types and checks the Git column provider (4 columns, `nu_git_status`). Then all PASS.

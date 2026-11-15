@@ -64,6 +64,7 @@ typedef struct
 } RootEntry;
 
 static gboolean    enabled = TRUE;
+static GHashTable *live;   /* Pending* handed to Files as handles (borrowed): cancel_update checks against it */
 static GHashTable *dirs;   /* folder path → Dir* */
 static GHashTable *roots;  /* folder path → RootEntry* */
 static guint       sweep_id;
@@ -105,6 +106,8 @@ static void
 pending_free (gpointer data)
 {
   Pending *p = data;
+  if (live != NULL)
+    g_hash_table_remove (live, p);
   g_object_unref (p->provider);
   g_object_unref (p->file);
   g_closure_unref (p->done);
@@ -436,6 +439,9 @@ update_file_info (NautilusInfoProvider *provider, NautilusFileInfo *file, GClosu
   p->name = g_strdup (name);
   p->is_dir = is_dir;
   g_ptr_array_add (d->waiting, p);
+  if (live == NULL)
+    live = g_hash_table_new (NULL, NULL);
+  g_hash_table_add (live, p);
   *handle = (NautilusOperationHandle *) p;
   if (d->cancel == NULL)
     start_read (d);
@@ -446,8 +452,10 @@ static void
 cancel_update (NautilusInfoProvider *provider, NautilusOperationHandle *handle)
 {
   (void) provider;
-  /* Files won't hear back about it (it asked us not to); the read goes on for the others. */
-  ((Pending *) handle)->cancelled = TRUE;
+  /* Files won't hear back about it (it asked us not to); the read goes on for the others. A handle we didn't
+   * hand out (or already answered) is ignored. */
+  if (live != NULL && g_hash_table_contains (live, handle))
+    ((Pending *) handle)->cancelled = TRUE;
 }
 
 static void
@@ -473,6 +481,8 @@ drop_all (void)
   g_clear_handle_id (&sweep_id, g_source_remove);
   g_clear_pointer (&dirs, g_hash_table_unref);
   g_clear_pointer (&roots, g_hash_table_unref);
+  if (live != NULL && g_hash_table_size (live) == 0)
+    g_clear_pointer (&live, g_hash_table_unref);
 }
 
 void
