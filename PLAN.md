@@ -2250,3 +2250,38 @@ modified, added, untracked, ignored, a folder with changes).
   progress over file:// clone; credentials against the local smart-HTTP server: none → needs credentials, wrong →
   refused, right → clone + push, nothing kept afterwards). Tests run git without the user's configuration.
 - `check-safety.sh` all PASS; coverage gt_parse 92 %, gt_repo 89 %, gt_run 96 %.
+
+### 14.7 Phase 2 results (2026-11-15)
+
+- **Shared content column** (`src/common/nu_content.c`): wraps Files' tab view in a vertical box where it is (toolbar
+  view content or a paned child), reference-counted; the last release puts the tab view back. The details pane now
+  puts the column (not the tab view) into its paned; the Git bar is a bottom bar of the column. Either feature
+  works without the other; details-pane smoke still 50/50 after the change.
+- `gt_info.c` (per repository, shared by windows: `status --branch --untracked-files=no` + `log -1`, re-read when
+  the git folder changes — HEAD, index, refs, packed-refs, FETCH_HEAD; worktrees: their own git folder + the common
+  one — coalesced 250 ms, lock files ignored), `gt_ops.c` (operations list for the progress popover; running ones
+  are never killed on feature off: a push or checkout stopped halfway could leave the repository half done),
+  `gt_ide.c` (installed IDEs by desktop ID; the owner's VS Code is `com.microsoft.VSCode.desktop`), `gt_bar.c`
+  (the bar: branch popover with search, local / remote sections, Create; counts popover with the last commit,
+  upstream, Push / Pull / Sync; progress popover with git's message and a copy button; Open in IDE), `gt_hook.c`
+  (one bar per window, follows the active tab's location; native folders only), branch icon bundled as a resource
+  (no theme has one). Settings keys `git-enabled`, `git-status-bar`, `git-ide` (tab in Phase 6).
+- Behaviour choices: Pull is `--ff-only` (never a merge or conflict nobody asked for; git explains when it can't);
+  Sync is `fetch` (changes nothing else); the first Push of a branch publishes it on `origin` (else the first
+  remote) with `--set-upstream`; switching to a remote branch uses `git switch --guess NAME` (the local branch, or a
+  new one tracking the remote). Progress text only while something runs (narrow column with the pane open).
+- Smoke round `gt_round` (28 checks; repository with a local bare remote and a second clone): branch, counts,
+  Sync (↓1), Pull, a commit made outside Files seen through the monitor (↑1), Push, Create + publish
+  `topic/smoke`, switch to `origin/feature`, a failing switch (git's message, branch unchanged), back to main, a
+  subfolder, a folder outside any repository (hidden), bar off / on, feature off / on. Renders: `gt-bar.png`,
+  `gt-bar-pane.png`.
+- Unit test `test-gt-info` (info shared, a commit made outside seen via the monitor, fetch → ↓1, pull --ff-only
+  refused when diverged, push, detached HEAD, released info forgotten, a folder that is no repository).
+- `check-safety.sh` all PASS.
+- Test driver flake seen twice in 5 runs: one `gt-expect` right after opening the repository from outside it got
+  no answer (not a failure, just missing); not reproduced with a log line added (kept as a debug message, "driver
+  read: …", to show next time whether the Git handler saw the command).
+- Valgrind found: (1) `test-gt-info` waited for "the next read", which under valgrind's slowdown can be a read that
+  started before the change → it now waits for the expected state; (2) a third-party leak in `test-dp-meta`:
+  libsrt (GStreamer's SRT plugin, dlopen'ed by decodebin) allocates in a C++ static initializer — suppressed
+  narrowly (`libsrt-static-init`). Then `check-safety.sh` all PASS.

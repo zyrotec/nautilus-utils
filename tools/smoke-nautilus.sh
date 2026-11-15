@@ -126,7 +126,6 @@ cp "$ROOT"/tests/details-pane/data/{photo.jpg,pic.png} "$DP_TREE/pics/"
     GSETTINGS_BACKEND=memory GSETTINGS_SCHEMA_DIR="$ROOT/build/data" \
     GST_PLUGIN_FEATURE_RANK="fakeaudiosink:MAX" \
     DP_STALL_SAMPLER="${DP_STALL_SAMPLER:-}" \
-    NU_GT_SPIKE="${NU_GT_SPIKE:-}" \
     SD_DEBUG_FAKE_NETWORK="${SMOKE_FAKE_NETWORK:-}" \
     FP_DEBUG_DIR="$CMD_DIR" FP_DEBUG_ROOT="$DIR" ${SMOKE_XDG_CACHE:+"XDG_CACHE_HOME=$SMOKE_XDG_CACHE"} \
     nautilus --new-window "$DIR" >"$LOG/nautilus.log" 2>&1 &
@@ -364,25 +363,52 @@ dp_round() {
   cmd "sd-open $DIR_URI" 2
 }
 
-# Git (PLAN.md §14) Phase 0 spike: a test repository (committed, modified, added, untracked, ignored, a folder
-# with changes) in the list view with the Git columns, the widget tree around the slot, a test bar, the background
-# menu. Needs NU_GT_SPIKE=1 (the spike is inert otherwise).
-GT_REPO="$LOG/gt-repo"
+# Git (PLAN.md §14): a repository with a local bare remote (file://, so push / pull / sync work offline) and a
+# second clone that pushes, so the counts move. The status bar under the folder view: branch, counts, sync, pull,
+# push, create + publish a branch, switch to a remote branch, a folder outside any repository, feature off / on.
+GT_DIR="$LOG/gt"
+GT_REPO="$GT_DIR/repo"
 gt_make_repo() {
   ( set -e
-    mkdir -p "$GT_REPO/src" && cd "$GT_REPO" && git init -q && git config user.name "Smoke Test" && git config user.email smoke@example.invalid
-    printf 'node_modules/\n*.log\n' > .gitignore; echo one > README.md; echo a > src/a.c; echo b > src/b.c; echo keep > kept.txt
-    git add -A && git commit -qm "Initial commit"; echo two >> README.md; git commit -qam "Update the readme"
-    echo changed >> kept.txt; echo new > added.txt; git add added.txt; echo u > untracked.txt; echo l > debug.log
-    mkdir -p node_modules/x; echo m > node_modules/x/m.js; echo c >> src/a.c ) || echo "gt: could not make the test repo"
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME="Smoke Test" GIT_AUTHOR_EMAIL=smoke@example.invalid \
+           GIT_COMMITTER_NAME="Smoke Test" GIT_COMMITTER_EMAIL=smoke@example.invalid
+    mkdir -p "$GT_DIR" && cd "$GT_DIR"
+    git init -q --bare -b main remote.git
+    git clone -q remote.git seed 2>/dev/null && cd seed && git checkout -q -b main
+    mkdir -p src && echo one > README.md && echo a > src/a.c && printf 'node_modules/\n*.log\n' > .gitignore
+    git add -A && git commit -qm "Initial commit" && git push -q origin main
+    git checkout -q -b feature && echo f > feature.txt && git add feature.txt && git commit -qm "Feature work" && git push -q origin feature
+    cd .. && git clone -q -b main remote.git repo && git clone -q -b main remote.git other
+    cd other && echo two >> README.md && git commit -qam "Update from elsewhere" && git push -q origin main
+    mkdir -p "$GT_DIR/plain" ) || echo "gt: could not make the test repositories"
 }
+gt_expect() { cmd "gt-expect $1" 0.3; }
 gt_round() {
   gt_make_repo
-  local uri; uri="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_REPO")"
-  cmd gt-cols 0.5; cmd "sd-open $uri" 2.5; cmd "fv-view 1" 2.5; cmd "dp-png $LOG/gt-columns.png" 1
-  cmd gt-tree 0.5; cmd dp-toggle 1.5; cmd gt-bar2 1; cmd "dp-png $LOG/gt-bar.png" 1
-  cmd "fv-view 2" 2; cmd "dp-select name README.md" 1.5; cmd "dp-png $LOG/gt-bar-grid.png" 1
-  cmd "fv-view 2" 2; cmd "action view.popup-menu" 1.5; cmd "dp-png $LOG/gt-menu.png" 1
+  local uri plain; uri="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_REPO")"
+  plain="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_DIR/plain")"
+  cmd "sd-open $uri" 3; cmd gt-dump 0.3
+  gt_expect 'shown=1'; gt_expect 'branch="main"'; gt_expect 'counts="↑0 ↓0"'; gt_expect 'remote=origin'
+  cmd "dp-png $LOG/gt-bar.png" 1
+  cmd gt-sync 3; cmd gt-dump 0.3; gt_expect 'counts="↑0 ↓1"'; gt_expect 'progress="Sync: done"'
+  cmd gt-pull 3; gt_expect 'counts="↑0 ↓0"'; gt_expect 'progress="Pull: done"'
+  ( cd "$GT_REPO" && GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=S GIT_AUTHOR_EMAIL=s@x.invalid GIT_COMMITTER_NAME=S \
+      GIT_COMMITTER_EMAIL=s@x.invalid git commit -q --allow-empty -m "Local work" )
+  cmd gt-dump 1.5; gt_expect 'counts="↑1 ↓0"'                      # seen through the git folder monitor
+  cmd gt-push 3; gt_expect 'counts="↑0 ↓0"'; gt_expect 'progress="Push: done"'
+  cmd "gt-create topic/smoke" 2.5; gt_expect 'branch="topic/smoke"'; gt_expect 'counts="Not published"'
+  cmd gt-push 3; gt_expect 'counts="↑0 ↓0"'; gt_expect 'progress="Push: done"'
+  cmd "gt-switch-remote origin/feature" 2.5; gt_expect 'branch="feature"'; gt_expect 'counts="↑0 ↓0"'
+  cmd "gt-switch no-such-branch" 2; gt_expect 'progress="Switch to no-such-branch: failed"'; gt_expect 'branch="feature"'
+  cmd "gt-switch main" 2.5; gt_expect 'branch="main"'
+  cmd dp-toggle 1.5; cmd "dp-png $LOG/gt-bar-pane.png" 1; cmd dp-toggle 1
+  cmd "sd-open $uri/src" 2; gt_expect 'shown=1'; gt_expect 'branch="main"'          # a folder inside
+  cmd "sd-open $plain" 2; gt_expect 'shown=0'                                        # outside any repository
+  cmd "sd-open $uri" 2; gt_expect 'shown=1'
+  cmd "st-set git-status-bar false" 1; gt_expect 'shown=0'
+  cmd "st-set git-status-bar true" 1; gt_expect 'shown=1'
+  cmd "st-set git-enabled false" 1; cmd gt-dump 0.3
+  cmd "st-set git-enabled true" 2; gt_expect 'shown=1'; gt_expect 'branch="main"'
   cmd "sd-open $DIR_URI" 2
 }
 
@@ -393,6 +419,7 @@ elif [ -n "$AUTO" ] && [ "${SMOKE_ONLY:-}" = dp ]; then
 elif [ -n "$AUTO" ]; then
   end=$(( $(date +%s) + AUTO ))
   dp_round
+  gt_round
   icons_round
   look_round
   style_round
@@ -556,6 +583,8 @@ n_fv_trans="$(grep -c 'transition: done' "$LOG/nautilus.log" || true)"
 if [ -n "$AUTO" ] && [ "$n_fv_checked" -eq 0 ]; then echo "FINDING: folder views never checked a tab"; fail=1; fi
 
 # Details pane: every expectation held; the button was shown; nothing of ours stays while switched off.
+gt_fail="$(grep -E 'gt expect FAIL|gt: unknown command' "$LOG/nautilus.log" || true)"
+[ -z "$gt_fail" ] || { echo "FINDING: git:"; echo "$gt_fail" | head -10 | sed 's/^/    | /'; fail=1; }
 dp_fail="$(grep -E 'dp expect FAIL|dp: (no window|unknown command)' "$LOG/nautilus.log" || true)"
 [ -z "$dp_fail" ] || { echo "FINDING: details pane:"; echo "$dp_fail" | head -10 | sed 's/^/    | /'; fail=1; }
 dp_look_bad="$(grep -E 'dp png: FAILED' "$LOG/nautilus.log" || true)"
@@ -570,6 +599,7 @@ dp_line_left="$(grep 'dp look: bottom=0' "$LOG/nautilus.log" | tail -1 | grep 'h
 dp_off_bad="$(grep 'dp dump: enabled=0' "$LOG/nautilus.log" | grep -v 'windows=0' || true)"
 [ -z "$dp_off_bad" ] || { echo "FINDING: details pane left traces while switched off:"; echo "$dp_off_bad" | sed 's/^/    | /'; fail=1; }
 n_dp_ok="$(grep -c 'dp expect ok' "$LOG/nautilus.log" || true)"
+n_gt_ok="$(grep -c 'gt expect ok' "$LOG/nautilus.log" || true)"
 n_dp_button="$(grep -c 'dp dump: enabled=1 windows=[1-9].* button=1' "$LOG/nautilus.log" || true)"
 if [ -n "$AUTO" ] && { [ "$n_dp_ok" -eq 0 ] || [ "$n_dp_button" -eq 0 ]; }; then
   echo "FINDING: details pane never checked (expectations ok: $n_dp_ok, button shown: $n_dp_button)"; fail=1
@@ -591,6 +621,7 @@ echo "  OS drive menus:         $n_menu"
 echo "  settings toggles:       sidebar off-dumps $n_off, preview off-states $n_fp_off, preview re-hooked $n_fp_on"
 echo "  folder views:           tab checks $n_fv_checked, named checks $n_fv_expect, off-dumps $n_fv_off, smooth transitions $n_fv_trans, wrong: $([ -z "$fv_bad" ] && echo 0 || echo SOME)"
 echo "  details pane:           expectations ok $n_dp_ok, failed: $([ -z "$dp_fail" ] && echo 0 || echo SOME), button shown in $n_dp_button dumps"
+echo "  git:                    expectations ok $n_gt_ok, failed: $([ -z "$gt_fail" ] && echo 0 || echo SOME)"
 echo "  sanitizer report files: ${#reports[@]} (only blocks mentioning our code count)"
 echo "  result:                 $([ $fail -eq 0 ] && [ "$loaded" -gt 0 ] && echo PASS || echo FAIL)"
 [ "$loaded" -gt 0 ] || fail=1

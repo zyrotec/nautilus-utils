@@ -53,3 +53,15 @@
    ...
    fun:*rayon_core*
 }
+
+# libsrt (GStreamer's SRT plugin, loaded by decodebin while test-dp-meta reads a video) allocates in a C++ static
+# initializer when the plugin is dlopen'ed and never frees it (seen 2026-11-15; third-party, not our memory).
+{
+   libsrt-static-init
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:_Znwm
+   obj:*/libsrt.so*
+   ...
+   fun:call_init
+}

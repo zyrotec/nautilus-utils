@@ -112,6 +112,7 @@ typedef enum
   NU_CHANGED_DP_STATE       = 1 << 12, /* details-pane-visible, -width, -height (UI state) */
   NU_CHANGED_DP_LOOK        = 1 << 13, /* details-pane-position, -border, -margin, -padding, -radius,
                                         * -header-border, -preview-*, -stack-* */
+  NU_CHANGED_GIT            = 1 << 14, /* git-enabled, git-status-bar, git-ide */
 } NuChanged;
 
 typedef struct
@@ -182,6 +183,9 @@ typedef struct
   int             details_pane_stack_corner_radius;
   gboolean        details_pane_stack_media_square;
   int             details_pane_stack_spacing;
+  gboolean        git_enabled;
+  gboolean        git_status_bar;
+  const char     *git_ide;                  /* desktop ID or "" */
 } NuConfig;
 
 #define NU_DETAILS_PANE_WIDTH_MIN 260

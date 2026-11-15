@@ -70,6 +70,9 @@ static const NuConfig defaults = {
   .details_pane_stack_corner_radius = 4,
   .details_pane_stack_media_square = FALSE,
   .details_pane_stack_spacing = 12,
+  .git_enabled = TRUE,
+  .git_status_bar = TRUE,
+  .git_ide = "",
 };
 
 /* Key name → group reported to listeners. */
@@ -144,6 +147,9 @@ static const struct
   { "details-pane-stack-corner-radius", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-media-square", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-spacing", NU_CHANGED_DP_LOOK },
+  { "git-enabled", NU_CHANGED_GIT },
+  { "git-status-bar", NU_CHANGED_GIT },
+  { "git-ide", NU_CHANGED_GIT },
 };
 
 typedef struct
@@ -162,6 +168,7 @@ typedef struct
   NuConfig          config;     /* Current values */
   char             *folder_icon;  /* Owned: storage of config.preview_folder_icon (freed by read_all/shutdown) */
   char             *overlay_icon; /* Owned: storage of config.preview_overlay_icon */
+  char             *git_ide;      /* Owned: storage of config.git_ide */
   GVariant         *rules_value;  /* Owned: folder-icon-rules; config.icon_rules points into its strings */
   NuIconRule       *rules;        /* Owned array (strings borrowed from @rules_value) = config.icon_rules */
   char            **history;      /* Owned strv = config.icon_rule_history */
@@ -343,6 +350,11 @@ read_all (void)
   c->details_pane_stack_corner_radius = CLAMP (g_settings_get_int (s, "details-pane-stack-corner-radius"), 0, 32);
   c->details_pane_stack_media_square = g_settings_get_boolean (s, "details-pane-stack-media-square");
   c->details_pane_stack_spacing = CLAMP (g_settings_get_int (s, "details-pane-stack-spacing"), 0, 48);
+  c->git_enabled = g_settings_get_boolean (s, "git-enabled");
+  c->git_status_bar = g_settings_get_boolean (s, "git-status-bar");
+  g_free (ns->git_ide);
+  ns->git_ide = g_settings_get_string (s, "git-ide");
+  c->git_ide = ns->git_ide;
 }
 
 static gboolean
@@ -442,6 +454,7 @@ nu_settings_shutdown (void)
   g_clear_pointer (&ns->listeners, g_array_unref);
   g_clear_pointer (&ns->folder_icon, g_free);
   g_clear_pointer (&ns->overlay_icon, g_free);
+  g_clear_pointer (&ns->git_ide, g_free);
   g_clear_pointer (&ns->rules, g_free);
   g_clear_pointer (&ns->rules_value, g_variant_unref);
   g_clear_pointer (&ns->history, g_strfreev);

@@ -27,3 +27,10 @@ test_gt_git = executable('test-gt-git', 'test-gt-git.c',
   include_directories: gt_inc,
 )
 test('gt-git', test_gt_git, env: gt_test_env, protocol: 'tap', args: ['--tap'], suite: 'git', timeout: 180)
+
+test_gt_info = executable('test-gt-info', 'test-gt-info.c',
+  link_with: gt_core_lib,
+  dependencies: gt_core_deps,
+  include_directories: gt_inc,
+)
+test('gt-info', test_gt_info, env: gt_test_env, protocol: 'tap', args: ['--tap'], suite: 'git', timeout: 120)

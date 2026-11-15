@@ -19,6 +19,7 @@
 #include "config.h"
 #include "dp_pane.h"
 #include "dp_timing.h"
+#include "nu_content.h"
 #include "nu_settings.h"
 
 #ifdef DP_DEBUG_DRIVER
@@ -35,7 +36,8 @@ typedef struct
 {
   GtkWidget          *window;        /* Borrowed: we are its qdata, so we never outlive it. */
   GWeakRef            toolbar_view;  /* The content AdwToolbarView (Nautilus') */
-  GWeakRef            tab_view;      /* Nautilus' AdwTabView, moved into @paned */
+  GWeakRef            tab_view;      /* Nautilus' AdwTabView */
+  GWeakRef            column;        /* The shared content column around it (nu_content), moved into @paned */
   GWeakRef            view_controls; /* The header's NautilusViewControls */
   GWeakRef            header_bar;    /* What the line under the header goes on: the top bar around Nautilus' content
                                       * AdwHeaderBar, or the header bar itself (P15, line_target) */
@@ -499,6 +501,7 @@ win_hook_free (gpointer data)
   g_clear_handle_id (&hook->width_id, g_source_remove);
   g_weak_ref_clear (&hook->toolbar_view);
   g_weak_ref_clear (&hook->tab_view);
+  g_weak_ref_clear (&hook->column);
   g_weak_ref_clear (&hook->view_controls);
   g_weak_ref_clear (&hook->header_bar);
   g_weak_ref_clear (&hook->paned);
@@ -591,15 +594,19 @@ install (GtkWidget *window)
       return FALSE;
     }
   GtkWidget *tab_view = find_type (window, ADW_TYPE_TAB_VIEW, 30);
-  GtkWidget *toolbar_view = tab_view != NULL ? gtk_widget_get_parent (tab_view) : NULL;
-  if (!ADW_IS_TOOLBAR_VIEW (toolbar_view) || adw_toolbar_view_get_content (ADW_TOOLBAR_VIEW (toolbar_view)) != tab_view)
-    {
-      warn_once ("the tab view is not where expected");
-      return FALSE;
-    }
   if (g_object_class_find_property (G_OBJECT_GET_CLASS (window), "active-slot") == NULL)
     {
       warn_once ("the window has no \"active-slot\" property");
+      return FALSE;
+    }
+  /* The tab view in the shared content column (with the Git bar under it, if that feature is on). */
+  GtkWidget *column = tab_view != NULL ? nu_content_acquire (tab_view) : NULL;
+  GtkWidget *toolbar_view = column != NULL ? gtk_widget_get_parent (column) : NULL;
+  if (!ADW_IS_TOOLBAR_VIEW (toolbar_view) || adw_toolbar_view_get_content (ADW_TOOLBAR_VIEW (toolbar_view)) != column)
+    {
+      if (column != NULL)
+        nu_content_release (column);
+      warn_once ("the tab view is not where expected");
       return FALSE;
     }
 
@@ -608,6 +615,7 @@ install (GtkWidget *window)
   g_weak_ref_init (&hook->header_bar, line_target (find_type (toolbar, ADW_TYPE_HEADER_BAR, 4)));
   g_weak_ref_init (&hook->toolbar_view, toolbar_view);
   g_weak_ref_init (&hook->tab_view, tab_view);
+  g_weak_ref_init (&hook->column, column);
   g_weak_ref_init (&hook->view_controls, vc);
   g_object_set_data_full (G_OBJECT (window), HOOK_KEY, hook, win_hook_free);
 
@@ -620,12 +628,12 @@ install (GtkWidget *window)
   gtk_paned_set_shrink_end_child (GTK_PANED (paned), FALSE);
   GtkWidget *pane = dp_pane_new ();
   gtk_widget_set_visible (pane, FALSE);
-  g_object_ref (tab_view); /* keep it alive while it has no parent */
+  g_object_ref (column); /* keep it alive while it has no parent */
   adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar_view), NULL);
-  gtk_paned_set_start_child (GTK_PANED (paned), tab_view);
+  gtk_paned_set_start_child (GTK_PANED (paned), column);
   gtk_paned_set_end_child (GTK_PANED (paned), pane);
   adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar_view), paned);
-  g_object_unref (tab_view);
+  g_object_unref (column);
   g_weak_ref_init (&hook->paned, paned);
   g_weak_ref_init (&hook->pane, pane);
   hook->position_id = g_signal_connect_object (paned, "notify::position", G_CALLBACK (on_position), window, 0);
@@ -688,7 +696,7 @@ uninstall (GtkWidget *window)
   if (vc != NULL)
     g_clear_signal_handler (&hook->vc_visible_id, vc);
   g_autoptr (GtkWidget) paned = g_weak_ref_get (&hook->paned);
-  g_autoptr (GtkWidget) tab_view = g_weak_ref_get (&hook->tab_view);
+  g_autoptr (GtkWidget) column = g_weak_ref_get (&hook->column);
   g_autoptr (GtkWidget) toolbar_view = g_weak_ref_get (&hook->toolbar_view);
   if (paned != NULL)
     {
@@ -696,13 +704,15 @@ uninstall (GtkWidget *window)
       g_autoptr (DpPane) pane = hook_pane (hook);
       if (pane != NULL)
         dp_pane_stop_media (pane);
-      if (tab_view != NULL && toolbar_view != NULL &&
+      if (column != NULL && toolbar_view != NULL &&
           adw_toolbar_view_get_content (ADW_TOOLBAR_VIEW (toolbar_view)) == paned)
         {
-          gtk_paned_set_start_child (GTK_PANED (paned), NULL); /* our ref (tab_view) keeps it alive */
-          adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar_view), tab_view); /* drops the paned */
+          gtk_paned_set_start_child (GTK_PANED (paned), NULL); /* our ref (column) keeps it alive */
+          adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar_view), column); /* drops the paned */
         }
     }
+  if (column != NULL)
+    nu_content_release (column); /* puts the tab view back if nothing else uses the column */
   g_autoptr (GtkWidget) button = g_weak_ref_get (&hook->button);
   if (button != NULL)
     gtk_widget_unparent (button);

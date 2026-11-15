@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/io/github/zyrotec/NautilusUtils/git/icons/scalable/actions">
+    <file preprocess="xml-stripblanks" alias="nu-git-branch-symbolic.svg">icons/nu-git-branch-symbolic.svg</file>
+  </gresource>
+</gresources>
