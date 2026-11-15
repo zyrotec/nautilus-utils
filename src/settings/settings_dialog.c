@@ -804,6 +804,9 @@ details_pane_page (GSettings *settings)
   adw_action_row_set_subtitle (ADW_ACTION_ROW (depth), "How the items further back look");
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group), depth);
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             slider_row (settings, "details-pane-stack-spacing", "Spacing",
+                                         "How far each item behind shows above the one in front", 0, 48, "px"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
                              switch_row (settings, "details-pane-stack-shadow", "Shadow", NULL));
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
                              switch_row (settings, "details-pane-stack-rotation", "Random Rotation",

@@ -45,6 +45,7 @@ typedef struct
   double   stack_border_width; /* px */
   int      stack_corner_radius; /* px, media cards */
   gboolean stack_media_square; /* media as squares the size of the icons (P26) */
+  int      stack_spacing;   /* px between neighbouring items' visible tops (P29) */
   gboolean backdrop;        /* a picture's blurred copy fills the box behind it (P28) */
   int      icon_size;       /* px: icons in the preview box and the stack's front icon (P16) */
   gboolean media_box;       /* media flush inside a fixed box instead of a box of their shape (P20) */

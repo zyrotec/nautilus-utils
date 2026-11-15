@@ -5,8 +5,8 @@
  * ahead and the stack stays sharp at any size and scale.
  *
  * Two shapes:
- *  - icons: the front icon at the icon size on the bottom edge; each one behind ×0.85 and raised so its top
- *    peeks out. Icons and folders are always drawn plain (no border, corners or box shadow).
+ *  - icons: the front icon at the icon size on the bottom edge; each one behind ×0.85, its visible top (where
+ *    the icon is drawn, not its square) the spacing option above the one in front's. Icons and folders are always drawn plain (no border, corners or box shadow).
  *  - cards: when a picture, video or PDF is among the items (and media aren't squared), the folder-preview
  *    stack: cards behind are narrower and raised. Only media cards get the border, corners and box shadow.
  * With the "square media" option, media are squares the size of the icons and the icon shape is used.
@@ -38,6 +38,7 @@ typedef struct
   int      fade;          /* % of the stack's height faded out at the bottom (0 = off) */
   gboolean card;          /* translucent card behind icons */
   gboolean media_square;  /* media as squares the size of the icons (P26) */
+  int      spacing;       /* px between the visible tops of neighbouring items (P29) */
 } DpStackStyle;
 
 typedef struct

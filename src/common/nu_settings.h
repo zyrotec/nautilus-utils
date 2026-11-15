@@ -181,6 +181,7 @@ typedef struct
   double          details_pane_stack_border_width; /* px, 0.5 … 8 */
   int             details_pane_stack_corner_radius;
   gboolean        details_pane_stack_media_square;
+  int             details_pane_stack_spacing;
 } NuConfig;
 
 #define NU_DETAILS_PANE_WIDTH_MIN 260

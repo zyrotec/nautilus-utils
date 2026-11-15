@@ -224,7 +224,9 @@ file or folder and its properties. Drag its left edge to resize it.
   kinds of files. Adding to the selection animates the stack: the items already there move back, the new one fades
   in, thumbnails fade in over their icons. Pictures, videos and PDFs can have a border (colour, width) and
   corners — icons and folders never do — or be squares the size of the icons; **Copy the Folder Previews' Look**
-  takes the Folder Preview page's options as a starting point.
+  takes the Folder Preview page's options as a starting point. **Spacing** sets how far each item shows above
+  the one in front, measured between what you see (a folder's tab, a page's top edge, a picture's edge), so the
+  gaps stay even whatever the icons look like.
   **Nothing selected:** the folder you are in.
 - ↔️ **Right or bottom:** at the bottom it becomes a short summary strip like Windows 7 — thumbnail, name and
   type, then a few key properties in columns; drag its top edge to change the height.
@@ -270,7 +272,7 @@ press **Apply**; closing the window without Apply discards them.
 | 💽 **Sidebar Drives** | On/off, bar colour (accent colour, a custom colour, or a two-colour gradient), show/hide the usage bars and the size labels, slide the eject button in only on hover. |
 | 👁️ **Folder Views** | Remember the view per folder (on/off) and **Reset All Folder Views…**, which asks for confirmation and acts right away (it isn't a setting waiting for Apply). |
 | 🎨 **Folder Icons** | Icons by folder name (on/off) and the rules: folder name, icon (Choose Icon…), remove; add a rule with **+**. Invalid or duplicate names are marked red. |
-| 📋 **Details Pane** | On/off; position (right or bottom); border, margin, padding, corner radius; line under the header bar; icon size (16–256 px in steps of 16), pictures in a box of their shape or a fixed box, icon next to the name, centred name, preview box corner radius and margin; blurred background behind pictures; several selected: copy the folder previews' look, depth effect, shadow, rotation, bottom fade, card behind icons; for pictures, videos and PDFs: squares the size of icons, keep aspect ratio, border (colour, width), corner radius. Whether the pane is shown, its width and its height are kept as you leave them. |
+| 📋 **Details Pane** | On/off; position (right or bottom); border, margin, padding, corner radius; line under the header bar; icon size (16–256 px in steps of 16), pictures in a box of their shape or a fixed box, icon next to the name, centred name, preview box corner radius and margin; blurred background behind pictures; several selected: copy the folder previews' look, spacing, depth effect, shadow, rotation, bottom fade, card behind icons; for pictures, videos and PDFs: squares the size of icons, keep aspect ratio, border (colour, width), corner radius. Whether the pane is shown, its width and its height are kept as you leave them. |
 
 The settings are stored with GSettings (schema `io.github.zyrotec.NautilusUtils`; inspect them with
 `gsettings list-recursively io.github.zyrotec.NautilusUtils`). If the schema isn't installed, the features

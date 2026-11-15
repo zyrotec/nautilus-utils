@@ -86,6 +86,7 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_cmpfloat (a->details_pane_stack_border_width, ==, b->details_pane_stack_border_width);
   g_assert_cmpint (a->details_pane_stack_corner_radius, ==, b->details_pane_stack_corner_radius);
   g_assert_cmpint (a->details_pane_stack_media_square, ==, b->details_pane_stack_media_square);
+  g_assert_cmpint (a->details_pane_stack_spacing, ==, b->details_pane_stack_spacing);
   g_assert_cmpstr (a->preview_folder_icon, ==, b->preview_folder_icon);
   g_assert_cmpstr (a->preview_overlay_icon, ==, b->preview_overlay_icon);
 }

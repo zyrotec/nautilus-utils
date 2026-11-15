@@ -363,6 +363,12 @@
       <summary>Several selected: corner radius of pictures, videos and PDFs in pixels</summary>
     </key>
 
+    <key name="details-pane-stack-spacing" type="i">
+      <range min="0" max="48"/>
+      <default>12</default>
+      <summary>Several selected: distance in pixels between the visible tops of neighbouring items</summary>
+    </key>
+
     <key name="details-pane-stack-media-square" type="b">
       <default>false</default>
       <summary>Several selected: pictures, videos and PDFs as squares the size of the icons</summary>

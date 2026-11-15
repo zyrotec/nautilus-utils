@@ -69,6 +69,7 @@ static const NuConfig defaults = {
   .details_pane_stack_border_width = 2.0,
   .details_pane_stack_corner_radius = 4,
   .details_pane_stack_media_square = FALSE,
+  .details_pane_stack_spacing = 12,
 };
 
 /* Key name → group reported to listeners. */
@@ -142,6 +143,7 @@ static const struct
   { "details-pane-stack-border-width", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-corner-radius", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-media-square", NU_CHANGED_DP_LOOK },
+  { "details-pane-stack-spacing", NU_CHANGED_DP_LOOK },
 };
 
 typedef struct
@@ -340,6 +342,7 @@ read_all (void)
   c->details_pane_stack_border_width = CLAMP (g_settings_get_double (s, "details-pane-stack-border-width"), 0.5, 8.0);
   c->details_pane_stack_corner_radius = CLAMP (g_settings_get_int (s, "details-pane-stack-corner-radius"), 0, 32);
   c->details_pane_stack_media_square = g_settings_get_boolean (s, "details-pane-stack-media-square");
+  c->details_pane_stack_spacing = CLAMP (g_settings_get_int (s, "details-pane-stack-spacing"), 0, 48);
 }
 
 static gboolean

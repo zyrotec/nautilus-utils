@@ -2070,6 +2070,7 @@ selection flickers; a blurred background behind pictures; and look into the 17â€
 | P26 | `details-pane-stack-media-square` (b, false): media as squares the size of the icons (picture cropped to fill), the icon stack's shape. |
 | P27 | Smooth changes: items are matched by URI; ones that stay move to their new place, new ones fade in, removed ones fade out, a thumbnail cross-fades over its icon (220 ms, ease-out; off with GTK's animations setting). While several items stay selected, the stack, the subtitle and the summary stay on screen until the new summary replaces them. The box keeps one shape for 2 or 3 items (no resize when adding one). |
 | P28 | `details-pane-preview-backdrop` (b, false): with the fixed box (P20), a picture's or video poster's copy fills the box behind it, scaled to cover, blurred (8 % of the box) and darkened (30 % black). The Settings row is only active with *Inside a Fixed Box*. |
+| P29 | (owner, after v5: "this distance on the stack differs") `details-pane-stack-spacing` (i, 0â€“48 px, default 12), a slider: the distance between neighbouring items' **visible** tops. Icons are measured once (rendered at 64 px, first/last row with alpha > 40/255), so a folder (drawn low in its square) and a document (filling it) are spaced alike; picture cards use their edges. Each one's bottom is also at least the spacing above the one in front's. The visible part is then fitted (shrunk around the front's bottom if needed) and centred. Replaces the fixed 10 % icon peek and the card step. |
 | S1 | Stalls: main-thread steps record wall time, CPU time, voluntary / involuntary context switches and page faults (`dp_timing.h`); `DP_STALL_SAMPLER=1` samples the main thread's stack every ms during a step that runs long and logs where a slow step was (`dp_stall.c`, diagnostics only). |
 
 #### 13.14 results (2026-11-15)
@@ -2097,3 +2098,6 @@ selection flickers; a blurred background behind pictures; and look into the 17â€
 - `check-safety.sh` all PASS. Full ASan smoke: details pane all checks except the two thumbnail ones (now
   perf-only, see above); one leak flagged = the known intermittent GTK popover leak from the sidebar OS-menu test
   (`gdk_popup_layout_new` under Nautilus' `show_row_popover`), unrelated.
+- **P29 (spacing):** the uneven gaps came from spacing the icons' *squares*: a folder icon is drawn in the lower
+  part of its square, a document fills it, so a document behind folders showed twice the gap. Now the visible tops
+  are spaced; demo renders at 4, 12 and 30 px with folders + a document and with picture cards are even.

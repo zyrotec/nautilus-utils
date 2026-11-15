@@ -46,6 +46,7 @@ apply_look (void)
     .stack_border_width = c->details_pane_stack_border_width,
     .stack_corner_radius = c->details_pane_stack_corner_radius,
     .stack_media_square = c->details_pane_stack_media_square,
+    .stack_spacing = c->details_pane_stack_spacing,
     .backdrop = c->details_pane_preview_backdrop,
   };
   dp_pane_set_style (&st);

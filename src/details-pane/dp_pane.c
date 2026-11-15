@@ -79,7 +79,7 @@ static DpPaneStyle      pane_style = {    /* Process-wide look (dp_pane_set_styl
   .border = TRUE, .margin = 0, .padding = 18, .radius = 0, .preview_radius = 12, .preview_margin = 0,
   .stack_depth = 1 /* blur */, .stack_shadow = TRUE, .stack_rotation = TRUE, .stack_keep_aspect = TRUE,
   .stack_fade = 0, .stack_card = TRUE, .icon_size = 128, .stack_border_color = { 1, 1, 1, 1 },
-  .stack_border_width = 2, .stack_corner_radius = 4,
+  .stack_border_width = 2, .stack_corner_radius = 4, .stack_spacing = 12,
 };
 static GPtrArray       *panes;            /* Borrowed DpPane* (each removes itself in dispose): restyled live. */
 static GHashTable      *retiring;         /* Owned: GtkMediaStream* (owned ref) → its release timeout id. */
@@ -1261,6 +1261,7 @@ apply_style (DpPane *self)
     .fade = pane_style.stack_fade,
     .card = pane_style.stack_card,
     .media_square = pane_style.stack_media_square,
+    .spacing = pane_style.stack_spacing,
   };
   dp_stack_view_set_style (DP_STACK_VIEW (self->stack), &ss);
   sync_box (self);

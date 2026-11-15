@@ -17,7 +17,6 @@
 #define CARD_STACK_H  (CARD_H + (DP_STACK_VIEW_MAX - 1) * CARD_STEP)
 
 #define ICON_SHRINK   0.85  /* each icon behind is this much smaller */
-#define ICON_PEEK     0.10  /* … and its top peeks out this much (fraction of the front icon) above the one in front */
 #define ICON_MARGIN   0.06  /* room for tilt and shadow around the icon stack (fraction of the front icon) */
 #define CARD_ICON_FIT 0.92  /* an icon in a card slot is at most this much of the card's height */
 #define MAX_TILT_DEG  4.0
@@ -49,6 +48,7 @@ typedef struct
   int           index;   /* front index, or -1 while fading out */
   Geo           from, to;
   gboolean      fresh;   /* no geometry yet: appears at its target */
+  double        vis_top, vis_bottom; /* @icon's drawn part: transparent rows above / below it (fractions) */
 } Layer;
 
 struct _DpStackView
@@ -70,11 +70,51 @@ on_icon_invalidated (GdkPaintable *paintable, gpointer data)
   gtk_widget_queue_draw (GTK_WIDGET (data));
 }
 
+/* Where @icon is actually drawn in its square: the fractions of transparent rows above and below it (a folder
+ * icon sits low in its square, a document fills it), so the stack can space what you see, not the squares. */
+#define MEASURE_PX 64
+static void
+measure_insets (GdkPaintable *icon, double *top, double *bottom)
+{
+  *top = *bottom = 0;
+  if (icon == NULL)
+    return;
+  GtkSnapshot *snap = gtk_snapshot_new (); /* consumed below */
+  gdk_paintable_snapshot (icon, snap, MEASURE_PX, MEASURE_PX);
+  g_autoptr (GskRenderNode) node = gtk_snapshot_free_to_node (snap);
+  if (node == NULL)
+    return;
+  cairo_surface_t *surface = cairo_image_surface_create (CAIRO_FORMAT_A8, MEASURE_PX, MEASURE_PX);
+  cairo_t *cr = cairo_create (surface);
+  gsk_render_node_draw (node, cr);
+  cairo_destroy (cr);
+  cairo_surface_flush (surface);
+  const guint8 *data = cairo_image_surface_get_data (surface);
+  int stride = cairo_image_surface_get_stride (surface);
+  int first = -1, last = -1;
+  for (int y = 0; data != NULL && y < MEASURE_PX; y++)
+    for (int x = 0; x < MEASURE_PX; x++)
+      if (data[y * stride + x] > 40) /* ignore faint shadows */
+        {
+          if (first < 0)
+            first = y;
+          last = y;
+          break;
+        }
+  cairo_surface_destroy (surface);
+  if (first >= 0)
+    {
+      *top = (double) first / MEASURE_PX;
+      *bottom = (double) (MEASURE_PX - 1 - last) / MEASURE_PX;
+    }
+}
+
 static void
 layer_set_icon (DpStackView *self, Layer *l, GdkPaintable *icon)
 {
   if (l->icon == icon)
     return;
+  measure_insets (icon, &l->vis_top, &l->vis_bottom);
   if (l->icon != NULL)
     g_signal_handlers_disconnect_by_func (l->icon, on_icon_invalidated, self);
   g_set_object (&l->icon, icon);
@@ -160,7 +200,7 @@ static double
 icon_fit (DpStackView *self, double w, double h)
 {
   double s = self->style.icon_size;
-  s = MIN (s, h / (1.0 + (DP_STACK_VIEW_MAX - 1) * ICON_PEEK + 2 * ICON_MARGIN));
+  s = MIN (s, h / (1.0 + 2 * ICON_MARGIN));
   s = MIN (s, w / (1.0 + 2 * ICON_MARGIN));
   return MAX (s, 1.0);
 }
@@ -198,61 +238,62 @@ targets (DpStackView *self, Layer *const *shown, guint n, double w, double h, Ge
     }
   if (n == 0)
     return;
+  /* Every item behind shows the same distance (the spacing option, P29) above the one in front, measured
+   * between what is drawn: a picture card's edge, an icon's visible top (not its square's). */
+  double d = self->style.spacing;
+  double avail_top, avail_bottom; /* the room the stack's visible part must fit in */
   if (!cards_shape (self))
     {
-      /* Icons (and squared media): the group is centred vertically, the front one at its bottom; each one
-       * behind is smaller and its top peeks out above the one in front. */
+      /* Icons (and squared media): each one behind is smaller; the group is centred vertically below. */
       double s = icon_fit (self, w, h);
-      double peek = ICON_PEEK * s;
-      double front_top = (h - s - (n - 1) * peek) / 2 + (n - 1) * peek;
       for (guint i = 0; i < n; i++)
-        {
-          double size = s * pow (ICON_SHRINK, i);
-          out[i].w = out[i].h = size;
-          out[i].by = front_top - i * peek + size;
-        }
-      return;
+        out[i].w = out[i].h = s * pow (ICON_SHRINK, i);
+      avail_top = ICON_MARGIN * s;
+      avail_bottom = h - ICON_MARGIN * s;
     }
-  /* Cards: the folder-preview stack across the width (or as tall as fits). The front one sits on the stack's
-   * bottom edge; each one behind is narrower and both its top and its bottom are a step higher than the one in
-   * front, so it always peeks out (pictures of any shape, icons). */
-  double sw = MIN (w / (1.0 + 2 * CARD_PAD), h / (CARD_STACK_H + 2 * CARD_PAD));
-  double oy = (h - CARD_STACK_H * sw) / 2;
-  double step = CARD_STEP * sw;
-  double ch = CARD_H * sw;
-  double bottom = oy + CARD_STACK_H * sw;
-  double top = 0, rise = 0; /* the top of the one in front; how far this one's bottom is raised */
+  else
+    {
+      /* Cards: the folder-preview stack across the width (or as tall as fits); cards behind are narrower. */
+      double sw = MIN (w / (1.0 + 2 * CARD_PAD), h / (CARD_STACK_H + 2 * CARD_PAD));
+      double ch = CARD_H * sw;
+      for (guint i = 0; i < n; i++)
+        card_layer_size (self, shown[i], i, sw - 2 * i * CARD_STEP * sw, ch, &out[i].w, &out[i].h);
+      avail_top = CARD_PAD * sw;
+      avail_bottom = h - CARD_PAD * sw;
+    }
+  /* Stack them with the front one's bottom at 0 (y grows down): visible tops @d apart; the bottom of each one
+   * behind at least @d above the one in front's, so nothing hangs below it. */
+  double vt[DP_STACK_VIEW_MAX], vb[DP_STACK_VIEW_MAX];
   for (guint i = 0; i < n; i++)
     {
-      double lw, lh;
       gboolean card = shown[i]->media && shown[i]->thumb != NULL;
-      card_layer_size (self, shown[i], i, sw - 2 * i * step, ch, &lw, &lh);
-      out[i].w = lw, out[i].h = lh;
+      double it = card ? 0 : shown[i]->vis_top, ib = card ? 0 : shown[i]->vis_bottom;
+      if (!card && self->style.card)
+        it = 0.125 + 0.75 * it, ib = 0.125 + 0.75 * ib; /* the icon is drawn at 3/4 on its card */
+      vt[i] = it * out[i].h, vb[i] = ib * out[i].h;
       if (i == 0)
+        out[i].by = 0;
+      else
         {
-          out[i].by = bottom;
-          top = bottom - lh;
-          continue;
+          double top_prev = out[i - 1].by - out[i - 1].h + vt[i - 1];
+          double by = top_prev - d - vt[i] + out[i].h;
+          double bottom_prev = out[i - 1].by - vb[i - 1];
+          out[i].by = MIN (by, bottom_prev - d + vb[i]);
         }
-      /* An icon peeks out further than a card's step, so it can be recognised. */
-      double peek = card ? step : MAX (step, ICON_PEEK * 1.8 * lh);
-      rise += step;
-      out[i].by = MIN (top - peek + lh, bottom - rise);
-      top = out[i].by - lh;
     }
-  /* Icons peeking out above the cards may not fit: shrink the whole stack towards its bottom centre. */
-  double highest = bottom;
+  /* Fit the visible part [highest top, front's bottom] into the room (shrinking around the front's bottom if
+   * needed), then centre it vertically. */
+  double highest = 0;
   for (guint i = 0; i < n; i++)
-    highest = MIN (highest, out[i].by - out[i].h);
-  double margin = CARD_PAD * sw;
-  if (highest < margin && bottom > margin)
+    highest = MIN (highest, out[i].by - out[i].h + vt[i]);
+  double extent = (out[0].by - vb[0]) - highest;
+  double room = MAX (avail_bottom - avail_top, 1.0);
+  double f = extent > room ? room / extent : 1.0;
+  double offset = avail_top + (room - extent * f) / 2 - highest * f; /* where y = 0 lands */
+  for (guint i = 0; i < n; i++)
     {
-      double f = (bottom - margin) / (bottom - highest);
-      for (guint i = 0; i < n; i++)
-        {
-          out[i].w *= f, out[i].h *= f;
-          out[i].by = bottom - (bottom - out[i].by) * f;
-        }
+      out[i].w *= f, out[i].h *= f;
+      out[i].by = offset + out[i].by * f;
     }
 }
 
@@ -656,7 +697,7 @@ dp_stack_view_init (DpStackView *self)
   self->layers = g_ptr_array_new_with_free_func (layer_free);
   self->style = (DpStackStyle) {
     .icon_size = 128, .border_color = { 1, 1, 1, 1 }, .border_width = 2, .corner_radius = 4, .shadow = TRUE,
-    .rotation = TRUE, .keep_aspect = TRUE, .depth = FP_DEPTH_BLUR, .card = TRUE,
+    .rotation = TRUE, .keep_aspect = TRUE, .depth = FP_DEPTH_BLUR, .card = TRUE, .spacing = 12,
   };
   gtk_widget_set_can_target (GTK_WIDGET (self), FALSE);
 }
@@ -673,7 +714,7 @@ style_equal (const DpStackStyle *a, const DpStackStyle *b)
   return a->icon_size == b->icon_size && a->border == b->border && gdk_rgba_equal (&a->border_color, &b->border_color) &&
          a->border_width == b->border_width && a->corner_radius == b->corner_radius && a->shadow == b->shadow &&
          a->rotation == b->rotation && a->keep_aspect == b->keep_aspect && a->depth == b->depth &&
-         a->fade == b->fade && a->card == b->card && a->media_square == b->media_square;
+         a->fade == b->fade && a->card == b->card && a->media_square == b->media_square && a->spacing == b->spacing;
 }
 
 void
@@ -685,6 +726,7 @@ dp_stack_view_set_style (DpStackView *self, const DpStackStyle *style)
   self->style = *style;
   self->style.icon_size = CLAMP (self->style.icon_size, 16, 512);
   self->style.border_width = CLAMP (self->style.border_width, 0.0, 32.0);
+  self->style.spacing = CLAMP (self->style.spacing, 0, 64);
   relayout (self, FALSE);
 }
 
@@ -758,7 +800,7 @@ dp_stack_view_get_ratio (DpStackView *self, int *icon_height)
       return (1.0 + 2 * CARD_PAD) / (CARD_STACK_H + 2 * CARD_PAD);
     }
   if (icon_height != NULL)
-    *icon_height = (int) ceil (self->style.icon_size * (1.0 + (DP_STACK_VIEW_MAX - 1) * ICON_PEEK + 2 * ICON_MARGIN));
+    *icon_height = (int) ceil (self->style.icon_size * (1.0 + 2 * ICON_MARGIN) + (DP_STACK_VIEW_MAX - 1) * self->style.spacing);
   return 0;
 }
 

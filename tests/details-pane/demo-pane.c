@@ -6,7 +6,7 @@
  *
  * Look (--png): DP_DEMO_BOTTOM=1 (Windows 7 strip), DP_DEMO_STYLE="margin=8 radius=12 padding=18 border=1
  * preview_radius=12 preview_margin=0 depth=1 shadow=1 rotation=1 keep_aspect=1 fade=0 card=1 icon=128 media_box=0
- * centre=0 show_icon=1 stack_border=0 stack_border_width=2 stack_radius=4 square=0 backdrop=0" (any subset).
+ * centre=0 show_icon=1 stack_border=0 stack_border_width=2 stack_radius=4 square=0 backdrop=0 spacing=12" (any subset).
  * DP_DEMO_GROW=1 (several files): first shows all but the last, then all, as when adding to a selection; the
  * description printed between says whether the stack stayed on screen.
  *
@@ -54,7 +54,7 @@ demo_style (void)
   DpPaneStyle st = {
     .border = TRUE, .padding = 18, .preview_radius = 12, .stack_depth = 1, .stack_shadow = TRUE,
     .stack_rotation = TRUE, .stack_keep_aspect = TRUE, .stack_card = TRUE, .icon_size = 128, .show_icon = TRUE,
-    .stack_border_color = { 1, 1, 1, 1 }, .stack_border_width = 2, .stack_corner_radius = 4,
+    .stack_border_color = { 1, 1, 1, 1 }, .stack_border_width = 2, .stack_corner_radius = 4, .stack_spacing = 12,
   };
   g_auto (GStrv) parts = g_strsplit (g_getenv ("DP_DEMO_STYLE") != NULL ? g_getenv ("DP_DEMO_STYLE") : "", " ", -1);
   for (guint i = 0; parts[i] != NULL; i++)
@@ -83,6 +83,7 @@ demo_style (void)
       else if (g_str_equal (kv[0], "stack_border_width")) st.stack_border_width = v;
       else if (g_str_equal (kv[0], "stack_radius")) st.stack_corner_radius = v;
       else if (g_str_equal (kv[0], "square")) st.stack_media_square = v;
+      else if (g_str_equal (kv[0], "spacing")) st.stack_spacing = v;
       else if (g_str_equal (kv[0], "backdrop")) st.backdrop = v;
     }
   dp_pane_set_style (&st);

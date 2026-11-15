@@ -317,11 +317,12 @@ dp_round() {
   cmd "st-set details-pane-stack-media-square true" 1; dp_expect 'stack=icons:3'
   cmd "st-set details-pane-stack-border true" 0.5; cmd "st-set details-pane-stack-border-colour '#e01b24'" 0.5
   cmd "st-set details-pane-stack-border-width 6.5" 0.5; cmd "st-set details-pane-stack-corner-radius 20" 0.5
-  cmd "st-set details-pane-stack-fade 50" 0.5; cmd "st-set details-pane-stack-media-square false" 1
+  cmd "st-set details-pane-stack-fade 50" 0.5; cmd "st-set details-pane-stack-spacing 40" 0.5
+  cmd "st-set details-pane-stack-media-square false" 1
   dp_expect 'stack=cards:3'
   cmd "dp-select all" 3; dp_expect 'stack-art=yes'; dp_expect 'stack=cards:3'; cmd "dp-png $LOG/dp-stack-mixed.png" 1
   # DIR's own picture folders (thumbnails already cached there): folders with their pictures, plain (no border).
-  cmd "sd-open $DIR_URI" 3
+  cmd "sd-open $DIR_URI" 3; cmd "st-reset details-pane-stack-spacing" 0.3
   cmd "dp-select name Wallpapers" 1; cmd "dp-select add Screenshots" 4; dp_expect 'stack=icons:2'
   dp_expect 'stack-art=yes'; cmd "dp-png $LOG/dp-folder-art.png" 1
   # Pictures with thumbnails: cards with the border; one picture with the blurred background.
@@ -337,7 +338,8 @@ dp_round() {
   cmd "sd-open $DP_URI" 2
   for k in details-pane-title-centered details-pane-show-icon details-pane-media-fit details-pane-preview-backdrop \
            details-pane-stack-media-square details-pane-stack-border details-pane-stack-border-colour \
-           details-pane-stack-border-width details-pane-stack-corner-radius details-pane-stack-fade; do
+           details-pane-stack-border-width details-pane-stack-corner-radius details-pane-stack-fade \
+           details-pane-stack-spacing; do
     cmd "st-reset $k" 0.4
   done
   dp_pick photo.jpg; cmd "st-set details-pane-position 'bottom'" 2; cmd dp-dump 0.3
