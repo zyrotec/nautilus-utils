@@ -10,6 +10,7 @@
  * Lifetime (PLAN.md §4.1): a WinHook is qdata on its window (freed with it, or on uninstall); it holds only
  * weak refs to widgets. Handlers on other objects are connected with g_signal_connect_object (…, window) so
  * they go away with the window, and are disconnected on uninstall. Timers are removed in win_hook_free. */
+#define _GNU_SOURCE 1 /* RUSAGE_THREAD (dp_timing.h) */
 #include "dp_hook.h"
 
 #include <adwaita.h>
@@ -17,6 +18,7 @@
 
 #include "config.h"
 #include "dp_pane.h"
+#include "dp_timing.h"
 #include "nu_settings.h"
 
 #ifdef DP_DEBUG_DRIVER
@@ -187,12 +189,11 @@ static gint64 max_update_us; /* longest update_now (debug dump) */
 static gboolean
 update_now (gpointer data)
 {
-  gint64 t0 = g_get_monotonic_time ();
+  DpStepSample s0;
+  dp_step_sample (&s0);
   gboolean r = update_now_impl (data);
-  gint64 dt = g_get_monotonic_time () - t0;
+  gint64 dt = dp_step_end (&s0, "selection update");
   max_update_us = MAX (max_update_us, dt);
-  if (dt > 16000)
-    g_debug ("slow main-thread step: selection update took %" G_GINT64_FORMAT " µs", dt);
   return r;
 }
 

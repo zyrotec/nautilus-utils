@@ -7,8 +7,6 @@
 
 #include <adwaita.h>
 
-#include "composite.h" /* FpStyle (the folder previews' look, P22) */
-
 G_BEGIN_DECLS
 
 #define DP_TYPE_PANE (dp_pane_get_type ())
@@ -42,12 +40,16 @@ typedef struct
   gboolean stack_keep_aspect;
   int      stack_fade;      /* % */
   gboolean stack_card;      /* translucent card behind icon items */
+  gboolean stack_border;    /* media cards: border (P25: the folder previews' options, own copies) */
+  GdkRGBA  stack_border_color;
+  double   stack_border_width; /* px */
+  int      stack_corner_radius; /* px, media cards */
+  gboolean stack_media_square; /* media as squares the size of the icons (P26) */
+  gboolean backdrop;        /* a picture's blurred copy fills the box behind it (P28) */
   int      icon_size;       /* px: icons in the preview box and the stack's front icon (P16) */
   gboolean media_box;       /* media flush inside a fixed box instead of a box of their shape (P20) */
   gboolean title_centered;  /* P21 */
   gboolean show_icon;       /* the small icon next to the name (P21) */
-  gboolean stack_fp_look;   /* the stack copies @fp_style (P22) */
-  FpStyle  fp_style;        /* the folder previews' current look */
 } DpPaneStyle;
 
 /* Restyles every pane (and re-renders shown stacks if their options changed). Main thread. */

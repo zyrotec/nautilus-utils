@@ -5,7 +5,10 @@
  *   demo-pane --stress N FILE…         N rounds of show / play / destroy over FILE… (for ASan/valgrind), exits
  *
  * Look (--png): DP_DEMO_BOTTOM=1 (Windows 7 strip), DP_DEMO_STYLE="margin=8 radius=12 padding=18 border=1
- * preview_radius=12 preview_margin=0 depth=1 shadow=1 rotation=1 keep_aspect=1 fade=0 card=1" (any subset).
+ * preview_radius=12 preview_margin=0 depth=1 shadow=1 rotation=1 keep_aspect=1 fade=0 card=1 icon=128 media_box=0
+ * centre=0 show_icon=1 stack_border=0 stack_border_width=2 stack_radius=4 square=0 backdrop=0" (any subset).
+ * DP_DEMO_GROW=1 (several files): first shows all but the last, then all, as when adding to a selection; the
+ * description printed between says whether the stack stayed on screen.
  *
  * Needs a display. Not run by `meson test`. */
 #include <adwaita.h>
@@ -48,8 +51,11 @@ files_from_args (int argc, char **argv)
 static void
 demo_style (void)
 {
-  DpPaneStyle st = { TRUE, 0, 18, 0, 12, 0, 1, TRUE, TRUE, TRUE, 0, TRUE, 128, FALSE, FALSE, TRUE, FALSE, { 0 } };
-  fp_style_init_default (&st.fp_style);
+  DpPaneStyle st = {
+    .border = TRUE, .padding = 18, .preview_radius = 12, .stack_depth = 1, .stack_shadow = TRUE,
+    .stack_rotation = TRUE, .stack_keep_aspect = TRUE, .stack_card = TRUE, .icon_size = 128, .show_icon = TRUE,
+    .stack_border_color = { 1, 1, 1, 1 }, .stack_border_width = 2, .stack_corner_radius = 4,
+  };
   g_auto (GStrv) parts = g_strsplit (g_getenv ("DP_DEMO_STYLE") != NULL ? g_getenv ("DP_DEMO_STYLE") : "", " ", -1);
   for (guint i = 0; parts[i] != NULL; i++)
     {
@@ -73,7 +79,11 @@ demo_style (void)
       else if (g_str_equal (kv[0], "media_box")) st.media_box = v;
       else if (g_str_equal (kv[0], "centre")) st.title_centered = v;
       else if (g_str_equal (kv[0], "show_icon")) st.show_icon = v;
-      else if (g_str_equal (kv[0], "fp_look")) st.stack_fp_look = v;
+      else if (g_str_equal (kv[0], "stack_border")) st.stack_border = v;
+      else if (g_str_equal (kv[0], "stack_border_width")) st.stack_border_width = v;
+      else if (g_str_equal (kv[0], "stack_radius")) st.stack_corner_radius = v;
+      else if (g_str_equal (kv[0], "square")) st.stack_media_square = v;
+      else if (g_str_equal (kv[0], "backdrop")) st.backdrop = v;
     }
   dp_pane_set_style (&st);
 }
@@ -95,7 +105,19 @@ render_png (const char *out, int argc, char **argv)
   gtk_window_set_child (GTK_WINDOW (window), pane);
   gtk_window_present (GTK_WINDOW (window));
   g_autoptr (GFile) parent = files->len > 0 ? g_file_get_parent (g_ptr_array_index (files, 0)) : NULL;
-  dp_pane_show (DP_PANE (pane), parent, files, files->len);
+  if (g_getenv ("DP_DEMO_GROW") != NULL && files->len > 2)
+    {
+      g_autoptr (GPtrArray) first = g_ptr_array_new ();
+      for (guint i = 0; i + 1 < files->len; i++)
+        g_ptr_array_add (first, g_ptr_array_index (files, i));
+      dp_pane_show (DP_PANE (pane), parent, first, first->len);
+      wait_idle (DP_PANE (pane), 15000);
+      dp_pane_show (DP_PANE (pane), parent, files, files->len);
+      g_autofree char *during = dp_pane_describe (DP_PANE (pane));
+      g_print ("right after adding: %s\n", during);
+    }
+  else
+    dp_pane_show (DP_PANE (pane), parent, files, files->len);
   gboolean done = wait_idle (DP_PANE (pane), 15000);
   g_autofree char *text = dp_pane_describe (DP_PANE (pane));
   g_print ("%s\n", text);
@@ -109,7 +131,8 @@ render_png (const char *out, int argc, char **argv)
   gdk_paintable_snapshot (shot, snap, w, h);
   g_autoptr (GskRenderNode) node = gtk_snapshot_free_to_node (g_steal_pointer (&snap));
   /* Cairo renderer: renders text reliably off screen. */
-  g_autoptr (GskRenderer) renderer = gsk_cairo_renderer_new ();
+  /* DP_DEMO_GL=1: the GL renderer, as in Files (the cairo one mis-draws blur under rotation). */
+  g_autoptr (GskRenderer) renderer = g_getenv ("DP_DEMO_GL") != NULL ? gsk_gl_renderer_new () : gsk_cairo_renderer_new ();
   if (!gsk_renderer_realize_for_display (renderer, gtk_widget_get_display (window), NULL))
     g_clear_object (&renderer);
   int ok = 1;

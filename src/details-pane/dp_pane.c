@@ -3,7 +3,7 @@
  * Lifetime: every async read gets a ReadCtx with a weak ref to the pane and the pane's generation at the time
  * it started; dp_pane_show() bumps the generation and cancels the previous reads, so a late result is
  * dropped. The video player is owned by the pane and stopped on show, unmap and dispose. */
-#define _POSIX_C_SOURCE 200809L /* clock_gettime (CLOCK_THREAD_CPUTIME_ID) */
+#define _GNU_SOURCE 1 /* RUSAGE_THREAD (dp_timing.h) */
 #include "dp_pane.h"
 
 #include <math.h>
@@ -13,13 +13,14 @@
 #include "dp_format.h"
 #include "dp_box.h"
 #include "dp_meta.h"
-#include "dp_stack.h"
+#include "dp_backdrop.h"
+#include "dp_stack_view.h"
 #include "dp_thumb.h"
+#include "dp_timing.h"
 
 #define ICON_BOX_SPACE    48  /* px: the icon box is the icon size plus this (right layout) */
 #define MEDIA_MAX_HEIGHT  300 /* px: the tallest a media box gets at the right */
 #define FIXED_BOX_HEIGHT  220 /* px: the box when media sit flush inside a fixed box (P20) */
-#define ICON_CARD_PX      256 /* px: an icon card of the multi-selection stack (PLAN.md §13.10 P11) */
 #define HEADER_ICON_SIZE  32
 
 struct _DpPane
@@ -60,9 +61,9 @@ struct _DpPane
   gboolean        count_failed;
   DpSummary      *summary;       /* Owned or NULL: multiple selection */
   GdkPaintable   *still;         /* Owned or NULL: the preview when no video plays */
-  gboolean        stack_icons;   /* The stack being drawn has only icons (box at its own size, not stretched) */
-  GPtrArray      *stack_folders; /* Owned or NULL: folder-preview paintables drawn into the stack (P23) */
-  guint           restack_id;    /* Idle redrawing the stack once a folder's preview arrived, or 0 */
+  GtkWidget      *backdrop;      /* DpBackdrop: the box's blurred background (P28) */
+  GtkWidget      *stack;         /* DpStackView: several selected (P24–P27) */
+  guint           stack_art;     /* Folders drawn with their previews in the stack (P23) */
   const char     *preview_kind;  /* Static: "none", "icon", "thumbnail", "folder-preview", "stack", "video" */
   GtkMediaStream *media;         /* Owned or NULL: the playing video */
 };
@@ -77,30 +78,14 @@ static gint64           max_main_us;      /* Longest main-thread step (dp_pane_g
 static DpPaneStyle      pane_style = {    /* Process-wide look (dp_pane_set_style); = the schema defaults */
   .border = TRUE, .margin = 0, .padding = 18, .radius = 0, .preview_radius = 12, .preview_margin = 0,
   .stack_depth = 1 /* blur */, .stack_shadow = TRUE, .stack_rotation = TRUE, .stack_keep_aspect = TRUE,
-  .stack_fade = 0, .stack_card = TRUE, .icon_size = 128,
+  .stack_fade = 0, .stack_card = TRUE, .icon_size = 128, .stack_border_color = { 1, 1, 1, 1 },
+  .stack_border_width = 2, .stack_corner_radius = 4,
 };
 static GPtrArray       *panes;            /* Borrowed DpPane* (each removes itself in dispose): restyled live. */
 static GHashTable      *retiring;         /* Owned: GtkMediaStream* (owned ref) → its release timeout id. */
 
-/* Main-thread CPU time in µs (wall time also counts waiting for the CPU while workers/thumbnailers run). */
-static gint64
-thread_cpu_us (void)
-{
-  struct timespec ts;
-  return clock_gettime (CLOCK_THREAD_CPUTIME_ID, &ts) == 0 ? (gint64) ts.tv_sec * 1000000 + ts.tv_nsec / 1000 : 0;
-}
-
-#define TIME_BEGIN() gint64 dp_t0_ = g_get_monotonic_time (), dp_c0_ = thread_cpu_us ()
-#define TIME_END(what)                                                                                    \
-  G_STMT_START                                                                                            \
-  {                                                                                                       \
-    gint64 dp_dt_ = g_get_monotonic_time () - dp_t0_;                                                     \
-    max_main_us = MAX (max_main_us, dp_dt_);                                                              \
-    if (dp_dt_ > 16000)                                                                                   \
-      g_debug ("slow main-thread step: %s took %" G_GINT64_FORMAT " µs (cpu %" G_GINT64_FORMAT " µs)",     \
-               (what), dp_dt_, thread_cpu_us () - dp_c0_);                                                \
-  }                                                                                                       \
-  G_STMT_END
+#define TIME_BEGIN() DpStepSample dp_s0_; dp_step_sample (&dp_s0_)
+#define TIME_END(what) G_STMT_START { gint64 dp_dt_ = dp_step_end (&dp_s0_, (what)); max_main_us = MAX (max_main_us, dp_dt_); } G_STMT_END
 
 gint64
 dp_pane_get_max_main_us (void)
@@ -604,7 +589,21 @@ render_pairs (DpPane *self)
 static gboolean
 is_media_kind (const char *kind)
 {
-  return g_strcmp0 (kind, "thumbnail") == 0 || g_strcmp0 (kind, "stack") == 0;
+  return g_strcmp0 (kind, "thumbnail") == 0;
+}
+
+static gboolean
+is_stack (DpPane *self)
+{
+  return g_strcmp0 (self->preview_kind, "stack") == 0;
+}
+
+/* P28: the box's background from the picture shown (pictures and video posters; a fixed box shows it best). */
+static void
+sync_backdrop (DpPane *self)
+{
+  gboolean on = pane_style.backdrop && is_media_kind (self->preview_kind) && self->still != NULL;
+  dp_backdrop_set_paintable (DP_BACKDROP (self->backdrop), on ? self->still : NULL);
 }
 
 static void
@@ -612,28 +611,35 @@ sync_box (DpPane *self)
 {
   double ratio = 0;
   int icon_h = pane_style.icon_size + ICON_BOX_SPACE;
-  if (g_strcmp0 (self->preview_kind, "stack-icons") == 0 && self->still != NULL)
+  gboolean stack = is_stack (self);
+  gtk_widget_set_visible (self->stack, stack);
+  gtk_widget_set_visible (self->picture, !stack);
+  sync_backdrop (self);
+  if (stack)
     {
-      /* An icon-only stack is drawn at its own (device-pixel) size: the box is as tall as the frame. */
-      int scale = gtk_widget_get_scale_factor (GTK_WIDGET (self));
-      icon_h = gdk_paintable_get_intrinsic_height (self->still) / MAX (scale, 1) + 24;
+      /* The stack keeps one shape for 2 or 3 items, so adding one never resizes the box. */
+      int h = 0;
+      ratio = dp_stack_view_get_ratio (DP_STACK_VIEW (self->stack), &h);
+      if (ratio <= 0)
+        icon_h = h;
     }
-  gboolean media = is_media_kind (self->preview_kind) && self->still != NULL;
+  gboolean media = (is_media_kind (self->preview_kind) && self->still != NULL) || (stack && ratio > 0);
   if (pane_style.media_box)
     {
       /* P20: one fixed box for everything; a picture touches its edges on one side, centred on the other. */
-      dp_box_set_icon_height (DP_BOX (self->box), MAX (FIXED_BOX_HEIGHT, pane_style.icon_size + ICON_BOX_SPACE));
+      dp_box_set_icon_height (DP_BOX (self->box), MAX (FIXED_BOX_HEIGHT, MAX (pane_style.icon_size + ICON_BOX_SPACE,
+                                                                               stack ? icon_h : 0)));
       dp_box_set_ratio (DP_BOX (self->box), 0);
       gtk_picture_set_content_fit (GTK_PICTURE (self->picture),
                                    media ? GTK_CONTENT_FIT_CONTAIN : GTK_CONTENT_FIT_SCALE_DOWN);
       return;
     }
   dp_box_set_icon_height (DP_BOX (self->box), icon_h);
-  if (media)
+  if (media && !stack)
     ratio = gdk_paintable_get_intrinsic_aspect_ratio (self->still); /* the video keeps its poster's shape */
   dp_box_set_ratio (DP_BOX (self->box), ratio);
   gtk_picture_set_content_fit (GTK_PICTURE (self->picture),
-                               ratio > 0 ? GTK_CONTENT_FIT_FILL : GTK_CONTENT_FIT_SCALE_DOWN);
+                               ratio > 0 && !stack ? GTK_CONTENT_FIT_FILL : GTK_CONTENT_FIT_SCALE_DOWN);
 }
 
 static void
@@ -681,7 +687,7 @@ on_thumb (GObject *src, GAsyncResult *res, gpointer data)
 
 /* Shows the single item's preview: icon now, then the thumbnail or the folder preview. */
 static void
-start_preview (DpPane *self)
+start_preview (DpPane *self, gboolean load_thumbnail)
 {
   DpInfo *info = self->info;
   g_autoptr (GdkPaintable) icon = icon_paintable (self, info->icon, pane_style.icon_size);
@@ -701,205 +707,90 @@ start_preview (DpPane *self)
       return;
     }
   /* Thumbnails: native files only; made if missing (PLAN.md §13.3 rule 3). */
-  if (info->is_native)
+  if (info->is_native && load_thumbnail)
     dp_thumb_load_async (info->uri, info->content_type, info->mtime_s, TRUE, self->cancel, on_thumb, read_ctx (self));
 }
 
-/* New @w × @h texture (a stack card's own shape, so it is never stretched) with @info's icon — on a translucent
- * card if that option is on (P11) — @content px big, its top @top px from the texture's top, centred across.
- * Main thread (icon theme). Drawn with cairo: icon paintables only produce texture/mask nodes, which it
- * renders. */
-static GdkTexture *
-icon_card (DpPane *self, const DpInfo *info, GdkPaintable *art, int w, int h, int content, int top)
+/* A stack item's thumbnail: existing ones only (a selection of many files shouldn't start thumbnailers, D5). */
+typedef struct
 {
-  content = CLAMP (content, 1, MIN (w, h));
-  top = CLAMP (top, 0, h - content);
-  int icon_px = pane_style.stack_card ? content * 3 / 4 : content;
-  int scale = gtk_widget_get_scale_factor (GTK_WIDGET (self));
-  /* @art: a folder's preview (P23); otherwise the file's icon. */
-  g_autoptr (GdkPaintable) icon = art != NULL ? g_object_ref (art) : icon_paintable (self, info->icon, MAX (icon_px / scale, 1));
-  GtkSnapshot *snap = gtk_snapshot_new (); /* consumed below */
-  float x0 = (w - content) / 2.0f, y0 = (float) top;
-  if (pane_style.stack_card)
-    {
-      GdkRGBA fg;
-      gtk_widget_get_color (GTK_WIDGET (self), &fg);
-      fg.alpha = 0.10f;
-      GskRoundedRect r;
-      gsk_rounded_rect_init_from_rect (&r, &GRAPHENE_RECT_INIT (x0, y0, content, content), content / 10.0f);
-      gtk_snapshot_push_rounded_clip (snap, &r);
-      gtk_snapshot_append_color (snap, &fg, &r.bounds);
-      gtk_snapshot_pop (snap);
-    }
-  if (icon != NULL)
-    {
-      gtk_snapshot_save (snap);
-      gtk_snapshot_translate (snap, &GRAPHENE_POINT_INIT (x0 + (content - icon_px) / 2.0f,
-                                                          y0 + (content - icon_px) / 2.0f));
-      gdk_paintable_snapshot (icon, snap, icon_px, icon_px);
-      gtk_snapshot_restore (snap);
-    }
-  g_autoptr (GskRenderNode) node = gtk_snapshot_free_to_node (snap);
-  cairo_surface_t *surface = cairo_image_surface_create (CAIRO_FORMAT_ARGB32, w, h);
-  if (node != NULL)
-    {
-      cairo_t *cr = cairo_create (surface);
-      gsk_render_node_draw (node, cr);
-      cairo_destroy (cr);
-    }
-  cairo_surface_flush (surface);
-  int stride = cairo_image_surface_get_stride (surface);
-  g_autoptr (GBytes) bytes = g_bytes_new (cairo_image_surface_get_data (surface), (gsize) stride * h);
-  cairo_surface_destroy (surface);
-  /* GDK_MEMORY_DEFAULT = cairo's ARGB32 (gdkmemorytexture.h). */
-  return gdk_memory_texture_new (w, h, GDK_MEMORY_DEFAULT, bytes, (gsize) stride);
-}
+  ReadCtx *ctx;
+  char    *key;
+} StackThumb;
 
 static void
-on_stack (GObject *src, GAsyncResult *res, gpointer data)
+on_stack_thumb (GObject *src, GAsyncResult *res, gpointer data)
 {
   (void) src;
+  StackThumb *st = data;
+  g_autofree char *key = st->key;
+  ReadCtx *ctx = st->ctx;
+  g_free (st);
   g_autoptr (GError) error = NULL;
-  g_autoptr (GdkTexture) frame = dp_stack_render_finish (res, &error);
-  g_autoptr (DpPane) self = take_pane (data);
-  if (self == NULL || frame == NULL)
+  g_autoptr (GdkTexture) texture = dp_thumb_load_finish (res, &error);
+  g_autoptr (DpPane) self = take_pane (ctx);
+  if (self == NULL || texture == NULL)
     return;
-  set_still (self, GDK_PAINTABLE (frame), self->stack_icons ? "stack-icons" : "stack");
-}
-
-/* Logical width of the stack frame: the box's width at the right; at the bottom, what makes it as tall as the
- * strip. */
-static int
-stack_width (DpPane *self, const FpStyle *style, gboolean icons_only)
-{
-  double aspect = fp_composite_frame_height (style, 1000) / 1000.0; /* height / width */
-  int full = is_bottom (self) ? (int) ((self->preferred_height - 2 * pane_style.padding) / aspect)
-                              : self->preferred_width - 2 * (pane_style.padding + pane_style.preview_margin);
-  if (icons_only)
-    {
-      /* Only icons: a frame whose cards are about as tall as the front icon, so the box fits the stack. */
-      double fx, fy, fw, fh;
-      fp_composite_card_rect (0, 1000, &fx, &fy, &fw, &fh);
-      int fit = (int) ceil (pane_style.icon_size * 1.1 / (fh / 1000.0));
-      full = MIN (full, fit);
-    }
-  return CLAMP (full, 60, 420);
-}
-
-static void start_stack (DpPane *self);
-
-static gboolean
-restack_idle (gpointer data)
-{
-  DpPane *self = data;
-  self->restack_id = 0;
-  if (self->summary != NULL)
-    start_stack (self);
-  return G_SOURCE_REMOVE;
-}
-
-/* A folder's preview arrived: draw the stack again (once; the frame is in the cache by then). */
-static void
-on_folder_art_changed (GdkPaintable *art, gpointer data)
-{
-  (void) art;
-  DpPane *self = data;
-  if (self->restack_id == 0)
-    self->restack_id = g_timeout_add (60, restack_idle, self);
+  dp_stack_view_set_thumbnail (DP_STACK_VIEW (self->stack), key, texture);
+  sync_box (self);
 }
 
 /* P23: a folder with a folder preview is drawn with its pictures (new ref), else NULL (its icon). */
 static GdkPaintable *
-stack_folder_art (DpPane *self, const DpInfo *info, int content_px)
+stack_folder_art (DpPane *self, const DpInfo *info, int size)
 {
   if (!info->is_dir || info->custom_icon || folder_renderer == NULL)
     return NULL;
   int scale = gtk_widget_get_scale_factor (GTK_WIDGET (self));
-  int size = MAX (content_px / MAX (scale, 1), 16);
   g_autoptr (GdkPaintable) folder_icon = icon_paintable (self, info->icon, size);
-  GdkPaintable *art = folder_icon != NULL ? folder_renderer (info->file, folder_icon, size, scale) : NULL;
-  if (art != NULL)
-    {
-      g_ptr_array_add (self->stack_folders, g_object_ref (art));
-      g_signal_connect (art, "invalidate-contents", G_CALLBACK (on_folder_art_changed), self);
-    }
-  return art;
+  return folder_icon != NULL ? folder_renderer (info->file, folder_icon, size, scale) : NULL;
 }
 
-/* Several selected: the folder-preview stack (P10) of the first items, rendered in a worker. The front item sits
- * at the bottom; icons get smaller towards the back like the cards (P18), the front one at the icon size. */
+static gboolean
+is_stack_media (const DpInfo *info)
+{
+  return info->is_native && !info->is_dir &&
+         (info->kind == DP_KIND_IMAGE || info->kind == DP_KIND_VIDEO || info->kind == DP_KIND_PDF);
+}
+
+/* Several selected: the first items as a stack of live layers (P24): their icons (folders with their previews)
+ * at once, thumbnails cross-faded in as they load. Items already shown keep their place and thumbnail, so
+ * adding one to the selection only moves the others. */
 static void
 start_stack (DpPane *self)
 {
-  guint n = MIN (self->summary->infos->len, DP_STACK_MAX);
-  FpStyle style;
-  if (pane_style.stack_fp_look)
-    {
-      /* P22: exactly the folder previews' thumbnails (border, colour, corners, shadow, depth…), stacked. */
-      style = pane_style.fp_style;
-      style.layout = FP_LAYOUT_STACKED;
-    }
-  else
-    dp_stack_style_init (&style, pane_style.stack_depth, pane_style.stack_shadow, pane_style.stack_rotation,
-                         pane_style.stack_keep_aspect, pane_style.stack_fade);
-  style.bottom_align = TRUE;
-  g_clear_handle_id (&self->restack_id, g_source_remove);
-  if (self->stack_folders != NULL)
-    for (guint i = 0; i < self->stack_folders->len; i++)
-      g_signal_handlers_disconnect_by_data (g_ptr_array_index (self->stack_folders, i), self);
-  g_clear_pointer (&self->stack_folders, g_ptr_array_unref);
-  self->stack_folders = g_ptr_array_new_with_free_func (g_object_unref);
-  int scale = gtk_widget_get_scale_factor (GTK_WIDGET (self));
-  /* Pictures, videos, PDFs may have thumbnails (full width); folders and other files are icons. */
-  gboolean icons_only = TRUE;
-  for (guint i = 0; i < n; i++)
-    {
-      DpKind k = ((const DpInfo *) g_ptr_array_index (self->summary->infos, i))->kind;
-      if (k == DP_KIND_IMAGE || k == DP_KIND_VIDEO || k == DP_KIND_PDF)
-        icons_only = FALSE;
-    }
-  self->stack_icons = icons_only;
-  guint width = (guint) (stack_width (self, &style, icons_only) * scale);
-  /* Icons: the front one at the icon size (as far as the card allows) on the stack's bottom edge; each one behind
-   * ×0.85 and lifted so its top peeks out above the one in front by about 7 % of a card — like the pictures,
-   * whose cards behind are narrower and raised (P18). */
-  double fx, fy, fw, fh;
-  fp_composite_card_rect (0, width, &fx, &fy, &fw, &fh);
-  double front = MIN (pane_style.icon_size * scale, MIN (fw, fh));
-  double peek = 0.07 * fh;
-  double front_top = fy + fh - front; /* frame pixels */
-  DpStackItem items[DP_STACK_MAX] = { { NULL, 0, FALSE, NULL, 0 } };
-  GdkTexture *cards[DP_STACK_MAX] = { NULL }; /* owned, released below (the job takes its own refs) */
-  double size = front;
+  guint n = MIN (self->summary->infos->len, DP_STACK_VIEW_MAX);
+  DpStackViewItem items[DP_STACK_VIEW_MAX] = { { NULL, NULL, FALSE, 0 } };
+  GdkPaintable *icons[DP_STACK_VIEW_MAX] = { NULL }; /* owned, released below (the view takes its own refs) */
+  self->stack_art = 0;
+  double size = pane_style.icon_size;
   for (guint i = 0; i < n; i++, size *= 0.85)
     {
       const DpInfo *info = g_ptr_array_index (self->summary->infos, i);
-      double x, y, cw, ch;
-      fp_composite_card_rect (i, width, &x, &y, &cw, &ch);
-      double top = front_top - i * peek; /* where this icon's top should be, in frame pixels */
-      g_autoptr (GdkPaintable) art = stack_folder_art (self, info, (int) size);
-      if (pane_style.stack_fp_look)
-        {
-          /* Bordered like a photo: a card the icon's own size, all the same size, raised by the stack. */
-          int sq = MAX ((int) front, 8);
-          cards[i] = icon_card (self, info, art, sq, sq, sq, 0);
-        }
+      icons[i] = stack_folder_art (self, info, (int) size);
+      if (icons[i] != NULL)
+        self->stack_art++;
       else
-        cards[i] = icon_card (self, info, art, MAX ((int) cw, 8), MAX ((int) ch, 8), (int) size, (int) (top - y));
-      items[i].uri = info->uri;
-      items[i].mtime = info->mtime_s;
-      /* Existing thumbnails only: a selection of many files shouldn't start thumbnailers (D5). */
-      items[i].thumbnail = info->is_native && !info->is_dir;
-      items[i].fallback = cards[i];
+        icons[i] = icon_paintable (self, info->icon, MAX ((int) size, 16));
+      items[i].key = info->uri;
+      items[i].icon = icons[i];
+      items[i].media = is_stack_media (info);
       items[i].seed = g_str_hash (info->uri);
     }
-  g_autoptr (GdkPaintable) placeholder = icon_paintable (self, ((DpInfo *) g_ptr_array_index (self->summary->infos, 0))->icon,
-                                                          pane_style.icon_size);
-  set_still (self, placeholder, "icon");
-  if (n > 0)
-    dp_stack_render_async (&style, items, n, width, self->cancel, on_stack, read_ctx (self));
+  DpStackView *view = DP_STACK_VIEW (self->stack);
+  dp_stack_view_set_items (view, items, n);
+  set_still (self, NULL, "stack");
   for (guint i = 0; i < n; i++)
-    g_clear_object (&cards[i]);
+    {
+      g_clear_object (&icons[i]);
+      const DpInfo *info = g_ptr_array_index (self->summary->infos, i);
+      if (!items[i].media || dp_stack_view_has_thumbnail (view, info->uri))
+        continue;
+      StackThumb *st = g_new0 (StackThumb, 1); /* consumed by on_stack_thumb */
+      st->ctx = read_ctx (self);
+      st->key = g_strdup (info->uri);
+      dp_thumb_load_async (info->uri, info->content_type, info->mtime_s, FALSE, self->cancel, on_stack_thumb, st);
+    }
 }
 
 /* ------------------------------------------------------------------------------------------------ */
@@ -1095,6 +986,28 @@ on_extra (GObject *src, GAsyncResult *res, gpointer data)
   render_extra (self);
 }
 
+/* Second step of a single item: the reads that run in workers. */
+static gboolean
+start_reads_idle (gpointer data)
+{
+  g_autoptr (DpPane) self = take_pane (data);
+  if (self == NULL || self->info == NULL)
+    return G_SOURCE_REMOVE;
+  DpInfo *info = self->info;
+  if (info->is_dir)
+    {
+      if (!self->has_count)
+        dp_folder_count_async (info->file, self->cancel, on_count, read_ctx (self));
+    }
+  else
+    {
+      if (info->is_native)
+        dp_thumb_load_async (info->uri, info->content_type, info->mtime_s, TRUE, self->cancel, on_thumb, read_ctx (self));
+      dp_extra_read_async (info, self->cancel, on_extra, read_ctx (self));
+    }
+  return G_SOURCE_REMOVE;
+}
+
 static void
 on_info (GObject *src, GAsyncResult *res, gpointer data)
 {
@@ -1116,7 +1029,7 @@ on_info (GObject *src, GAsyncResult *res, gpointer data)
   gtk_label_set_text (GTK_LABEL (self->title), info->display_name);
   gtk_label_set_text (GTK_LABEL (self->subtitle), info->description != NULL ? info->description : "");
   gtk_image_set_from_gicon (GTK_IMAGE (self->icon), info->icon);
-  start_preview (self);
+  start_preview (self, FALSE);
   if (info->is_dir)
     {
       g_autofree char *key = count_key (info);
@@ -1126,13 +1039,13 @@ on_info (GObject *src, GAsyncResult *res, gpointer data)
           self->count = *cached;
           self->has_count = TRUE;
         }
-      else
-        dp_folder_count_async (info->file, self->cancel, on_count, read_ctx (self));
     }
-  else
-    dp_extra_read_async (info, self->cancel, on_extra, read_ctx (self));
   update_play_button (self);
   render_info (self);
+  /* The workers (thumbnail, media / PDF readers, counting) start after the rows are built: started together, their
+   * libraries' allocations contend with ours for glibc's malloc locks and the step took 17–22 ms of wall time on
+   * 5 ms of CPU (PLAN.md §13.14 S1). Queued after the permissions idle. */
+  g_idle_add_full (G_PRIORITY_DEFAULT_IDLE, start_reads_idle, read_ctx (self), NULL);
 }
 
 static void
@@ -1156,9 +1069,10 @@ on_summary (GObject *src, GAsyncResult *res, gpointer data)
   render_summary (self);
 }
 
-/* Forgets what was shown and cancels its reads. */
+/* Forgets what was shown and cancels its reads. @keep_stack: several items stay selected, so the stack, the
+ * subtitle and the summary stay on screen until the new summary replaces them (no flicker, P27). */
 static void
-reset (DpPane *self)
+reset (DpPane *self, gboolean keep_stack)
 {
   dp_pane_stop_media (self);
   g_cancellable_cancel (self->cancel);
@@ -1171,13 +1085,14 @@ reset (DpPane *self)
   g_clear_pointer (&self->summary, dp_summary_free);
   self->has_count = FALSE;
   self->count_failed = FALSE;
-  g_clear_handle_id (&self->restack_id, g_source_remove);
-  if (self->stack_folders != NULL)
-    for (guint i = 0; i < self->stack_folders->len; i++)
-      g_signal_handlers_disconnect_by_data (g_ptr_array_index (self->stack_folders, i), self);
-  g_clear_pointer (&self->stack_folders, g_ptr_array_unref);
   self->details_w = self->perms_w = NULL;
-  set_still (self, NULL, "none");
+  keep_stack = keep_stack && is_stack (self);
+  if (!keep_stack)
+    {
+      dp_stack_view_set_items (DP_STACK_VIEW (self->stack), NULL, 0);
+      self->stack_art = 0;
+    }
+  set_still (self, NULL, keep_stack ? "stack" : "none");
 }
 
 void
@@ -1190,9 +1105,12 @@ dp_pane_show (DpPane    *self,
   TIME_BEGIN ();
   GFile *single = files != NULL && files->len == 1 ? g_ptr_array_index (files, 0)
                   : (files == NULL || files->len == 0) ? folder : NULL;
-  reset (self);
+  gboolean multi = files != NULL && files->len > 1;
+  gboolean keep = multi && is_stack (self);
+  reset (self, keep);
   self->cancel = g_cancellable_new ();
-  clear_box (self->groups);
+  if (!keep)
+    clear_box (self->groups);
   gtk_widget_set_visible (self->play, FALSE);
   gtk_widget_set_visible (self->controls, FALSE);
   if (single != NULL)
@@ -1208,7 +1126,8 @@ dp_pane_show (DpPane    *self,
     {
       g_autofree char *title = g_strdup_printf ("%u items selected", MAX (n_selected, files->len));
       gtk_label_set_text (GTK_LABEL (self->title), title);
-      gtk_label_set_text (GTK_LABEL (self->subtitle), "");
+      if (!keep)
+        gtk_label_set_text (GTK_LABEL (self->subtitle), "");
       gtk_image_set_from_icon_name (GTK_IMAGE (self->icon), "edit-select-all-symbolic");
       dp_summary_read_async (files, MAX (n_selected, files->len), self->cancel, on_summary, read_ctx (self));
     }
@@ -1282,8 +1201,15 @@ dp_pane_describe (DpPane *self)
         }
       g_string_append_c (s, ']');
     }
-  g_string_append_printf (s, " box=%s stack-art=%s", dp_box_get_ratio_is_media (DP_BOX (self->box)) ? "media" : "icon",
-                          self->stack_folders != NULL && self->stack_folders->len > 0 ? "yes" : "no");
+  g_string_append_printf (s, " box=%s stack-art=%s backdrop=%s", dp_box_get_ratio_is_media (DP_BOX (self->box)) ? "media" : "icon",
+                          self->stack_art > 0 ? "yes" : "no",
+                          dp_backdrop_get_paintable (DP_BACKDROP (self->backdrop)) != NULL ? "yes" : "no");
+  if (is_stack (self))
+    {
+      DpStackView *v = DP_STACK_VIEW (self->stack);
+      g_string_append_printf (s, " stack=%s:%u thumbs=%u", dp_stack_view_get_shape (v), dp_stack_view_get_n_items (v),
+                              dp_stack_view_get_n_thumbnails (v));
+    }
   return g_string_free (s, FALSE);
 }
 
@@ -1322,6 +1248,21 @@ apply_style (DpPane *self)
   gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (self->scroller), bottom ? GTK_POLICY_AUTOMATIC : GTK_POLICY_NEVER,
                                   bottom ? GTK_POLICY_NEVER : GTK_POLICY_AUTOMATIC);
   dp_box_set_layout (DP_BOX (self->box), o);
+  DpStackStyle ss = {
+    .icon_size = pane_style.icon_size,
+    .border = pane_style.stack_border,
+    .border_color = pane_style.stack_border_color,
+    .border_width = pane_style.stack_border_width,
+    .corner_radius = pane_style.stack_corner_radius,
+    .shadow = pane_style.stack_shadow,
+    .rotation = pane_style.stack_rotation,
+    .keep_aspect = pane_style.stack_keep_aspect,
+    .depth = pane_style.stack_depth,
+    .fade = pane_style.stack_fade,
+    .card = pane_style.stack_card,
+    .media_square = pane_style.stack_media_square,
+  };
+  dp_stack_view_set_style (DP_STACK_VIEW (self->stack), &ss);
   sync_box (self);
   int strip = MAX (self->preferred_height - 2 * pane_style.padding, 24);
   dp_box_set_max_height (DP_BOX (self->box), bottom ? strip : MEDIA_MAX_HEIGHT);
@@ -1358,14 +1299,7 @@ void
 dp_pane_set_style (const DpPaneStyle *style)
 {
   g_return_if_fail (style != NULL);
-  gboolean stack_changed = style->stack_depth != pane_style.stack_depth ||
-                           style->stack_shadow != pane_style.stack_shadow ||
-                           style->stack_rotation != pane_style.stack_rotation ||
-                           style->stack_keep_aspect != pane_style.stack_keep_aspect ||
-                           style->stack_fade != pane_style.stack_fade || style->stack_card != pane_style.stack_card;
   gboolean icon_changed = style->icon_size != pane_style.icon_size;
-  stack_changed = stack_changed || style->stack_fp_look != pane_style.stack_fp_look ||
-                  (style->stack_fp_look && !fp_style_equal (&style->fp_style, &pane_style.fp_style));
   pane_style = *style;
   pane_style.icon_size = CLAMP (pane_style.icon_size, 16, 256);
   pane_style.padding = CLAMP (pane_style.padding, 0, 64);
@@ -1375,11 +1309,11 @@ dp_pane_set_style (const DpPaneStyle *style)
     {
       DpPane *pane = g_ptr_array_index (panes, i);
       apply_style (pane);
-      sync_box (pane);
-      if ((stack_changed || icon_changed) && pane->summary != NULL)
-        start_stack (pane);
+      if (icon_changed && pane->summary != NULL)
+        start_stack (pane); /* icons looked up at the new size */
       else if (icon_changed && pane->info != NULL)
-        start_preview (pane);
+        start_preview (pane, TRUE);
+      sync_box (pane);
     }
 }
 
@@ -1393,8 +1327,6 @@ dp_pane_set_layout (DpPane         *self,
   self->layout = layout;
   apply_style (self);
   render_all (self);
-  if (self->summary != NULL)
-    start_stack (self); /* its size depends on the layout */
   gtk_widget_queue_resize (GTK_WIDGET (self));
 }
 
@@ -1464,7 +1396,7 @@ dp_pane_dispose (GObject *object)
     g_ptr_array_remove (panes, self);
   if (self->scroller != NULL)
     {
-      reset (self);
+      reset (self, FALSE);
       g_clear_pointer (&self->scroller, gtk_widget_unparent);
     }
   G_OBJECT_CLASS (dp_pane_parent_class)->dispose (object);
@@ -1521,7 +1453,13 @@ dp_pane_init (DpPane *self)
   gtk_picture_set_content_fit (GTK_PICTURE (self->picture), GTK_CONTENT_FIT_SCALE_DOWN);
   gtk_picture_set_can_shrink (GTK_PICTURE (self->picture), TRUE);
   gtk_accessible_update_property (GTK_ACCESSIBLE (self->picture), GTK_ACCESSIBLE_PROPERTY_LABEL, "Preview", -1);
-  gtk_overlay_set_child (GTK_OVERLAY (self->preview), self->picture);
+  self->backdrop = dp_backdrop_new ();
+  gtk_overlay_set_child (GTK_OVERLAY (self->preview), self->backdrop);
+  gtk_overlay_add_overlay (GTK_OVERLAY (self->preview), self->picture);
+  self->stack = dp_stack_view_new ();
+  gtk_accessible_update_property (GTK_ACCESSIBLE (self->stack), GTK_ACCESSIBLE_PROPERTY_LABEL, "Selected items", -1);
+  gtk_widget_set_visible (self->stack, FALSE);
+  gtk_overlay_add_overlay (GTK_OVERLAY (self->preview), self->stack);
 
   self->play = osd_button ("media-playback-start-symbolic", "Play Preview");
   gtk_widget_add_css_class (self->play, "dp-play");
