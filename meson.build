@@ -69,6 +69,7 @@ subdir('src/folder-views')
 subdir('src/folder-icons')
 subdir('src/details-pane')
 subdir('src/git')
+subdir('src/nav-buttons')
 
 # Built at the build root as build/libnautilus-utils.so, which is what the dev symlink points at (README.md).
 nu_module = shared_module('nautilus-utils',

@@ -1,7 +1,7 @@
 # Sidebar-drives feature: usage bars on drive rows, OS drive row, network shares (PLAN.md §8).
 
 sd_c_args = ['-DG_LOG_DOMAIN="sidebar-drives"']
-sd_core_deps = [glib_dep, gobject_dep, gio_dep]
+sd_core_deps = [glib_dep, gobject_dep, gio_dep, dependency('gio-unix-2.0')]
 sd_inc = include_directories('.')
 
 # Nautilus-free core (Phase 1): OS name, classification, async size queries, usage text. Testable standalone.

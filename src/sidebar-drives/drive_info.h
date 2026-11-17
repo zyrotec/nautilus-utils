@@ -43,6 +43,14 @@ char *sd_os_name (void);
 SdDriveKind sd_classify (gboolean is_native,
                          gboolean is_remote);
 
+/* TRUE for filesystem types that are network shares (nfs, nfs4, cifs, smb3, sshfs, fuse.sshfs, 9p, …). */
+gboolean sd_fs_type_is_network (const char *fs_type);
+
+/* TRUE if a filesystem of a network type (sd_fs_type_is_network) is mounted at @mount_path, per the system's mount
+ * table. Synchronous but cheap (reads /proc/self/mountinfo, never the share itself), so a share mounted by the
+ * system (NFS/CIFS in fstab, autofs) is known as one before any size query answers. */
+gboolean sd_mount_path_is_network (const char *mount_path);
+
 /* Used fraction in [0, 1], or a negative value when unknown (size 0). */
 double sd_fill_fraction (guint64 size,
                          guint64 free);

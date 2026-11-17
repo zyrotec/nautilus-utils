@@ -66,6 +66,7 @@ typedef struct
 } RootEntry;
 
 static gboolean    enabled = TRUE;
+static gboolean    emblems = TRUE; /* status emblems on the files' icons (setting git-emblems) */
 static GHashTable *live;   /* Pending* handed to Files as handles (borrowed): cancel_update checks against it */
 static GHashTable *dirs;   /* folder path → Dir* */
 static GHashTable *roots;  /* folder path → RootEntry* */
@@ -202,9 +203,38 @@ values_for (Dir *d, const char *name, gboolean is_dir)
                     NULL);
 }
 
+/* The emblem for @state (without Files' "emblem-" prefix: Files looks both names up), or NULL. Ignored items get
+ * none (build output and dependency folders would all carry one). */
+static const char *
+emblem_for (GtState state)
+{
+  switch (state)
+    {
+    case GT_STATE_MODIFIED:
+    case GT_STATE_TYPE_CHANGED: return "nu-git-modified-symbolic";
+    case GT_STATE_ADDED:
+    case GT_STATE_COPIED:       return "nu-git-added-symbolic";
+    case GT_STATE_DELETED:      return "nu-git-deleted-symbolic";
+    case GT_STATE_RENAMED:      return "nu-git-renamed-symbolic";
+    case GT_STATE_UNTRACKED:    return "nu-git-untracked-symbolic";
+    case GT_STATE_CONFLICT:     return "nu-git-conflict-symbolic";
+    case GT_STATE_CONTAINS:     return "nu-git-contains-symbolic";
+    case GT_STATE_IGNORED:
+    case GT_STATE_NONE:
+    default:                    return NULL;
+    }
+}
+
 static void
 fill (Dir *d, NautilusFileInfo *file, const char *name, gboolean is_dir)
 {
+  if (emblems && d->status != NULL)
+    {
+      g_autofree char *path = *d->rel != '\0' ? g_strconcat (d->rel, "/", name, NULL) : g_strdup (name);
+      const char *emblem = emblem_for (gt_status_state (d->status, path, is_dir));
+      if (emblem != NULL)
+        nautilus_file_info_add_emblem (file, emblem);
+    }
   g_autofree char *joined = values_for (d, name, is_dir);
   g_auto (GStrv) v = g_strsplit (joined, "\x1f", 4);
   static const char *const attrs[] = { GT_ATTR_STATUS, GT_ATTR_COMMIT, GT_ATTR_HASH, GT_ATTR_AUTHOR };
@@ -522,6 +552,30 @@ gt_columns_register (GTypeModule *module)
   gt_columns_register_type (module);
 }
 
+/* Files asks again about every file it showed values for (emblems switched, or the feature off). */
+static void
+invalidate_all (void)
+{
+  if (dirs == NULL)
+    return;
+  GHashTableIter it;
+  gpointer val;
+  g_hash_table_iter_init (&it, dirs);
+  while (g_hash_table_iter_next (&it, NULL, &val))
+    {
+      Dir *d = val;
+      GHashTableIter si;
+      gpointer sv;
+      g_hash_table_iter_init (&si, d->seen);
+      while (g_hash_table_iter_next (&si, NULL, &sv))
+        {
+          g_autoptr (NautilusFileInfo) file = g_weak_ref_get (&((Seen *) sv)->file);
+          if (file != NULL)
+            nautilus_file_info_invalidate_extension_info (file);
+        }
+    }
+}
+
 static void
 drop_all (void)
 {
@@ -537,7 +591,19 @@ gt_columns_set_enabled (gboolean on)
 {
   enabled = on;
   if (!on)
-    drop_all ();
+    {
+      invalidate_all (); /* their emblems go (Files asks again; we answer nothing) */
+      drop_all ();
+    }
+}
+
+void
+gt_columns_set_emblems (gboolean on)
+{
+  if (emblems == on)
+    return;
+  emblems = on;
+  invalidate_all ();
 }
 
 void

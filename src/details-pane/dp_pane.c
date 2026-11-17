@@ -134,7 +134,13 @@ load_css (void)
     ".dp-preview, .dp-preview picture.dp-video { border-radius: %dpx; }\n"
     ".dp-preview { margin: %dpx; }\n",
     pane_style.margin, pane_style.radius, pane_style.preview_radius, pane_style.preview_margin);
-  g_autofree char *all = g_strconcat (style_sheet, sizes, NULL);
+  g_autofree char *colour = NULL;
+  if (pane_style.custom_colour)
+    {
+      g_autofree char *rgba = gdk_rgba_to_string (&pane_style.colour);
+      colour = g_strdup_printf ("dp-pane, dp-pane.dp-floating { background-color: %s; }\n", rgba);
+    }
+  g_autofree char *all = g_strconcat (style_sheet, sizes, colour != NULL ? colour : "", NULL);
   gtk_css_provider_load_from_string (css, all);
 }
 

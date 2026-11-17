@@ -104,15 +104,17 @@ typedef enum
   NU_CHANGED_FV_DEFAULT     = 1 << 7, /* folder-views-default-*, folder-views-defaults-captured */
   NU_CHANGED_PREVIEW_STYLE  = 1 << 8, /* folder-preview-layout, -stack-step, -border*, -shadow, -rotation,
                                        * -keep-aspect, -depth-effect, -corner-radius, -fade, -view-*-radius,
-                                       * -stack-padding, -border-width */
+                                       * -stack-padding, -stack-spacing, -border-width */
   NU_CHANGED_PREVIEW_ICONS  = 1 << 9, /* folder-preview-cycle, -folder-icon, -overlay-icon, -stack-position,
                                        * -stack-offset (nothing that changes the pictures themselves) */
   NU_CHANGED_FOLDER_ICONS   = 1 << 10, /* folder-icons-enabled, folder-icon-rules, folder-icon-rule-history */
   NU_CHANGED_DETAILS_PANE   = 1 << 11, /* details-pane-enabled */
   NU_CHANGED_DP_STATE       = 1 << 12, /* details-pane-visible, -width, -height (UI state) */
   NU_CHANGED_DP_LOOK        = 1 << 13, /* details-pane-position, -border, -margin, -padding, -radius,
-                                        * -header-border, -preview-*, -stack-* */
-  NU_CHANGED_GIT            = 1 << 14, /* git-enabled, git-status-bar, git-ide, git-pane-git, git-history-graph */
+                                        * -header-border, -custom-colour, -colour, -preview-*, -stack-* */
+  NU_CHANGED_GIT            = 1 << 14, /* git-enabled, git-status-bar, git-ide, git-pane-git, git-history-graph,
+                                        * git-bar-*, git-commit-tooltip, git-emblems */
+  NU_CHANGED_NAV_BUTTONS    = 1 << 15, /* nav-buttons-enabled */
 } NuChanged;
 
 typedef struct
@@ -145,6 +147,7 @@ typedef struct
   int             preview_view_top_radius; /* px at 64 × 64 */
   int             preview_view_bottom_radius;
   int             preview_stack_padding;   /* px at 64 × 64 */
+  int             preview_stack_spacing;   /* px at 64 × 64, 0 … 8 */
   NuStackPosition preview_stack_position;
   int             preview_stack_offset;    /* px at 64 × 64, positive = down */
   const char     *preview_folder_icon;  /* Never NULL ("" = theme icon); owned by the service, valid until
@@ -164,6 +167,8 @@ typedef struct
   int             details_pane_padding;
   int             details_pane_radius;
   gboolean        details_pane_header_border;
+  gboolean        details_pane_custom_colour;
+  NuRgb           details_pane_colour;
   int             details_pane_preview_radius;
   int             details_pane_preview_margin;
   int             details_pane_icon_size;   /* px, 16 … 256, a multiple of 16 */
@@ -188,6 +193,12 @@ typedef struct
   const char     *git_ide;                  /* desktop ID or "" */
   gboolean        git_pane_git;
   gboolean        git_history_graph;
+  gboolean        git_bar_border;
+  gboolean        git_bar_custom_colour;
+  NuRgb           git_bar_colour;
+  gboolean        git_commit_tooltip;
+  gboolean        git_emblems;
+  gboolean        nav_buttons_enabled;
 } NuConfig;
 
 #define NU_DETAILS_PANE_WIDTH_MIN 260

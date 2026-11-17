@@ -44,6 +44,7 @@ apply_look (void)
   style.view_top_radius = (guint) MAX (c->preview_view_top_radius, 0);
   style.view_bottom_radius = (guint) MAX (c->preview_view_bottom_radius, 0);
   style.stack_padding = (guint) CLAMP (c->preview_stack_padding, 0, 20);
+  style.stack_spacing = (guint) CLAMP (c->preview_stack_spacing, 0, FP_STACK_SPACING_MAX);
   fp_view_hook_set_look (&style, (FpStackPosition) c->preview_stack_position, c->preview_stack_offset,
                          c->preview_cycle, c->preview_folder_icon, c->preview_overlay_icon);
 }

@@ -92,6 +92,15 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_cmpstr (a->git_ide, ==, b->git_ide);
   g_assert_cmpint (a->git_pane_git, ==, b->git_pane_git);
   g_assert_cmpint (a->git_history_graph, ==, b->git_history_graph);
+  g_assert_cmpint (a->git_bar_border, ==, b->git_bar_border);
+  g_assert_cmpint (a->git_bar_custom_colour, ==, b->git_bar_custom_colour);
+  g_assert_true (rgb_equal (a->git_bar_colour, b->git_bar_colour));
+  g_assert_cmpint (a->git_commit_tooltip, ==, b->git_commit_tooltip);
+  g_assert_cmpint (a->git_emblems, ==, b->git_emblems);
+  g_assert_cmpint (a->nav_buttons_enabled, ==, b->nav_buttons_enabled);
+  g_assert_cmpint (a->preview_stack_spacing, ==, b->preview_stack_spacing);
+  g_assert_cmpint (a->details_pane_custom_colour, ==, b->details_pane_custom_colour);
+  g_assert_true (rgb_equal (a->details_pane_colour, b->details_pane_colour));
   g_assert_cmpstr (a->preview_folder_icon, ==, b->preview_folder_icon);
   g_assert_cmpstr (a->preview_overlay_icon, ==, b->preview_overlay_icon);
 }
@@ -309,6 +318,12 @@ test_each_group (void)
     { "details-pane-title-centered", NU_CHANGED_DP_LOOK },
     { "details-pane-show-icon", NU_CHANGED_DP_LOOK },
     { "details-pane-preview-backdrop", NU_CHANGED_DP_LOOK },
+    { "details-pane-custom-colour", NU_CHANGED_DP_LOOK },
+    { "git-bar-border", NU_CHANGED_GIT },
+    { "git-bar-custom-colour", NU_CHANGED_GIT },
+    { "git-commit-tooltip", NU_CHANGED_GIT },
+    { "git-emblems", NU_CHANGED_GIT },
+    { "nav-buttons-enabled", NU_CHANGED_NAV_BUTTONS },
     { "details-pane-stack-border", NU_CHANGED_DP_LOOK },
     { "details-pane-stack-media-square", NU_CHANGED_DP_LOOK },
     { "git-enabled", NU_CHANGED_GIT },
@@ -383,6 +398,7 @@ test_each_group (void)
     { "folder-preview-view-bottom-radius", 9, NU_CHANGED_PREVIEW_STYLE },
     { "folder-preview-stack-offset", -6, NU_CHANGED_PREVIEW_ICONS },
     { "folder-preview-stack-padding", 3, NU_CHANGED_PREVIEW_STYLE },
+    { "folder-preview-stack-spacing", 5, NU_CHANGED_PREVIEW_STYLE },
   };
   for (gsize i = 0; i < G_N_ELEMENTS (ints); i++)
     {
@@ -399,6 +415,7 @@ test_each_group (void)
   g_assert_cmpint (pc->preview_view_bottom_radius, ==, 9);
   g_assert_cmpint (pc->preview_stack_offset, ==, -6);
   g_assert_cmpint (pc->preview_stack_padding, ==, 3);
+  g_assert_cmpint (pc->preview_stack_spacing, ==, 5);
   counter.calls = 0;
   g_settings_set_double (s, "folder-preview-border-width", 2.5);
   drain ();
@@ -436,6 +453,25 @@ test_each_group (void)
   g_assert_cmpuint (counter.calls, ==, 1);
   g_assert_cmpuint (counter.last, ==, NU_CHANGED_FV_GENERATION);
   g_assert_cmpuint (nu_settings_get ()->folder_views_generation, ==, 5);
+  /* Colours of the details pane and the Git status bar. */
+  static const struct
+  {
+    const char *key;
+    NuChanged   group;
+  } colours[] = {
+    { "details-pane-colour", NU_CHANGED_DP_LOOK },
+    { "git-bar-colour", NU_CHANGED_GIT },
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS (colours); i++)
+    {
+      counter.calls = 0;
+      g_settings_set_string (s, colours[i].key, "#102030");
+      drain ();
+      g_assert_cmpuint (counter.calls, ==, 1);
+      g_assert_cmpuint (counter.last, ==, colours[i].group);
+    }
+  g_assert_true (rgb_equal (nu_settings_get ()->details_pane_colour, (NuRgb) { 0x10, 0x20, 0x30 }));
+  g_assert_true (rgb_equal (nu_settings_get ()->git_bar_colour, (NuRgb) { 0x10, 0x20, 0x30 }));
   nu_settings_shutdown ();
 }
 
@@ -666,7 +702,7 @@ test_outdated_schema (void)
       g_test_skip ("needs the out-of-date schema (meson test settings-outdated-schema)");
       return;
     }
-  g_test_expect_message ("settings", G_LOG_LEVEL_WARNING, "*is out of date (no key \"details-pane-width\")*");
+  g_test_expect_message ("settings", G_LOG_LEVEL_WARNING, "*is out of date (no key \"*\")*");
   nu_settings_init_full (NU_SETTINGS_SCHEMA_ID, NULL);
   g_test_assert_expected_messages ();
   g_assert_false (nu_settings_available ());

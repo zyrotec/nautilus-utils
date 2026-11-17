@@ -9,6 +9,7 @@
 #include "folder-preview/folder_preview.h"
 #include "folder-views/folder_views.h"
 #include "git/git.h"
+#include "nav-buttons/nav_buttons.h"
 #include "settings/settings.h"
 #include "sidebar-drives/sidebar_drives.h"
 
@@ -29,6 +30,7 @@ static const NuFeature features[] = {
   /* After folder-preview: the pane draws folders through its view hook (PLAN.md §13.1.2). */
   { dp_feature_initialize, dp_feature_shutdown, dp_feature_list_types },
   { gt_feature_initialize, gt_feature_shutdown, gt_feature_list_types },
+  { nb_feature_initialize, nb_feature_shutdown, nb_feature_list_types },
 };
 
 /* Upper bound on provider types across all features; checked in nautilus_module_initialize(). */

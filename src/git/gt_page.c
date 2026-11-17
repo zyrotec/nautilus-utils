@@ -3,8 +3,9 @@
  * Header (instead of the preview): the branch checked out with a HEAD chip, the last commit's message, author and
  * time, the mainline (origin's default branch) with ahead / behind, and the selected item's state.
  * Body (instead of the details): the history from HEAD — with a graph of the branch lines, or as a plain list
- * (setting) — each commit's message, author, time and branch / tag chips. Hovering a commit opens a card with the
- * whole message, the hashes, the author and how much it changed (a popover, so its copy button works). */
+ * (setting) — each commit's message, author, time and branch / tag chips. Hovering a commit shows the whole message,
+ * the hashes, the author and how much it changed in a native tooltip (setting; a tooltip never takes the pointer, so
+ * the other rows still highlight under it). */
 #include "gt_page.h"
 
 #include <adwaita.h>
@@ -24,8 +25,6 @@
 #define LANE_W          14.0   /* px between graph lanes */
 #define GRAPH_PAD       10.0   /* px left of the first lane */
 #define NODE_Y          17.0   /* px from a row's top to its node (the middle of the message line) */
-#define HOVER_OPEN_MS   500
-#define HOVER_CLOSE_MS  250
 #define ROWS_PER_STEP   40     /* history rows added per main-loop turn (216 at once took 20 ms) */
 
 static const char *const lane_colors[] = { "#33d17a", "#62a0ea", "#ffa348", "#c061cb", "#f66151", "#f8e45c", "#2ec27e", "#99c1f1" };
@@ -55,12 +54,31 @@ typedef struct
   GCancellable *cancel;     /* everything this page reads */
   guint         append_id;  /* adding history rows in steps, or 0 */
   guint         appended;
-  /* hover card */
-  GtkWidget    *hover_row;  /* borrowed: the row the pointer is over */
-  GtkWidget    *popover;    /* borrowed (child of the row it was opened for) or NULL */
-  gboolean      in_popover;
-  guint         open_id, close_id;
+  /* tooltips: what was read for a commit's tooltip (full hash → TipInfo*) */
+  GHashTable   *tips;
+  int           described;  /* commit whose tooltip the debug driver asked for (gt_page_open_card), or -1 */
 } Page;
+
+/* A commit's tooltip extras, read when it is first hovered. */
+typedef struct
+{
+  char    *body;      /* the message after its first paragraph, or NULL */
+  char    *subject;   /* the whole first paragraph (the list shows git's one-line %s), or NULL */
+  int      files, add, del;
+  gboolean has_stats;
+  gboolean asked;
+} TipInfo;
+
+static void
+tip_info_free (gpointer data)
+{
+  TipInfo *t = data;
+  g_free (t->body);
+  g_free (t->subject);
+  g_free (t);
+}
+
+static gboolean tooltips_on = TRUE;
 
 static void read_selection (Page *p);
 
@@ -68,9 +86,8 @@ static void
 page_free (gpointer data)
 {
   Page *p = data;
-  g_clear_handle_id (&p->open_id, g_source_remove);
-  g_clear_handle_id (&p->close_id, g_source_remove);
   g_clear_handle_id (&p->append_id, g_source_remove);
+  g_clear_pointer (&p->tips, g_hash_table_unref);
   if (p->cancel != NULL)
     g_cancellable_cancel (p->cancel);
   g_clear_object (&p->cancel);
@@ -99,10 +116,7 @@ static const char style_sheet[] =
   ".gt-chip.gt-tag { background-color: alpha(#f6d32d, 0.22); color: #f8e45c; }\n"
   ".gt-history { background: none; }\n"
   ".gt-history > row { padding: 0; border-radius: 8px; }\n"
-  ".gt-history > row.gt-head { background-color: alpha(currentColor, 0.08); }\n"
-  ".gt-stat-add { color: #57e389; background-color: alpha(#33d17a, 0.18); border-radius: 6px; padding: 0 6px; }\n"
-  ".gt-stat-del { color: #f66151; background-color: alpha(#e01b24, 0.18); border-radius: 6px; padding: 0 6px; }\n"
-  ".gt-hover-title { font-size: 1.25em; font-weight: bold; }\n";
+  ".gt-history > row.gt-head { background-color: alpha(currentColor, 0.08); }\n";
 
 static void
 ensure_style (void)
@@ -432,282 +446,218 @@ draw_graph (GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer d
     }
 }
 
-/* ---- hover card ---- */
+/* ---- commit tooltips ---- */
 
-static void open_card (Page *p, GtkWidget *row);
-
-static void
-close_card (Page *p)
+void
+gt_page_set_tooltips (gboolean on)
 {
-  g_clear_handle_id (&p->close_id, g_source_remove);
-  if (p->popover != NULL)
-    {
-      gtk_popover_popdown (GTK_POPOVER (p->popover));
-      gtk_widget_unparent (p->popover);
-      p->popover = NULL;
-    }
-  p->in_popover = FALSE;
+  tooltips_on = on;
 }
 
-static gboolean
-close_later (gpointer data)
-{
-  Page *p = data;
-  p->close_id = 0;
-  if (!p->in_popover)
-    close_card (p);
-  return G_SOURCE_REMOVE;
-}
-
-static gboolean
-open_later (gpointer data)
-{
-  Page *p = data;
-  p->open_id = 0;
-  if (p->hover_row != NULL)
-    open_card (p, p->hover_row);
-  return G_SOURCE_REMOVE;
-}
-
-static void
-on_row_enter (GtkEventControllerMotion *m, double x, double y, gpointer data)
-{
-  (void) x, (void) y;
-  Page *p = data;
-  GtkWidget *row = gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (m));
-  p->hover_row = row;
-  g_clear_handle_id (&p->close_id, g_source_remove);
-  if (p->popover != NULL && gtk_widget_get_parent (p->popover) == row)
-    return;
-  g_clear_handle_id (&p->open_id, g_source_remove);
-  p->open_id = g_timeout_add (p->popover != NULL ? 120 : HOVER_OPEN_MS, open_later, p);
-}
-
-static void
-on_row_leave (GtkEventControllerMotion *m, gpointer data)
-{
-  Page *p = data;
-  if (p->hover_row == gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (m)))
-    p->hover_row = NULL;
-  g_clear_handle_id (&p->open_id, g_source_remove);
-  if (p->popover != NULL && p->close_id == 0)
-    p->close_id = g_timeout_add (HOVER_CLOSE_MS, close_later, p);
-}
-
-static void
-on_card_enter (GtkEventControllerMotion *m, double x, double y, gpointer data)
-{
-  (void) m, (void) x, (void) y;
-  Page *p = data;
-  p->in_popover = TRUE;
-  g_clear_handle_id (&p->close_id, g_source_remove);
-}
-
-static void
-on_card_leave (GtkEventControllerMotion *m, gpointer data)
-{
-  (void) m;
-  Page *p = data;
-  p->in_popover = FALSE;
-  if (p->close_id == 0)
-    p->close_id = g_timeout_add (HOVER_CLOSE_MS, close_later, p);
-}
-
-static void
-on_copy (GtkButton *button, gpointer data)
-{
-  (void) data;
-  const char *hash = g_object_get_data (G_OBJECT (button), "gt-hash");
-  gdk_clipboard_set_text (gtk_widget_get_clipboard (GTK_WIDGET (button)), hash != NULL ? hash : "");
-}
-
-/* The card's message and statistics arrive later (two small reads). */
+/* Reads finish after the page or the row may be gone: they find both through weak refs and the page's data. */
 typedef struct
 {
-  GWeakRef body;  /* GtkLabel */
-  GWeakRef title; /* GtkLabel */
-  GWeakRef stats; /* GtkBox */
-} CardFill;
+  GWeakRef page;   /* the page widget (its Page is its data) */
+  GWeakRef row;    /* the row whose tooltip to refresh */
+  char    *hash;
+} TipRead;
 
 static void
-card_fill_free (CardFill *f)
+tip_read_free (TipRead *r)
 {
-  g_weak_ref_clear (&f->body);
-  g_weak_ref_clear (&f->title);
-  g_weak_ref_clear (&f->stats);
-  g_free (f);
+  g_weak_ref_clear (&r->page);
+  g_weak_ref_clear (&r->row);
+  g_free (r->hash);
+  g_free (r);
+}
+
+static TipRead *
+tip_read_new (Page *p, GtkWidget *row, const char *hash)
+{
+  TipRead *r = g_new0 (TipRead, 1);
+  g_weak_ref_init (&r->page, p->page);
+  g_weak_ref_init (&r->row, row);
+  r->hash = g_strdup (hash);
+  return r;
+}
+
+/* The TipInfo a read is for (NULL: the page is gone) and, in *@row_out, a new ref on its row or NULL. */
+static TipInfo *
+tip_lookup (TipRead *r, GtkWidget **row_out)
+{
+  g_autoptr (GtkWidget) page = g_weak_ref_get (&r->page);
+  Page *p = page != NULL ? page_of (page) : NULL;
+  *row_out = g_weak_ref_get (&r->row);
+  return p != NULL && p->tips != NULL ? g_hash_table_lookup (p->tips, r->hash) : NULL;
+}
+
+static int
+number_before (const char *text, const char *word)
+{
+  const char *s = strstr (text, word);
+  if (s == NULL)
+    return 0;
+  const char *b = s;
+  while (b > text && g_ascii_isdigit (b[-1]))
+    b--;
+  return atoi (b);
 }
 
 static void
 on_message (GObject *src, GAsyncResult *res, gpointer data)
 {
   (void) src;
-  CardFill *f = data;
-  g_autoptr (GtRunResult) r = gt_run_finish (res, NULL);
-  g_autoptr (GtkWidget) title = g_weak_ref_get (&f->title);
-  g_autoptr (GtkWidget) body = g_weak_ref_get (&f->body);
-  if (r != NULL && r->exit_status == 0 && title != NULL && body != NULL)
+  TipRead *r = data;
+  g_autoptr (GtRunResult) out = gt_run_finish (res, NULL);
+  GtkWidget *row = NULL;
+  TipInfo *t = tip_lookup (r, &row);
+  if (out != NULL && out->exit_status == 0 && t != NULL)
     {
       gsize len = 0;
-      const char *d = g_bytes_get_data (r->out, &len);
+      const char *d = g_bytes_get_data (out->out, &len);
       g_autofree char *msg = d != NULL ? g_strndup (d, len) : g_strdup ("");
       g_strstrip (msg);
       char *nl = strstr (msg, "\n\n");
       if (nl != NULL)
         {
           *nl = '\0';
-          gtk_label_set_text (GTK_LABEL (body), g_strstrip (nl + 2));
-          gtk_widget_set_visible (body, TRUE);
+          t->body = g_strdup (g_strstrip (nl + 2));
         }
-      gtk_label_set_text (GTK_LABEL (title), msg);
+      t->subject = g_strdup (msg);
+      if (row != NULL)
+        gtk_widget_trigger_tooltip_query (row);
     }
-  card_fill_free (f);
+  g_clear_object (&row);
+  tip_read_free (r);
 }
 
 static void
 on_stats (GObject *src, GAsyncResult *res, gpointer data)
 {
   (void) src;
-  CardFill *f = data;
-  g_autoptr (GtRunResult) r = gt_run_finish (res, NULL);
-  g_autoptr (GtkWidget) stats = g_weak_ref_get (&f->stats);
-  if (r != NULL && r->exit_status == 0 && stats != NULL)
+  TipRead *r = data;
+  g_autoptr (GtRunResult) out = gt_run_finish (res, NULL);
+  GtkWidget *row = NULL;
+  TipInfo *t = tip_lookup (r, &row);
+  if (out != NULL && out->exit_status == 0 && t != NULL)
     {
       gsize len = 0;
-      const char *d = g_bytes_get_data (r->out, &len);
+      const char *d = g_bytes_get_data (out->out, &len);
       g_autofree char *text = d != NULL ? g_strndup (d, len) : g_strdup ("");
       /* " 10 files changed, 108 insertions(+), 22 deletions(-)" (parts may be missing) */
-      int files = 0, add = 0, del = 0;
-      const char *s;
-      if ((s = strstr (text, " file")) != NULL)
-        {
-          const char *b = s;
-          while (b > text && g_ascii_isdigit (b[-1]))
-            b--;
-          files = atoi (b);
-        }
-      if ((s = strstr (text, " insertion")) != NULL)
-        {
-          const char *b = s;
-          while (b > text && g_ascii_isdigit (b[-1]))
-            b--;
-          add = atoi (b);
-        }
-      if ((s = strstr (text, " deletion")) != NULL)
-        {
-          const char *b = s;
-          while (b > text && g_ascii_isdigit (b[-1]))
-            b--;
-          del = atoi (b);
-        }
-      g_autofree char *ft = g_strdup_printf ("%d file%s changed ·", files, files == 1 ? "" : "s");
-      gtk_box_append (GTK_BOX (stats), label (ft, "dim-label", FALSE));
-      g_autofree char *at = g_strdup_printf ("+%d", add);
-      g_autofree char *dt = g_strdup_printf ("−%d", del);
-      gtk_box_append (GTK_BOX (stats), label (at, "gt-stat-add", FALSE));
-      gtk_box_append (GTK_BOX (stats), label (dt, "gt-stat-del", FALSE));
-      gtk_widget_set_visible (stats, TRUE);
+      t->files = number_before (text, " file");
+      t->add = number_before (text, " insertion");
+      t->del = number_before (text, " deletion");
+      t->has_stats = TRUE;
+      if (row != NULL)
+        gtk_widget_trigger_tooltip_query (row);
     }
-  card_fill_free (f);
+  g_clear_object (&row);
+  tip_read_free (r);
 }
 
-static void
-open_card (Page *p, GtkWidget *row)
+/* The tooltip's extras for commit @e, read once (the whole message, and how much it changed — a merge: against its
+ * first parent). Borrowed (the page's). */
+static TipInfo *
+tip_info (Page *p, GtLogEntry *e, GtkWidget *row)
 {
-  close_card (p);
-  int index = gtk_list_box_row_get_index (GTK_LIST_BOX_ROW (row));
-  if (p->entries == NULL || index < 0 || (guint) index >= p->entries->len)
-    return;
-  GtLogEntry *e = g_ptr_array_index (p->entries, index);
-  GtkWidget *pop = gtk_popover_new ();
-  gtk_popover_set_autohide (GTK_POPOVER (pop), FALSE);
-  gtk_popover_set_has_arrow (GTK_POPOVER (pop), FALSE);
-  gtk_popover_set_position (GTK_POPOVER (pop), GTK_POS_LEFT);
-  gtk_widget_add_css_class (pop, "gt-popover");
-  gtk_widget_set_can_focus (pop, FALSE);
-  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
-  gtk_widget_set_size_request (box, 420, -1);
-  GtkWidget *top = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 12);
-  GtkWidget *title = label (e->subject, "gt-hover-title", TRUE);
-  gtk_widget_set_hexpand (title, TRUE);
-  gtk_label_set_selectable (GTK_LABEL (title), TRUE);
-  GtkWidget *copy = gtk_button_new_from_icon_name ("edit-copy-symbolic");
-  gtk_widget_add_css_class (copy, "flat");
-  gtk_widget_set_valign (copy, GTK_ALIGN_START);
-  gtk_widget_set_tooltip_text (copy, "Copy the commit hash");
-  g_object_set_data_full (G_OBJECT (copy), "gt-hash", g_strdup (e->hash), g_free);
-  g_signal_connect (copy, "clicked", G_CALLBACK (on_copy), NULL);
-  gtk_box_append (GTK_BOX (top), title);
-  gtk_box_append (GTK_BOX (top), copy);
-  gtk_box_append (GTK_BOX (box), top);
-  GtkWidget *body = label (NULL, NULL, TRUE);
-  gtk_label_set_selectable (GTK_LABEL (body), TRUE);
-  gtk_widget_set_visible (body, FALSE);
-  gtk_box_append (GTK_BOX (box), body);
-  GtkWidget *hash = label (e->hash, "monospace", FALSE);
-  gtk_widget_add_css_class (hash, "dim-label");
-  gtk_label_set_selectable (GTK_LABEL (hash), TRUE);
-  gtk_widget_set_margin_top (hash, 6);
-  gtk_box_append (GTK_BOX (box), hash);
-  for (int i = 0; e->parents[i] != NULL; i++)
+  if (p->tips == NULL)
+    p->tips = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, tip_info_free);
+  TipInfo *t = g_hash_table_lookup (p->tips, e->hash);
+  if (t == NULL)
     {
-      g_autofree char *pt = g_strdup_printf ("↑ %s", e->parents[i]);
-      GtkWidget *pl = label (pt, "monospace", FALSE);
-      gtk_widget_add_css_class (pl, "dim-label");
-      gtk_label_set_selectable (GTK_LABEL (pl), TRUE);
-      gtk_box_append (GTK_BOX (box), pl);
+      t = g_new0 (TipInfo, 1);
+      g_hash_table_insert (p->tips, g_strdup (e->hash), t);
     }
-  g_autofree char *when = short_when (e->date);
-  g_autofree char *who = g_markup_printf_escaped ("<u>%s</u> · %s", e->author, when);
-  GtkWidget *wl = label (NULL, "dim-label", FALSE);
-  gtk_label_set_markup (GTK_LABEL (wl), who);
-  gtk_box_append (GTK_BOX (box), wl);
-  GtkWidget *stats = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
-  gtk_widget_set_visible (stats, FALSE);
-  gtk_box_append (GTK_BOX (box), stats);
-  gtk_popover_set_child (GTK_POPOVER (pop), box);
-  GtkEventController *m = gtk_event_controller_motion_new ();
-  g_signal_connect (m, "enter", G_CALLBACK (on_card_enter), p);
-  g_signal_connect (m, "leave", G_CALLBACK (on_card_leave), p);
-  gtk_widget_add_controller (pop, m);
-  gtk_widget_set_parent (pop, row);
-  p->popover = pop;
-  gtk_popover_popup (GTK_POPOVER (pop));
-
-  /* The whole message, and how much it changed (a merge: against its first parent). */
-  CardFill *f1 = g_new0 (CardFill, 1);
-  g_weak_ref_init (&f1->title, title);
-  g_weak_ref_init (&f1->body, body);
-  g_weak_ref_init (&f1->stats, NULL);
+  if (t->asked)
+    return t;
+  t->asked = TRUE;
   const char *msg_args[] = { "show", "-s", "--format=%B", e->hash, "--", NULL };
-  gt_run_async (p->root, msg_args, GT_RUN_READ, NULL, READ_TIMEOUT_MS, p->cancel, NULL, NULL, on_message, f1);
-  CardFill *f2 = g_new0 (CardFill, 1);
-  g_weak_ref_init (&f2->title, NULL);
-  g_weak_ref_init (&f2->body, NULL);
-  g_weak_ref_init (&f2->stats, stats);
-  g_autofree char *first_parent = e->parents[0] != NULL ? g_strdup (e->parents[0]) : NULL;
-  if (first_parent != NULL)
+  gt_run_async (p->root, msg_args, GT_RUN_READ, NULL, READ_TIMEOUT_MS, p->cancel, NULL, NULL, on_message,
+                tip_read_new (p, row, e->hash));
+  if (e->parents[0] != NULL)
     {
-      const char *diff_args[] = { "diff", "--shortstat", first_parent, e->hash, "--", NULL };
-      gt_run_async (p->root, diff_args, GT_RUN_READ, NULL, READ_TIMEOUT_MS, p->cancel, NULL, NULL, on_stats, f2);
+      const char *diff_args[] = { "diff", "--shortstat", e->parents[0], e->hash, "--", NULL };
+      gt_run_async (p->root, diff_args, GT_RUN_READ, NULL, READ_TIMEOUT_MS, p->cancel, NULL, NULL, on_stats,
+                    tip_read_new (p, row, e->hash));
     }
   else
     {
       const char *show_args[] = { "show", "--shortstat", "--format=", e->hash, "--", NULL };
-      gt_run_async (p->root, show_args, GT_RUN_READ, NULL, READ_TIMEOUT_MS, p->cancel, NULL, NULL, on_stats, f2);
+      gt_run_async (p->root, show_args, GT_RUN_READ, NULL, READ_TIMEOUT_MS, p->cancel, NULL, NULL, on_stats,
+                    tip_read_new (p, row, e->hash));
     }
+  return t;
 }
 
-/* The history leaves the screen (the pane shows something else): the card goes first, so no row is freed with it
- * still attached. */
-static void
-on_list_unmap (GtkWidget *list, gpointer data)
+/* The tooltip's parts as plain text, in order (debug driver): title, body, hash, parents…, author · time, then the
+ * statistics once read. A new NULL-terminated array. */
+static GStrv
+tip_parts (GtLogEntry *e, TipInfo *t)
 {
-  (void) list;
+  g_autoptr (GStrvBuilder) b = g_strv_builder_new ();
+  g_strv_builder_add (b, t != NULL && t->subject != NULL ? t->subject : e->subject);
+  if (t != NULL && t->body != NULL && *t->body != '\0')
+    g_strv_builder_add (b, t->body);
+  g_strv_builder_add (b, e->hash);
+  for (int i = 0; e->parents[i] != NULL; i++)
+    g_strv_builder_take (b, g_strdup_printf ("↑ %s", e->parents[i]));
+  g_autofree char *when = short_when (e->date);
+  g_strv_builder_take (b, g_strdup_printf ("%s · %s", e->author, when));
+  if (t != NULL && t->has_stats)
+    {
+      g_strv_builder_take (b, g_strdup_printf ("%d file%s changed ·", t->files, t->files == 1 ? "" : "s"));
+      g_strv_builder_take (b, g_strdup_printf ("+%d", t->add));
+      g_strv_builder_take (b, g_strdup_printf ("−%d", t->del));
+    }
+  return g_strv_builder_end (b);
+}
+
+/* A long message is cut, so the tooltip stays smaller than the window. New string. */
+static char *
+clip_lines (const char *text, guint max_lines)
+{
+  g_auto (GStrv) lines = g_strsplit (text, "\n", -1);
+  if (g_strv_length (lines) <= max_lines)
+    return g_strdup (text);
+  g_autoptr (GString) out = g_string_new (NULL);
+  for (guint i = 0; i < max_lines; i++)
+    g_string_append_printf (out, "%s\n", lines[i]);
+  g_string_append (out, "…");
+  return g_string_free (g_steal_pointer (&out), FALSE);
+}
+
+static gboolean
+on_row_query_tooltip (GtkWidget *row, int x, int y, gboolean keyboard, GtkTooltip *tooltip, gpointer data)
+{
+  (void) x, (void) y, (void) keyboard;
   Page *p = data;
-  g_clear_handle_id (&p->open_id, g_source_remove);
-  p->hover_row = NULL;
-  close_card (p);
+  int index = gtk_list_box_row_get_index (GTK_LIST_BOX_ROW (row));
+  if (!tooltips_on || p->entries == NULL || index < 0 || (guint) index >= p->entries->len)
+    return FALSE;
+  GtLogEntry *e = g_ptr_array_index (p->entries, index);
+  TipInfo *t = tip_info (p, e, row);
+  g_autofree char *subject = g_markup_escape_text (t->subject != NULL ? t->subject : e->subject, -1);
+  g_autoptr (GString) m = g_string_new (NULL);
+  g_string_append_printf (m, "<b>%s</b>", subject);
+  if (t->body != NULL && *t->body != '\0')
+    {
+      g_autofree char *clipped = clip_lines (t->body, 16);
+      g_autofree char *body = g_markup_escape_text (clipped, -1);
+      g_string_append_printf (m, "\n\n%s", body);
+    }
+  g_string_append_printf (m, "\n\n<tt>%s</tt>", e->hash);
+  for (int i = 0; e->parents[i] != NULL; i++)
+    g_string_append_printf (m, "\n<span alpha=\"70%%\"><tt>↑ %s</tt></span>", e->parents[i]);
+  g_autofree char *when = short_when (e->date);
+  g_autofree char *who = g_markup_printf_escaped ("\n%s · %s", e->author, when);
+  g_string_append (m, who);
+  if (t->has_stats)
+    g_string_append_printf (m, "\n%d file%s changed · <span foreground=\"#2ec27e\">+%d</span> "
+                               "<span foreground=\"#e01b24\">−%d</span>",
+                            t->files, t->files == 1 ? "" : "s", t->add, t->del);
+  gtk_tooltip_set_markup (tooltip, m->str);
+  return TRUE;
 }
 
 /* ---- history ---- */
@@ -766,10 +716,8 @@ commit_row (Page *p, guint index)
   gtk_list_box_row_set_activatable (GTK_LIST_BOX_ROW (row), FALSE);
   if (index == 0)
     gtk_widget_add_css_class (row, "gt-head"); /* the commit checked out */
-  GtkEventController *m = gtk_event_controller_motion_new ();
-  g_signal_connect (m, "enter", G_CALLBACK (on_row_enter), p);
-  g_signal_connect (m, "leave", G_CALLBACK (on_row_leave), p);
-  gtk_widget_add_controller (row, m);
+  gtk_widget_set_has_tooltip (row, TRUE); /* on_row_query_tooltip answers nothing while the setting is off */
+  g_signal_connect (row, "query-tooltip", G_CALLBACK (on_row_query_tooltip), p);
   gtk_accessible_update_property (GTK_ACCESSIBLE (row), GTK_ACCESSIBLE_PROPERTY_LABEL, e->subject, -1);
   return row;
 }
@@ -799,7 +747,6 @@ static void
 on_history (Page *p, GtRunResult *r)
 {
   gtk_widget_set_visible (p->list_spinner, FALSE);
-  close_card (p);
   GtkWidget *c;
   while ((c = gtk_widget_get_first_child (p->list)) != NULL)
     gtk_list_box_remove (GTK_LIST_BOX (p->list), c);
@@ -928,6 +875,7 @@ gt_page_new (GFile *folder, GPtrArray *files, GtkWidget *current, GtkWidget **he
   ensure_style ();
 
   Page *p = g_new0 (Page, 1);
+  p->described = -1;
   p->root = g_strdup (root);
   p->graph = GPOINTER_TO_INT (user_data);
   p->rels = g_ptr_array_new_with_free_func (g_free);
@@ -944,7 +892,6 @@ gt_page_new (GFile *folder, GPtrArray *files, GtkWidget *current, GtkWidget **he
   gtk_box_append (GTK_BOX (p->page), p->list_spinner);
   gtk_box_append (GTK_BOX (p->page), p->list);
   g_object_set_data_full (G_OBJECT (p->page), "gt-page", p, page_free);
-  g_signal_connect (p->list, "unmap", G_CALLBACK (on_list_unmap), p);
   p->header = build_header (p);
   set_selection (p, files, first_path);
   if (header != NULL)
@@ -965,18 +912,9 @@ gt_page_open_card (GtkWidget *page, guint index)
   GtkListBoxRow *row = p != NULL ? gtk_list_box_get_row_at_index (GTK_LIST_BOX (p->list), (int) index) : NULL;
   if (row == NULL)
     return FALSE;
-  open_card (p, GTK_WIDGET (row));
+  p->described = (int) index;
+  tip_info (p, g_ptr_array_index (p->entries, index), GTK_WIDGET (row)); /* starts the reads */
   return TRUE;
-}
-
-/* The labels of a widget tree, "|"-joined (the hover card). */
-static void
-labels_of (GtkWidget *w, GString *s)
-{
-  if (GTK_IS_LABEL (w) && gtk_widget_get_visible (w) && *gtk_label_get_text (GTK_LABEL (w)) != '\0')
-    g_string_append_printf (s, "%s|", gtk_label_get_text (GTK_LABEL (w)));
-  for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL; c = gtk_widget_get_next_sibling (c))
-    labels_of (c, s);
 }
 
 char *
@@ -993,10 +931,13 @@ gt_page_describe (GtkWidget *page)
                           gtk_widget_get_visible (p->mainline) ? gtk_label_get_text (GTK_LABEL (p->mainline)) : "",
                           gtk_widget_get_visible (p->selection) ? gtk_label_get_text (GTK_LABEL (p->selection)) : "",
                           p->graph, p->entries != NULL ? p->entries->len : 0, p->max_lanes);
-  if (p->popover != NULL)
+  if (p->described >= 0 && p->entries != NULL && (guint) p->described < p->entries->len)
     {
-      g_string_append (s, " hover=[");
-      labels_of (p->popover, s);
+      GtLogEntry *e = g_ptr_array_index (p->entries, p->described);
+      g_auto (GStrv) parts = tip_parts (e, p->tips != NULL ? g_hash_table_lookup (p->tips, e->hash) : NULL);
+      g_string_append_printf (s, " tooltips=%d hover=[", tooltips_on);
+      for (char **k = parts; *k != NULL; k++)
+        g_string_append_printf (s, "%s|", *k);
       g_string_append (s, "]");
     }
   for (guint i = 0; p->entries != NULL && i < MIN (p->entries->len, 3); i++)

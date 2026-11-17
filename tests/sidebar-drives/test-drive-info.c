@@ -415,12 +415,31 @@ test_query_stress (void)
   wait_for_completed (dead, 300); /* drain late results of the dead file */
 }
 
+/* Network filesystem types (shares mounted by the system are known without a size query). */
+static void
+test_network_fs_types (void)
+{
+  const char *const network[] = { "nfs", "nfs4", "NFS4", "cifs", "smb3", "fuse.sshfs", "9p", "ceph", NULL };
+  const char *const local[] = { "ext4", "btrfs", "xfs", "vfat", "ntfs3", "fuseblk", "autofs", "tmpfs", "fuse", "", NULL };
+  for (int i = 0; network[i] != NULL; i++)
+    g_assert_true (sd_fs_type_is_network (network[i]));
+  for (int i = 0; local[i] != NULL; i++)
+    g_assert_false (sd_fs_type_is_network (local[i]));
+  g_assert_false (sd_fs_type_is_network (NULL));
+  /* "/" is never a network share here (the tests run on a local disk); unknown paths aren't mount points. */
+  g_assert_false (sd_mount_path_is_network ("/"));
+  g_assert_false (sd_mount_path_is_network ("/no/such/mount/point"));
+  g_assert_false (sd_mount_path_is_network (""));
+  g_assert_false (sd_mount_path_is_network (NULL));
+}
+
 int
 main (int argc, char **argv)
 {
   g_test_init (&argc, &argv, NULL);
   g_test_add_func ("/drive-info/os-name", test_os_name);
   g_test_add_func ("/drive-info/classify", test_classify);
+  g_test_add_func ("/drive-info/network-fs-types", test_network_fs_types);
   g_test_add_func ("/drive-info/fill", test_fill);
   g_test_add_func ("/drive-info/usage-text", test_usage_text);
   g_test_add_func ("/drive-info/query/real", test_query_real);

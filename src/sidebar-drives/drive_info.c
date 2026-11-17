@@ -1,6 +1,9 @@
 /* Drive information: OS name, classification, size queries, usage text (PLAN.md §8, Phase 1). */
 #include "drive_info.h"
 
+#include <gio/gunixmounts.h>
+#include <string.h>
+
 #include "config.h"
 
 void
@@ -26,6 +29,37 @@ sd_classify (gboolean is_native,
              gboolean is_remote)
 {
   return (!is_native || is_remote) ? SD_DRIVE_NETWORK : SD_DRIVE_LOCAL;
+}
+
+gboolean
+sd_fs_type_is_network (const char *fs_type)
+{
+  static const char *const types[] = {
+    "nfs", "nfs4", "cifs", "smb3", "smbfs", "ncpfs", "9p", "ceph", "glusterfs", "afs", "coda", "davfs", "lustre",
+    "fuse.sshfs", "fuse.rclone", "fuse.glusterfs", "fuse.s3fs", "fuse.gcsfuse", "fuse.davfs2", "fuse.smbnetfs", NULL,
+  };
+  if (fs_type == NULL)
+    return FALSE;
+  for (int i = 0; types[i] != NULL; i++)
+    if (g_ascii_strcasecmp (fs_type, types[i]) == 0)
+      return TRUE;
+  return FALSE;
+}
+
+gboolean
+sd_mount_path_is_network (const char *mount_path)
+{
+  if (mount_path == NULL || *mount_path == '\0')
+    return FALSE;
+  gboolean network = FALSE;
+  /* Every entry at the path: an automount point has an autofs entry under the share's own. */
+  /* The GUnixMountEntry names of 2.84 aren't needed: GLIB_VERSION_MIN_REQUIRED is 2.80, where these are current. */
+  GList *entries = g_unix_mounts_get (NULL);
+  for (GList *l = entries; l != NULL; l = l->next)
+    if (!network && g_strcmp0 (g_unix_mount_get_mount_path (l->data), mount_path) == 0)
+      network = sd_fs_type_is_network (g_unix_mount_get_fs_type (l->data));
+  g_list_free_full (entries, (GDestroyNotify) g_unix_mount_free);
+  return network;
 }
 
 double

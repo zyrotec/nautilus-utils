@@ -160,6 +160,11 @@ DIR_URI="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as
 sidebar_round() {
   cmd sd-dump 0.3; cmd sd-click-os 1.5; cmd sd-open-home 1.5; cmd sd-click-net 1.5
   cmd sd-os-menu 0.6; cmd sd-os-menu-dump 0.3; cmd sd-os-menu-close 0.3
+  # A network share's own drive menu, pointing where it was right-clicked (SMOKE_FAKE_NETWORK or a real share).
+  cmd sd-os-menu-net 0.6; cmd sd-os-menu-dump 0.3; cmd sd-os-menu-close 0.3
+  # Up and Refresh next to Back / Forward; switched off and on.
+  cmd nb-dump 0.3; cmd "st-set nav-buttons-enabled false" 0.6; cmd nb-dump 0.3
+  cmd "st-set nav-buttons-enabled true" 0.8; cmd nb-dump 0.3
   cmd sd-refresh 1; cmd sd-dump 0.3; cmd "sd-open $DIR_URI" 2
 }
 
@@ -392,6 +397,7 @@ gt_round() {
   plain="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_PLAIN")"
   cmd "sd-open $uri" 3; cmd gt-dump 0.3
   gt_expect 'bar=1'; gt_expect 'branch="main"'; gt_expect 'counts="↑0 ↓0"'; gt_expect 'remote=origin'
+  gt_expect 'shadow=0'                                       # nothing to scroll in this small folder
   cmd "dp-png $LOG/gt-bar.png" 1
   cmd gt-sync 3; cmd gt-dump 0.3; gt_expect 'counts="↑0 ↓1"'; gt_expect 'progress="Sync: done"'
   cmd gt-pull 3; gt_expect 'counts="↑0 ↓0"'; gt_expect 'progress="Pull: done"'
@@ -436,6 +442,11 @@ gt_round() {
   cmd gt-dump 3
   gt_attr 'untracked.txt status=Untracked|commit=|'; gt_attr 'debug.log status=Ignored|'
   gt_attr 'README.md status=Modified|'; gt_attr 'src status=Contains changes|'
+  cmd "fv-view 2" 3; cmd "dp-png $LOG/gt-emblems-grid.png" 1; cmd "fv-view 1" 3     # status emblems on the icons
+  cmd "dp-png $LOG/gt-emblems-list.png" 1
+  cmd "st-set git-bar-border false" 0.5; cmd "st-set git-bar-custom-colour true" 0.5
+  cmd "st-set git-bar-colour '#1c3a5e'" 0.8; cmd "dp-png $LOG/gt-bar-look.png" 1
+  cmd "st-reset git-bar-border" 0.3; cmd "st-reset git-bar-custom-colour" 0.3; cmd "st-reset git-bar-colour" 0.5
   ( cd "$GT_REPO" && GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME="Col Test" GIT_AUTHOR_EMAIL=c@x.invalid \
       GIT_COMMITTER_NAME="Col Test" GIT_COMMITTER_EMAIL=c@x.invalid git commit -qam "Commit from a terminal" )
   cmd gt-dump 3                                                                   # the repository changed
@@ -664,10 +675,23 @@ ej_bad="$(awk '/st: set eject-slide = / { slide = $NF; next }
 [ -z "$ej_bad" ] || { echo "FINDING: sliding eject:"; echo "$ej_bad" | head -5 | sed 's/^/    | /'; fail=1; }
 n_eject="$(grep -c 'sd dump: *eject: slide revealed=1' "$LOG/nautilus.log" || true)"
 # OS drive menu (PLAN.md §9.1.3): Nautilus' own menu, with Properties and without Unmount/Format.
-n_menu="$(grep -c 'sd os-menu: shown=1 .*Properties' "$LOG/nautilus.log" || true)"
-bad_menu="$(grep -E 'sd os-menu: shown=0|sd os-menu: .*(Unmount|Format|Eject)|OS menu UNAVAILABLE' "$LOG/nautilus.log" || true)"
+n_menu="$(grep -c 'sd os-menu: for=os shown=1 .*Properties' "$LOG/nautilus.log" || true)"
+bad_menu="$(grep -E 'sd os-menu: for=os shown=0|sd os-menu: for=os .*(Unmount|Format|Eject)|OS menu UNAVAILABLE' "$LOG/nautilus.log" || true)"
 [ -z "$bad_menu" ] || { echo "FINDING: OS drive menu missing or wrong:"; echo "$bad_menu" | sed 's/^/    | /'; fail=1; }
 [ "$n_menu" -gt 0 ] || { echo "FINDING: the OS drive menu never opened"; fail=1; }
+# Right-click menus point at the click (a 0 × 0 rectangle), like Nautilus' own rows.
+n_pointing="$(grep -c 'sd os-menu: for=os shown=1 .* pointing=1:[0-9-]*,[0-9-]*,[01],[01] ' "$LOG/nautilus.log" || true)"
+[ "$n_pointing" -gt 0 ] || { echo "FINDING: the drive menu never pointed at the click"; fail=1; }
+# Network share menu: only when a share (or SMOKE_FAKE_NETWORK) is listed; then it must open with Unmount.
+if grep -q 'sd: net menu requested' "$LOG/nautilus.log"; then
+  grep -qE 'sd os-menu: for=net shown=1 .*pointing=1:[0-9-]+,[0-9-]+,[01],[01] .*Unmount' "$LOG/nautilus.log" ||
+    { echo "FINDING: the network share menu opened without Unmount or not at the click"; fail=1; }
+fi
+# Up and Refresh buttons: in every window's history controls while on, gone while off.
+nb_on="$(grep -cE 'nb: window controls0=\[slot\.back(\(off\))?,slot\.forward(\(off\))?,slot\.up(\(off\))?,slot\.reload' "$LOG/nautilus.log" || true)"
+nb_left="$(awk '/st: set nav-buttons-enabled = / { off = ($NF == "false"); next } off && /nb: window.*slot\.up/' "$LOG/nautilus.log")"
+[ "$nb_on" -gt 0 ] || { echo "FINDING: the Up and Refresh buttons were never shown"; fail=1; }
+[ -z "$nb_left" ] || { echo "FINDING: the Up and Refresh buttons stayed while switched off"; fail=1; }
 n_fp_on="$(grep -cE 'fp state: off=0 hooks=[1-9]' "$LOG/nautilus.log" || true)"
 n_fp_off="$(grep -c 'fp state: off=1' "$LOG/nautilus.log" || true)"
 

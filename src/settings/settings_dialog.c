@@ -565,6 +565,9 @@ folder_preview_page (GSettings *settings)
                              slider_row (settings, "folder-preview-stack-padding", "Side Padding",
                                          "Space between the pictures and the icon’s sides", 0, 20, "px"));
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
+                             slider_row (settings, "folder-preview-stack-spacing", "Spacing",
+                                         "How far each picture shows above the one in front", 0, 8, "px"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
                              slider_row (settings, "folder-preview-stack-offset", "Vertical Offset",
                                          "Fine-tune the position", -16, 16, "px"));
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
@@ -761,6 +764,13 @@ details_pane_page (GSettings *settings)
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group),
                              switch_row (settings, "details-pane-header-border", "Line Under the Header Bar",
                                          "While the pane is shown; not under the sidebar’s header"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group),
+                             switch_row (settings, "details-pane-custom-colour", "Custom Background",
+                                         "Give the pane its own colour instead of the view’s"));
+  GtkWidget *pane_colour = colour_button_row (settings, "details-pane-colour", "Background Colour",
+                                              &nu_settings_defaults ()->details_pane_colour);
+  g_settings_bind (settings, "details-pane-custom-colour", pane_colour, "sensitive", G_SETTINGS_BIND_GET);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (pane_group), pane_colour);
   adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (pane_group));
 
   GtkWidget *preview_group = group ("Preview", NULL);
@@ -925,13 +935,48 @@ git_page (GSettings *settings)
                              switch_row (settings, "git-history-graph", "History Graph",
                                          "The details pane’s Git view draws the branch lines next to the commits; "
                                          "off: a plain list"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (look),
+                             switch_row (settings, "git-commit-tooltip", "Commit Details on Hover",
+                                         "Hovering a commit in the Git view shows its whole message, hashes and "
+                                         "changes in a tooltip"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (look),
+                             switch_row (settings, "git-emblems", "Status Emblems",
+                                         "Mark modified, added, untracked… files and folders with a small emblem, in "
+                                         "the grid and the list view"));
   adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (look));
   g_settings_bind (settings, "git-enabled", look, "sensitive", G_SETTINGS_BIND_GET);
+
+  GtkWidget *bar = group ("Status Bar", NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (bar),
+                             switch_row (settings, "git-bar-border", "Border", "A line between the folder view and the bar"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (bar),
+                             switch_row (settings, "git-bar-custom-colour", "Custom Background",
+                                         "Give the bar its own colour instead of the view’s"));
+  GtkWidget *bar_colour = colour_button_row (settings, "git-bar-colour", "Background Colour",
+                                             &nu_settings_defaults ()->git_bar_colour);
+  g_settings_bind (settings, "git-bar-custom-colour", bar_colour, "sensitive", G_SETTINGS_BIND_GET);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (bar), bar_colour);
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (bar));
+  g_settings_bind (settings, "git-enabled", bar, "sensitive", G_SETTINGS_BIND_GET);
 
   GtkWidget *ide = group ("Open in IDE", NULL);
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (ide), ide_row (settings));
   adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (ide));
   g_settings_bind (settings, "git-enabled", ide, "sensitive", G_SETTINGS_BIND_GET);
+  return page;
+}
+
+/* Navigation buttons in the header bar. */
+static GtkWidget *
+navigation_page (GSettings *settings)
+{
+  GtkWidget *page = adw_preferences_page_new ();
+  GtkWidget *g = group (NULL, NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (g),
+                             switch_row (settings, "nav-buttons-enabled", "Up and Refresh Buttons",
+                                         "Right of the Back and Forward buttons: go to the parent folder (Alt+Up) "
+                                         "and reload the folder (F5)"));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (g));
   return page;
 }
 
@@ -1044,6 +1089,8 @@ st_settings_dialog_present (GtkWidget *parent)
                                            "details-pane", "Details Pane", "sidebar-show-right-symbolic");
       adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), git_page (settings), "git", "Git",
                                            "nu-git-branch-symbolic");
+      adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), navigation_page (settings), "navigation",
+                                           "Navigation", "go-up-symbolic");
 
       /* Sidebar pane: one row per feature. */
       GtkWidget *sidebar = adw_view_switcher_sidebar_new ();
