@@ -147,7 +147,8 @@ findings and the smoke test is clean.
 | 3 | Settings — "Nautilus Utils Settings" window from the main menu (per-feature on/off, bar colours, hide bars/labels, sliding eject), OS drive context menu | `src/settings/`, `src/common/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 4 | Folder views — every folder remembers its own view type and icon size, like Windows File Explorer | `src/folder-views/` | **v1 done** (2026-11-12), pending the owner's final check |
 | 5 | Folder icons by name — every folder with a given name (e.g. `node_modules`) gets a chosen icon, as Files' own custom icon (§12) | `src/folder-icons/` | **v1 done** (2026-11-14), pending the owner's final check |
-| 6 | Details pane — a pane right of the folder view with the selected item's preview and properties (media, image, PDF), toggled from the header bar (§13) | `src/details-pane/` | **v1 done** (2026-11-14), pending the owner's final check |
+| 6 | Details pane — a pane right of the folder view with the selected item's preview and properties (media, image, PDF), toggled from the header bar (§13) | `src/details-pane/` | **v5 merged** (PR #8, 2026-11-15) |
+| 7 | Git — status bar (branch, ↑/↓, push/pull/sync, Open in IDE), branches, Git columns, Git view in the details pane, Clone Repository… (§14) | `src/git/` | **v1 done** (2026-11-15), PR pending the owner's review |
 
 Open items:
 
@@ -2112,3 +2113,336 @@ selection flickers; a blurred background behind pictures; and look into the 17�
   left of the view controls. That extension adds ⋮ after Files builds the header, so placing is retried every
   250 ms for up to 10 s after a window is hooked. Verified in Files (`dp-geom`: prev=MyComputerToggleButton
   next=GtkMenuButton; `dp-header-line.png`).
+
+---
+
+## 14. Feature 7 — Git
+
+Owner's request (2026-11-15), modelled on the Files app's Git integration (pasted docs): information about the
+current branch and commits, creating and switching branches, push / pull / sync with progress and git's message on
+failure, Git columns in the list view, the repository and branch in the details pane, Open in IDE, plus a
+**Clone Repository…** item in the context menu (a dialog: paste the link, press **Clone**) and an **AdwToggleGroup**
+in the details pane (right position only) switching between the current details and the Git details.
+Prefix `gt_`, log domain `git`, dir `src/git/`, branch `dev-git`.
+
+### 14.1 Decisions (owner, 2026-11-15)
+
+| # | Decision |
+|---|---|
+| G1 | **Status bar:** a slim bar along the bottom of the folder view, only inside a Git repository (above the details pane's bottom strip when that is used; not under the details pane at the right). Adds UI only. |
+| G2 | **Engine: the installed `git` command**, run in the background (`GSubprocess`), so SSH keys, credential helpers and `gh` logins work exactly like in the terminal. No new build dependency. |
+| G3 | **Authorization:** when git needs credentials it doesn't have, a **username / token dialog**; what is entered is handed to git for that one run and saved by the user's credential helper if one is configured (never written by us). |
+| G4 | **Progress:** our own progress indicator on the status bar; clicking it lists running and finished operations (push, pull, sync, fetch, checkout, clone) with progress and, on failure, git's full message. |
+
+### 14.2 Behaviour
+
+1. **Repository detection** (native folders only, PLAN rule: never block on network paths): `git rev-parse
+   --show-toplevel --absolute-git-dir` for the slot's folder, async, cached per folder; a file monitor on the repo's
+   `HEAD`, `index` and `refs/` (and `packed-refs`) refreshes the bar, columns and pane. Reads run with
+   `GIT_OPTIONAL_LOCKS=0` (never take `index.lock` from the user's own git), `LC_ALL=C`, a timeout, and are
+   cancelled when the folder changes.
+2. **Status bar** (G1), left to right:
+   - **Branch button** (branch icon + name; detached HEAD: short hash) → **Branches** popover: search entry, local
+     branches (current one ticked) and remote branches; selecting one checks it out (a remote one: a tracking local
+     branch); a **Create** button (name entry, from the current commit, switch to it).
+   - **Commit counts** `↑2 ↓1` (ahead / behind the upstream; "no upstream" otherwise) → popover with **Push**,
+     **Pull** and **Sync** (fetch: updates the counts without changing anything else), and the last commit (short
+     hash, subject, author, relative date).
+   - **Progress** (G4): a spinner with the number of running operations, or the last result; its popover lists
+     operations with their progress (git's `--progress` lines) and, on failure, git's message (selectable text,
+     copy button).
+   - **Open in IDE** (`code`, `zed`, GNOME Builder… detected from installed apps; chosen in Settings).
+3. **Git columns** (Files' public column + info providers): **Git Status** (Modified, Added, Deleted, Renamed,
+   Untracked, Ignored, Conflict; folders: "Contains changes"), **Last Commit** (subject and date), **Commit Hash**
+   (short), **Commit Author**. Shown and hidden with Files' own *Visible Columns* (right-click the column headers).
+   Per folder, one `git status --porcelain=v2 -z` and one bounded `git log --name-only -z` walk fill the values for
+   all files at once (cached per folder + HEAD; unknown values stay empty rather than blocking).
+4. **Details pane** (right position only): an **AdwToggleGroup** *Details | Git* at the top, shown only inside a
+   repository. *Git*: repository name and path, current branch and upstream (↑/↓), last commit, the selected item's
+   Git status and last commit (hash, author, date, subject). The choice is remembered. At the bottom position no
+   toggle (the strip stays the short summary).
+5. **Clone Repository…** in the folder background context menu (writable native folders): a dialog with the URL
+   (pasted; HTTPS or SSH, validated), the new folder's name (from the URL, editable; must not exist) and a **Clone**
+   button. Progress in the status bar's progress list (also outside a repository while a clone runs); when done the
+   new folder is selected.
+6. **Authorization** (G3): every network operation runs with `GIT_TERMINAL_PROMPT=0` (git never waits for a
+   terminal). If it fails for want of credentials (HTTPS), the dialog asks for username and token (password field;
+   GitHub: a personal access token, with a link to create one) and the operation is retried once with them passed
+   through a one-shot credential helper reading them from the child's environment (not its command line, so
+   they never show in process lists); git then asks the user's configured credential helper to store them. SSH
+   failures show git's message with instructions (add the key to the agent / to GitHub).
+7. **Never** changes a repository except on an explicit click (checkout, create branch, push, pull, clone); no
+   automatic fetch. Checkout with conflicting local changes: git refuses, its message is shown.
+
+### 14.3 Settings keys
+
+`git-enabled` (b, true), `git-status-bar` (b, true), `git-ide` (s, desktop ID or "" = first detected),
+`git-pane-view` (enum details | git: last choice in the pane).
+
+### 14.4 Phases
+
+| Phase | Work | Acceptance |
+|---|---|---|
+| 0 Spike | Bar placement (in our paned's start side under the tab view, or Files' toolbar view; Files' own narrow bottom bar; the details pane's bottom strip); column + async info provider in Nautilus 51 (columns appear in *Visible Columns*, async `update_file_info` with a handle); background menu item; the one-shot credential helper and the "needs credentials" detection against a local HTTP git server (`git http-backend`) with basic auth; `AdwToggleGroup` in the pane; timings of status / log on a big repository on the NTFS drive. | Every question answered; anything infeasible reported before building. |
+| 1 Core | `gt_repo.c` (detection, cache, monitors), `gt_run.c` (async git runner: env, timeout, cancel, progress lines, error text), parsers (porcelain v2, branch list, ahead/behind, log records); unit tests on temporary repositories. | Tests + `check-safety.sh` pass. |
+| 2 Status bar | Bar, Branches popover (switch, create), push / pull / sync, progress popover, Open in IDE; debug driver (`gt-dump`, `gt-branch`, `gt-op`). | Works in an isolated Nautilus on a test repo with a local remote; smoke clean. |
+| 3 Columns | Column + info providers, per-folder batch reads, refresh on change. | Columns correct in a test repo (every status kind); no stall browsing a big repository. |
+| 4 Details pane | Toggle group + Git view (needs a small hook from the details pane: an optional "Git" page). | Owner reviews the look. |
+| 5 Clone + auth | Context-menu item, clone dialog, credentials dialog + retry. | Clone from a local server with and without credentials; wrong token → git's message. |
+| 6 Settings, hardening, docs | Settings tab "Git"; smoke round; `check-safety.sh`; README. | All PASS. |
+
+### 14.5 Phase 0 findings (2026-11-15, Nautilus 51.1 / GTK 4.24 / libadwaita 1.10 / git 2.56)
+
+Spike: `src/git/git.c`, **inert unless `NU_GT_SPIKE=1` and `GSETTINGS_BACKEND=memory`** (the module is the
+owner's live extension through the symlink); smoke `NU_GT_SPIKE=1 SMOKE_ONLY=gt` with a test repository (committed,
+modified, added, untracked, ignored, a folder with changes).
+
+1. **Columns (public API): work.** `get_columns` is asked when the list view is shown; four columns with our
+   attributes appear and can be made visible (`org.gnome.nautilus.list-view default-visible-columns`, i.e. Files'
+   *Visible Columns*). The async info path works: `update_file_info` returns `IN_PROGRESS`, one `git status` per
+   folder fills every waiting file, `nautilus_info_provider_update_complete_invoke` → values shown (Ignored /
+   Modified / Added / Untracked; a folder with changes inside: Modified). Note: with all four on, a narrow list view
+   squeezes the Name column (Files' own behaviour); ours stay off by default.
+2. **Background menu (public API): works.** `get_background_items` is called for every folder Files opens (also
+   outside repositories), so *Clone Repository…* is a plain menu item. (Popovers aren't in window snapshots: the
+   menu itself is checked by hand in Phase 5.)
+3. **Status bar placement.** The slot is not a box: `NautilusWindowSlot` → `GtkStack` with pages for the normal view
+   (a vertical box with `NautilusFilesView`), an empty/error `AdwStatusPage`, and the owner's other extension's
+   Miller-columns view (`MillerCanvas`). A bar inside one page would vanish on the others. **Under the tab view**
+   works: a vertical box `[AdwTabView][bar]` as the details pane's paned start child — the bar spans the folder view
+   only (not the pane), follows the active tab, sits under every page kind, and Files' floating "selected" label
+   stays above it (`gt-bar-grid.png`). → Phase 2: one shared helper wraps the tab view once (`src/common`), used by
+   both the details pane (its paned) and the Git bar, so either works without the other.
+4. **AdwToggleGroup**: available (libadwaita 1.10), toggles by name.
+5. **Authorization** (local smart-HTTP server with basic auth): with `GIT_TERMINAL_PROMPT=0` git fails at once —
+   no credentials: `fatal: could not read Username for '…': terminal prompts disabled`; wrong ones: `fatal:
+   Authentication failed for '…'`. The one-shot helper `-c credential.helper='!f() { test "$1" = get && printf
+   "username=%s\npassword=%s\n" "$NU_GIT_USER" "$NU_GIT_TOKEN"; }; f'` with the values in the child's environment
+   works (clone, then push), and git then stores them through the user's own helper (tested with `store`).
+   **The owner has no credential helper configured**, so entered tokens would not be remembered: Phase 5 offers
+   "Remember" via `git-credential-libsecret` if installed (not installed now: `dnf install git-credential-libsecret`)
+   or `gh auth setup-git` (gh is installed). The owner's remotes use SSH: runs get `SSH_ASKPASS_REQUIRE=never` and no
+   terminal, so ssh fails with its message instead of waiting.
+6. **Timings** (NTFS drive, warm cache): the owner's repositories are small (≤ 187 tracked files; Angular ones with
+   `node_modules`, which status skips as ignored): rev-parse 4–9 ms, status 15–26 ms, last-commit walk ≤ 39 ms. The
+   **first status after a cold cache took 0.2–1.2 s** → always async, cancellable. Synthetic 30 000-file repository
+   with 200 commits: full status 42–50 ms, one folder's status 10 ms, one folder's last-commit walk ~20 ms.
+   Repository detection per folder will walk up looking for `.git` (stat only, no process) and spawn git only
+   inside repositories, since Files asks the info provider about every folder.
+7. **Found in the spike:** `gtk_window_get_toplevels()` is borrowed — unref'ing it (a `g_autoptr`) broke Files'
+   window list and crashed the next user of it; optimised `-Warray-bounds` caught reading past an empty string.
+
+### 14.6 Phase 1 results (2026-11-15)
+
+- `src/git/` core library `gt-core` (GLib/GIO only): `gt_parse.c` (porcelain v2 status with branch / upstream /
+  ahead-behind, per-path state with "contains changes" for folders and the state of untracked / ignored folders for
+  what is inside them; branches from `for-each-ref`; last commit per item of a folder from one `log --name-only -z`
+  walk, refcounted commits; error kinds; progress lines; clone URL validation and folder name), `gt_repo.c`
+  (repository root by stat only, `.git` files for worktrees / submodules, stops at filesystem boundaries; relative
+  paths), `gt_run.c` (async `git`: LC_ALL=C, own session — no terminal —, prompts and askpass off, optional locks off
+  for reads, progress lines to a callback and out of the error text, timeout and cancel, one-shot credentials from
+  the child's environment).
+- Found by the tests: killing git on a timeout left its children (here `sleep`; in real use ssh / remote helpers)
+  holding the pipes, so the run never ended → the whole process group is killed (git leads its own session), only
+  while something still holds the pipes (never a reused id).
+- Tests: `test-gt-parse` (6) and `test-gt-git` (5: detection incl. a linked worktree and a fake `.git`; status / log /
+  branches on a real repository, no `index.lock` left; a failing command; timeout and cancel incl. before start;
+  progress over file:// clone; credentials against the local smart-HTTP server: none → needs credentials, wrong →
+  refused, right → clone + push, nothing kept afterwards). Tests run git without the user's configuration.
+- `check-safety.sh` all PASS; coverage gt_parse 92 %, gt_repo 89 %, gt_run 96 %.
+
+### 14.7 Phase 2 results (2026-11-15)
+
+- **Shared content column** (`src/common/nu_content.c`): wraps Files' tab view in a vertical box where it is (toolbar
+  view content or a paned child), reference-counted; the last release puts the tab view back. The details pane now
+  puts the column (not the tab view) into its paned; the Git bar is a bottom bar of the column. Either feature
+  works without the other; details-pane smoke still 50/50 after the change.
+- `gt_info.c` (per repository, shared by windows: `status --branch --untracked-files=no` + `log -1`, re-read when
+  the git folder changes — HEAD, index, refs, packed-refs, FETCH_HEAD; worktrees: their own git folder + the common
+  one — coalesced 250 ms, lock files ignored), `gt_ops.c` (operations list for the progress popover; running ones
+  are never killed on feature off: a push or checkout stopped halfway could leave the repository half done),
+  `gt_ide.c` (installed IDEs by desktop ID; the owner's VS Code is `com.microsoft.VSCode.desktop`), `gt_bar.c`
+  (the bar: branch popover with search, local / remote sections, Create; counts popover with the last commit,
+  upstream, Push / Pull / Sync; progress popover with git's message and a copy button; Open in IDE), `gt_hook.c`
+  (one bar per window, follows the active tab's location; native folders only), branch icon bundled as a resource
+  (no theme has one). Settings keys `git-enabled`, `git-status-bar`, `git-ide` (tab in Phase 6).
+- Behaviour choices: Pull is `--ff-only` (never a merge or conflict nobody asked for; git explains when it can't);
+  Sync is `fetch` (changes nothing else); the first Push of a branch publishes it on `origin` (else the first
+  remote) with `--set-upstream`; switching to a remote branch uses `git switch --guess NAME` (the local branch, or a
+  new one tracking the remote). Progress text only while something runs (narrow column with the pane open).
+- Smoke round `gt_round` (28 checks; repository with a local bare remote and a second clone): branch, counts,
+  Sync (↓1), Pull, a commit made outside Files seen through the monitor (↑1), Push, Create + publish
+  `topic/smoke`, switch to `origin/feature`, a failing switch (git's message, branch unchanged), back to main, a
+  subfolder, a folder outside any repository (hidden), bar off / on, feature off / on. Renders: `gt-bar.png`,
+  `gt-bar-pane.png`.
+- Unit test `test-gt-info` (info shared, a commit made outside seen via the monitor, fetch → ↓1, pull --ff-only
+  refused when diverged, push, detached HEAD, released info forgotten, a folder that is no repository).
+- `check-safety.sh` all PASS.
+- Test driver flake seen twice in 5 runs: one `gt-expect` right after opening the repository from outside it got
+  no answer (not a failure, just missing); not reproduced with a log line added (kept as a debug message, "driver
+  read: …", to show next time whether the Git handler saw the command).
+- Valgrind found: (1) `test-gt-info` waited for "the next read", which under valgrind's slowdown can be a read that
+  started before the change → it now waits for the expected state; (2) a third-party leak in `test-dp-meta`:
+  libsrt (GStreamer's SRT plugin, dlopen'ed by decodebin) allocates in a C++ static initializer — suppressed
+  narrowly (`libsrt-static-init`). Then `check-safety.sh` all PASS.
+
+### 14.8 Phase 3 results (2026-11-15)
+
+- `gt_columns.c`: one type implementing Files' public column and info providers (registered in the module's type
+  list). Columns **Git Status**, **Last Commit** (message), **Commit Hash** (short), **Commit Author**; off by default
+  (Files' *Visible Columns*). Per folder one `git --literal-pathspecs status --porcelain=v2 -z
+  --untracked-files=normal --ignored=matching -- <folder>` and one `git log --name-only -z -n 5000 -- <folder>`
+  (run at the root, in parallel) answer every file of the folder; files asked for meanwhile wait (IN_PROGRESS +
+  `update_complete_invoke`). Clean tracked files show an empty status; untracked / ignored files no commit;
+  folders the last commit of anything inside and "Contains changes".
+- Freshness: the answers are re-read when Files asks again more than 2 s after the last read (a file changed, or
+  the folder is shown again) and when the repository changes (the shared GtInfo's git folder monitor: commit,
+  checkout, stage…); after a re-read only files whose values changed are invalidated
+  (`nautilus_file_info_invalidate_extension_info`), so Files' re-asks are answered from the new read (no loop).
+  Folder answers unused for 2 min and "is this folder in a repository" answers after 30 s are dropped.
+- Only native folders inside a repository start git (stat-only detection, cached); hidden files aren't asked about
+  by Files (not shown). Feature off: no answers (the columns stay listed, empty).
+- **Regression found by the smoke (from Phase 2's shared column):** folder-views looked for Files' tab view at most
+  12 levels deep, and the column (plus the details pane's paned) put it deeper, so after switching folder views off
+  and on existing tabs were not re-attached (and its driver's `fv-view` failed). Both searches now go 30 deep, like
+  the details pane's.
+- Smoke: 11 column checks in `gt_round` (values through Files' own `nautilus_file_info_get_string_attribute`):
+  clean files, a folder's last commit, untracked, ignored, modified, "Contains changes" — made from a terminal — then
+  a terminal commit updates message, author and status. `gt-columns.png`.
+- Full ASan smoke (every round): all functional checks pass (folder views 86 tab checks / 0 wrong, details pane 48,
+  git 39); the one flagged leak is the known intermittent GTK popover leak of the sidebar OS-menu test (Nautilus'
+  `show_row_popover`).
+- `check-safety.sh` first FAILED (asan, valgrind, coverage: the module test) — the Phase 3 commit was made before
+  reading that result (corrected in the next commit): the module now lists 3 types (expected 2), and the test calls
+  `cancel_update` with a handle the provider never handed out, which the columns provider treated as its own
+  (it would have written into it). Fixed: handles handed to Files are tracked and unknown ones ignored; the test
+  expects 3 types and checks the Git column provider (4 columns, `nu_git_status`). Then all PASS.
+
+### 14.9 Phase 4 results (2026-11-15)
+
+- **Details pane extra view** (generic, no Git code in the pane): `dp_pane_set_extra (title, func, on_selected)` — a
+  page builder for what is shown — and `dp_pane_set_extra_selected`; an `AdwToggleGroup` "Details | <title>" at the
+  pane's top, only at the right and only when the builder returns a page; the page replaces the detail groups (the
+  preview and the name stay). `dp_pane_build_group` builds groups in the pane's own look for such pages.
+- **Git page** (`gt_page.c`, plugged in by the Git feature as "Git"): **Repository** (name, location, branch or
+  detached / no commits, upstream or "None (not published)", commits to push / pull, last commit, by, when) and
+  **Selected Item** (status — Unchanged / Not in Git / Modified… —, path, last commit, hash, by, when),
+  **Selected Items** (count and how many of each state) or **This Folder** (nothing selected; nothing extra at the
+  repository root). Re-read when the repository changes; a superseded read is never applied.
+- The choice is remembered: key `git-pane-git` (UI state, `nu_settings_set_git_pane_git`); every pane follows it.
+  Feature off removes the toggle.
+- Smoke (`dp-extra on|off`, the pane's description now covers the page): 14 checks — the toggle, the repository
+  rows, a clean then a modified file, two items, a subfolder, bottom position (no toggle), back, outside a
+  repository (no toggle), the choice kept. `gt-pane-git.png`.
+- **Found in the test itself:** `gt-expect 'shown=0'` also matched `progress-shown=0`, so since Phase 2 the
+  "outside any repository" checks passed whatever the bar did — and the folder used was inside this checkout's own
+  repository (the logs live in it), where the bar correctly showed that repository. The field is now `bar=`, and the
+  outside folder is a temporary folder outside the checkout; the bar is really hidden there.
+- Details-pane smoke still 50/50; `check-safety.sh` all PASS.
+
+### 14.10 Owner's report after Phase 4 (2026-11-15)
+
+- **Crash (SIGSEGV) in the owner's Files** in a repository without remotes: the bar's `on_remotes` split git's empty
+  output — `g_bytes_get_data` gives NULL for no data — and read the result (`g_strsplit: assertion 'string != NULL'`
+  then the crash; core dumps of 4 restarts). Fixed; every other reader of git's output goes through the parsers,
+  which take empty input. Smoke: a repository without any remote (`local`), bar shown, `remote=-`.
+- `g_file_info_get_is_hidden … should not be reached` (also in the owner's log): the details pane's folder count
+  used GLib's convenience getters, which log when a file system leaves out an attribute that was asked for. All of
+  them (details pane, folder views' prefetch, icon store, folder-preview SVG size) now use the attribute getters.
+- **The bar below the details pane's bottom strip** (owner): with the pane at the bottom the bar is a bottom bar of
+  Files' content toolbar view, across the whole width, below the strip; at the right it stays under the folder view
+  (G1). Moves live with the pane's position. Smoke `at=bottom` / `at=column`, `gt-bar-bottom.png`.
+- `check-safety.sh` all PASS; full ASan smoke: folder views 86 / 0 wrong, details pane 62, git 45, no "should not be
+  reached" in the log; the flagged leak is the known sidebar OS-menu popover one.
+
+### 14.11 Design changes after Phase 4 (owner, 2026-11-15, images 22–30)
+
+| # | Change |
+|---|---|
+| G5 | Git view: a **branch card** replaces the preview (branch, HEAD chip, last commit's message, author · time, "Mainline: origin/main · N ahead, M behind" — origin's default branch, else origin/main, origin/master, main, master —, the selected item's state); below it the **history** from HEAD (300 commits, topo order) with a **graph** of the branch lines (merges as rings, a colour per branch line) and branch / tag chips (current green, other local red, remote neutral, tags yellow; they wrap). |
+| G6 | `git-history-graph` (b, true): off = a plain list (chips at the end of each row). In a new **Git** settings tab (with the feature switch and the status bar; the rest of the tab in Phase 6). |
+| G7 | Hovering a commit (500 ms) opens a **card**: the whole message (title + body), a copy button (the full hash), the hash and parent hash(es), author · time, "N files changed · +a −d" (merges: against the first parent). A popover rather than a tooltip, so the copy button can be clicked; it stays while the pointer is over the row or the card. |
+| G8 | The bar: the header bar's padding all round (6 px, buttons at their normal height, 46 px). Its popovers open upwards (inside the window); 12 px padding; the branch list's rows line up with the search field. Push / Pull / Sync are soft icon buttons (arrows, refresh), the counts in their tooltips. |
+
+Implementation: the details pane's extra view takes an optional header (shown instead of the preview box) and a
+describe function; `gt_history_parse` / `gt_graph_layout` (pure, unit-tested: a merge, decorations incl.
+origin/HEAD left out, a root, a straight line, empty input). Driver `gt-card N`. The card is closed when the history
+leaves the screen (a row freed with the card attached made GTK warn). Smoke: 19 pane checks (card, mainline,
+history, chips, hover card with message and stats, modified item, two items, plain list), Git tab opened.
+- `check-safety.sh` all PASS; full ASan smoke **PASS** (folder views 86 / 0 wrong, details pane 67, git 45).
+
+### 14.12 Phase 5 results (2026-11-15) — Clone Repository…, sign-in
+
+- **Clone Repository…** (`gt_clone.c`; the menu item on the same provider type as the columns, so Files' module
+  test still finds every type an info provider): in the background menu of writable native folders when `git` is
+  installed (looked up once). Dialog: Repository URL (filled from the clipboard when it holds a Git URL and the field
+  is empty), Folder Name (from the URL until edited), "Into …", Clone (only for a cloneable URL and a free, plain
+  name; the reason is shown). Runs `git clone --progress -- URL NAME` as an operation in the folder; **outside a
+  repository the bar shows just the progress** (while a clone runs and for 2 min after); when it is done the new
+  folder is **selected** (retried while Files picks it up).
+- **Sign-in** (`gt_auth.c`, G3): an operation that failed because git needed credentials or they were refused opens
+  "Sign In to <host>" (host from git's message; GitHub: a personal-access-token hint and a link to create one) with
+  Username and Token; the operation runs again with them (one-shot helper, never the command line); refused again →
+  the dialog comes back ("The remote refused them."). **Remember**: with the user's own credential helper, git
+  stores them itself (said in the dialog); with `git-credential-libsecret` installed, a checkbox stores them in the
+  keyring and sets git's credential helper to libsecret (the user's global git config — only when ticked); with
+  neither (the owner's machine now) the dialog says they are used this time only and how to have them remembered.
+  The bar uses it for push / pull / sync, the clone dialog for clones.
+- Operations keep their command for a retry (`gt_ops_retry`), git's raw message (the sign-in target) and when they
+  finished.
+- Smoke (52 git checks): the dialog refuses "not-a-url" and a plain path; a local clone into a folder outside any
+  repository (bar shown with the progress, folder selected); the same name again is refused; a clone from the local
+  smart-HTTP server with basic auth: dialog → wrong token → "refused" → right token → cloned and selected. (The
+  driver splits "URL NAME" at a space and this checkout's path has one, so the clone source is copied to the temp
+  folder.)
+- `check-safety.sh` all PASS; full ASan smoke **PASS** (folder views 86 / 0 wrong, details pane 67, git 52).
+
+### 14.13 Owner's report: "git took too long and was stopped" (2026-11-15)
+
+- The bar's background read gave up after 20 s in one of the owner's repositories (a cold file cache on the NTFS
+  drive). Reads now get 2 minutes (bar, columns, Git view).
+- **Error state:** a **refresh button** next to the branch button (and in the Git view's card, which shows git's
+  message) reads the repository again.
+- **Loading:** an `AdwSpinner` instead of the branch icon ("Loading…") in the bar, and in the Git view's card, while
+  the repository is read for the first time or again after an error (not on routine re-reads after a commit, so it
+  doesn't flicker); a spinner in place of the history until it is in. `GtInfo` has a "reading-changed" signal.
+- Smoke: a broken index (`git status` fails) → "Git error" + refresh; repaired + refresh → back; a repository whose
+  first read takes 4 s (a slow fsmonitor hook — in the temp folder: git runs it through the shell and this checkout's
+  path has a space) → spinner in the bar and the card, then the branch. Git 61 checks; full ASan smoke **PASS**
+  (folder views 86 / 0 wrong, details pane 69, git 61); `check-safety.sh` all PASS.
+
+### 14.14 Phase 6 results (2026-11-15) — settings, docs, hardening
+
+- **Settings → Git:** "Open In" (First Installed (<name>), or any installed IDE by desktop ID; pending until Apply).
+  Smoke: choosing Builder switches the bar's button; a desktop ID that isn't installed falls back to the first one.
+- **README:** Git section (status bar, columns, Git view, clone, sign-in, limitations), features table, settings
+  table, requirements (git), project layout, `SMOKE_ONLY=gt`. RPM spec: `Recommends: git-core`; `git-core` and
+  `python3` for `%check`.
+- **Main-thread timings** (`SMOKE_PERF=1`, stall sampler, a 216-commit history with merges):
+  - Building the history's rows took ~20 ms in one go → added 40 per main-loop turn.
+  - Every selection change rebuilt the whole Git page (card, history, git reads), also while the Details view was
+    shown: "show" steps of 20–70 ms. The pane now only asks whether the extra view exists (stat only) on every show
+    and builds its page only while it is the view shown; within the same repository the page is kept and only its
+    selection line is read again.
+  - What remained (~20 ms when a Git page is made) was **starting git**: GLib forks the whole of Files for each git
+    process whenever posix_spawn can't be used (a child_setup function, a working directory, or closing the parent's
+    file descriptors in the child — the default, kept: git shouldn't inherit Files' files). git is now started
+    through the `setsid` program (no child_setup; falls back to it without the program) with `git -C <folder>` (no
+    working directory), **from a worker thread**; its output is read on the main context as before. Process-group
+    kills on timeout / cancel unchanged (setsid execs git in place). After this, the sampled slow steps were the
+    test session's own debug logging and freeing an old page when moving to another repository.
+- Smoke `gt_round`: 63 git + 22 pane checks (incl. the long history: 216 commits, 2 lanes).
+- **Found by the final full ASan runs:**
+  - The Git card's selection line could show a stale state ("Unchanged" after a change): an older, slower selection
+    read could land after a newer one. Selection reads now carry a generation; only the newest is applied.
+  - A Git setting change re-applied everything (every pane's Git page rebuilt, the installed IDEs looked up again),
+    which kept the main loop busy for about a second under ASan — long enough for the test driver's next command to
+    overwrite one it hadn't read yet (the "missed command" flake of §14.7). Only what changed is applied now.
+  - The sidebar's OS-menu test failed once ("OS menu UNAVAILABLE"; passed on the re-run and before): intermittent,
+    in the sidebar test, not Git.
+  - A 96-byte leak allocated by libwayland-client when GTK presented the Git view's hover card (like the sidebar's
+    known popover leak, GTK's own Wayland objects of a popup it showed); the popover itself isn't leaked. The smoke's
+    leak filter now counts libwayland-client allocations as third-party (a leaked popover would still show as its
+    widget).
+- **Final:** `check-safety.sh` all PASS; full ASan smoke: folder views 86 / 0 wrong, details pane 70, git 63 — PASS
+  with the filter above; Git rounds under ASan twice clean after the fixes.

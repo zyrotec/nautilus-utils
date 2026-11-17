@@ -374,6 +374,32 @@
       <summary>Several selected: pictures, videos and PDFs as squares the size of the icons</summary>
     </key>
 
+    <!-- Git (PLAN.md §14.3). -->
+    <key name="git-enabled" type="b">
+      <default>true</default>
+      <summary>Git integration: status bar, columns, Git details in the details pane, Clone Repository…</summary>
+    </key>
+
+    <key name="git-status-bar" type="b">
+      <default>true</default>
+      <summary>Show the Git status bar under the folder view inside repositories</summary>
+    </key>
+
+    <key name="git-pane-git" type="b">
+      <default>false</default>
+      <summary>The details pane shows the Git view (the last choice of its Details | Git toggle)</summary>
+    </key>
+
+    <key name="git-history-graph" type="b">
+      <default>true</default>
+      <summary>The Git view's history shows the graph of branch lines (else a plain list)</summary>
+    </key>
+
+    <key name="git-ide" type="s">
+      <default>''</default>
+      <summary>Desktop ID of the IDE "Open in IDE" uses ('' = the first one installed)</summary>
+    </key>
+
     <!-- Folder icons by name (PLAN.md §12.4). -->
     <key name="folder-icons-enabled" type="b">
       <default>true</default>

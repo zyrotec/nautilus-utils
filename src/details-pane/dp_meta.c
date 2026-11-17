@@ -190,7 +190,7 @@ dp_info_read (GFile         *file,
                                                 cancellable, error);
   if (fi == NULL)
     return NULL;
-  gboolean is_symlink = g_file_info_get_is_symlink (fi);
+  gboolean is_symlink = g_file_info_get_attribute_boolean (fi, G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK);
   if (is_symlink)
     {
       /* Show what the link points to (like Files), keeping the link's own name and target. */
@@ -200,8 +200,9 @@ dp_info_read (GFile         *file,
       if (target != NULL)
         {
           g_file_info_set_attribute_byte_string (target, G_FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET,
-                                                 g_file_info_get_symlink_target (fi));
-          g_file_info_set_display_name (target, g_file_info_get_display_name (fi));
+                                                 g_file_info_get_attribute_byte_string (fi, G_FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET));
+          if (g_file_info_get_attribute_string (fi, G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME) != NULL)
+            g_file_info_set_display_name (target, g_file_info_get_attribute_string (fi, G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME));
           g_set_object (&fi, target);
         }
     }
@@ -213,7 +214,7 @@ dp_info_read (GFile         *file,
   info->display_name = dn != NULL ? g_strdup (dn) : g_file_get_basename (file);
   if (info->display_name == NULL)
     info->display_name = g_strdup (info->uri);
-  info->is_dir = g_file_info_get_file_type (fi) == G_FILE_TYPE_DIRECTORY;
+  info->is_dir = g_file_info_get_attribute_uint32 (fi, G_FILE_ATTRIBUTE_STANDARD_TYPE) == G_FILE_TYPE_DIRECTORY;
   info->is_symlink = is_symlink;
   info->is_native = g_file_is_native (file);
   const char *ct = g_file_info_get_attribute_string (fi, G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE);
@@ -227,10 +228,11 @@ dp_info_read (GFile         *file,
   info->symlink_target = is_symlink ? g_strdup (target) : NULL;
   info->icon = custom_icon (fi);
   info->custom_icon = info->icon != NULL;
-  if (info->icon == NULL && g_file_info_get_icon (fi) != NULL)
-    info->icon = g_object_ref (g_file_info_get_icon (fi));
+  GObject *fi_icon = g_file_info_get_attribute_object (fi, G_FILE_ATTRIBUTE_STANDARD_ICON);
+  if (info->icon == NULL && G_IS_ICON (fi_icon))
+    info->icon = G_ICON (g_object_ref (fi_icon));
   info->size = (guint64) g_file_info_get_attribute_uint64 (fi, G_FILE_ATTRIBUTE_STANDARD_SIZE);
-  info->modified = g_file_info_get_modification_date_time (fi);
+  info->modified = g_file_info_has_attribute (fi, G_FILE_ATTRIBUTE_TIME_MODIFIED) ? g_file_info_get_modification_date_time (fi) : NULL;
   info->created = g_file_info_get_creation_date_time (fi);
   info->accessed = g_file_info_get_access_date_time (fi);
   info->mtime_s = g_file_info_get_attribute_uint64 (fi, G_FILE_ATTRIBUTE_TIME_MODIFIED);
@@ -686,6 +688,8 @@ dp_extra_read (DpInfo        *info,
 
 /* ------------------------------------------------------------------------------------------------ */
 /* Folder contents                                                                                  */
+/* (Attribute getters, not g_file_info_get_is_hidden () etc.: some file systems leave out an attribute that was
+ * asked for, and the convenience getters then log "should not be reached" — seen in the owner's Files.) */
 
 typedef struct
 {
@@ -710,7 +714,7 @@ count_rest (Walk *w, GFileEnumerator *e)
           return;
         }
       w->out->items++;
-      if (g_file_info_get_is_hidden (child))
+      if (g_file_info_get_attribute_boolean (child, G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN))
         w->out->hidden++;
     }
 }
@@ -736,7 +740,7 @@ walk (Walk *w, GFile *dir, gboolean top)
       if (top)
         {
           w->out->items++;
-          if (g_file_info_get_is_hidden (child))
+          if (g_file_info_get_attribute_boolean (child, G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN))
             w->out->hidden++;
         }
       if (w->out->entries >= w->max_entries || g_get_monotonic_time () > w->deadline)
@@ -747,7 +751,7 @@ walk (Walk *w, GFile *dir, gboolean top)
           return FALSE;
         }
       w->out->entries++;
-      GFileType type = g_file_info_get_file_type (child);
+      GFileType type = (GFileType) g_file_info_get_attribute_uint32 (child, G_FILE_ATTRIBUTE_STANDARD_TYPE);
       if (type == G_FILE_TYPE_DIRECTORY)
         {
           const char *fs = g_file_info_get_attribute_string (child, G_FILE_ATTRIBUTE_ID_FILESYSTEM);
@@ -761,7 +765,7 @@ walk (Walk *w, GFile *dir, gboolean top)
             }
         }
       else if (type == G_FILE_TYPE_REGULAR)
-        w->out->total += (guint64) g_file_info_get_size (child);
+        w->out->total += g_file_info_get_attribute_uint64 (child, G_FILE_ATTRIBUTE_STANDARD_SIZE);
     }
   return !g_cancellable_is_cancelled (w->cancellable);
 }

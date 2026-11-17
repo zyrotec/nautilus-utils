@@ -122,7 +122,7 @@ cp "$ROOT"/tests/details-pane/data/{photo.jpg,pic.png} "$DP_TREE/pics/"
     ASAN_OPTIONS="log_path='$LOG/asan':detect_leaks=1:verify_asan_link_order=0" \
     UBSAN_OPTIONS="log_path='$LOG/ubsan':print_stacktrace=1" \
     LSAN_OPTIONS="suppressions='$ROOT/tools/lsan.supp':print_suppressions=0" \
-    G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings folder-views folder-icons details-pane" \
+    G_MESSAGES_DEBUG="nautilus-utils folder-preview sidebar-drives settings folder-views folder-icons details-pane git" \
     GSETTINGS_BACKEND=memory GSETTINGS_SCHEMA_DIR="$ROOT/build/data" \
     GST_PLUGIN_FEATURE_RANK="fakeaudiosink:MAX" \
     DP_STALL_SAMPLER="${DP_STALL_SAMPLER:-}" \
@@ -295,7 +295,7 @@ dp_round() {
   # objects alive at exit, which LeakSanitizer reports under our test driver's frame — PLAN.md §13.9 Phase 5).
   cmd fv-new-tab 2; cmd dp-dump 0.3; cmd "dp-tab 0" 1.5; cmd dp-dump 0.3; dp_expect 'title="photo.jpg"'
   cmd "dp-width 400" 1; cmd dp-dump 0.3; cmd "dp-width 320" 1
-  cmd st-open 1; cmd "st-tab details-pane" 1; cmd st-dump 0.3; cmd st-close 0.5
+  cmd st-open 1; cmd "st-tab details-pane" 1; cmd st-dump 0.3; cmd "st-tab git" 1; cmd st-dump 0.3; cmd st-close 0.5
   # v2 look (PLAN.md §13.10): stack options, a floating card, the header line, the bottom strip.
   cmd "dp-select all" 2; dp_expect 'preview=stack'
   cmd "st-set details-pane-stack-depth-effect 'darken'" 1; cmd "st-set details-pane-stack-card false" 1.5
@@ -363,11 +363,161 @@ dp_round() {
   cmd "sd-open $DIR_URI" 2
 }
 
-if [ -n "$AUTO" ] && [ "${SMOKE_ONLY:-}" = dp ]; then
+# Git (PLAN.md §14): a repository with a local bare remote (file://, so push / pull / sync work offline) and a
+# second clone that pushes, so the counts move. The status bar under the folder view: branch, counts, sync, pull,
+# push, create + publish a branch, switch to a remote branch, a folder outside any repository, feature off / on.
+GT_DIR="$LOG/gt"
+GT_REPO="$GT_DIR/repo"
+gt_make_repo() {
+  ( set -e
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME="Smoke Test" GIT_AUTHOR_EMAIL=smoke@example.invalid \
+           GIT_COMMITTER_NAME="Smoke Test" GIT_COMMITTER_EMAIL=smoke@example.invalid
+    mkdir -p "$GT_DIR" && cd "$GT_DIR"
+    git init -q --bare -b main remote.git
+    git clone -q remote.git seed 2>/dev/null && cd seed && git checkout -q -b main
+    mkdir -p src && echo one > README.md && echo a > src/a.c && printf 'node_modules/\n*.log\n' > .gitignore
+    git add -A && git commit -qm "Initial commit" && git push -q origin main
+    git checkout -q -b feature && echo f > feature.txt && git add feature.txt && git commit -qm "Feature work" && git push -q origin feature
+    cd .. && git clone -q -b main remote.git repo && git clone -q -b main remote.git other
+    cd other && echo two >> README.md && git commit -qam "Update from elsewhere" && git push -q origin main
+    cd "$GT_DIR" && git init -q -b main local && cd local && echo l > notes.txt && git add -A && git commit -qm "Local only"
+    true ) || echo "gt: could not make the test repositories"
+  # A folder outside any repository (the log folder is inside this checkout's own repository).
+  GT_PLAIN="$(mktemp -d "${TMPDIR:-/tmp}/nu-gt-plain.XXXXXX")"
+}
+gt_expect() { cmd "gt-expect $1" 0.3; }
+gt_round() {
+  gt_make_repo
+  local uri plain; uri="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_REPO")"
+  plain="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_PLAIN")"
+  cmd "sd-open $uri" 3; cmd gt-dump 0.3
+  gt_expect 'bar=1'; gt_expect 'branch="main"'; gt_expect 'counts="↑0 ↓0"'; gt_expect 'remote=origin'
+  cmd "dp-png $LOG/gt-bar.png" 1
+  cmd gt-sync 3; cmd gt-dump 0.3; gt_expect 'counts="↑0 ↓1"'; gt_expect 'progress="Sync: done"'
+  cmd gt-pull 3; gt_expect 'counts="↑0 ↓0"'; gt_expect 'progress="Pull: done"'
+  ( cd "$GT_REPO" && GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=S GIT_AUTHOR_EMAIL=s@x.invalid GIT_COMMITTER_NAME=S \
+      GIT_COMMITTER_EMAIL=s@x.invalid git commit -q --allow-empty -m "Local work" )
+  cmd gt-dump 1.5; gt_expect 'counts="↑1 ↓0"'                      # seen through the git folder monitor
+  cmd gt-push 3; gt_expect 'counts="↑0 ↓0"'; gt_expect 'progress="Push: done"'
+  cmd "gt-create topic/smoke" 2.5; gt_expect 'branch="topic/smoke"'; gt_expect 'counts="Not published"'
+  cmd gt-push 3; gt_expect 'counts="↑0 ↓0"'; gt_expect 'progress="Push: done"'
+  cmd "gt-switch-remote origin/feature" 2.5; gt_expect 'branch="feature"'; gt_expect 'counts="↑0 ↓0"'
+  cmd "gt-switch no-such-branch" 2; gt_expect 'progress="Switch to no-such-branch: failed"'; gt_expect 'branch="feature"'
+  cmd "gt-switch main" 2.5; gt_expect 'branch="main"'
+  cmd dp-toggle 1.5; cmd "dp-png $LOG/gt-bar-pane.png" 1
+  # The details pane's Details | Git (§14.2 item 4, §14.11): the branch card, the history (graph / list), the hover card.
+  cmd "dp-select none" 1; dp_expect 'view=details'; cmd "dp-extra on" 2; dp_expect 'view=extra'
+  dp_expect 'card=[main|Local work|S · '
+  dp_expect 'Mainline: origin/main · 0 ahead, 0 behind'; dp_expect 'graph=1 commits=3 lanes=1'
+  dp_expect 'commit0=Local work{main}'; dp_expect 'commit1=Update from elsewhere commit2=Initial commit'
+  cmd "dp-select name README.md" 2; dp_expect '|README.md · Unchanged]'
+  cmd "dp-png $LOG/gt-pane-git.png" 1
+  cmd "gt-card 1" 2.5; dp_expect 'hover=[Update from elsewhere|'; dp_expect '1 file changed ·|+1|−0|'
+  cmd "dp-png $LOG/gt-pane-card.png" 1
+  ( cd "$GT_REPO" && echo y >> README.md ); cmd "dp-select none" 0.5; cmd "dp-select name README.md" 2
+  dp_expect '|README.md · Modified]'
+  cmd "dp-select name src" 0.5; cmd "dp-select add README.md" 2; dp_expect '|2 selected · 1 with changes]'
+  cmd "st-set git-history-graph false" 2; dp_expect 'graph=0 commits=3'; cmd "dp-png $LOG/gt-pane-list.png" 1
+  cmd "st-reset git-history-graph" 2; dp_expect 'graph=1'
+  cmd "st-set details-pane-position 'bottom'" 1.5; dp_expect 'view=details-only'
+  gt_expect 'at=bottom'; cmd "dp-png $LOG/gt-bar-bottom.png" 1                            # below the strip
+  cmd "st-set details-pane-position 'right'" 1.5; dp_expect 'view=extra'; gt_expect 'at=column'
+  cmd "dp-extra off" 1; dp_expect 'view=details'; cmd "dp-extra on" 1
+  cmd "sd-open $uri" 2; cmd "sd-open $plain" 2; dp_expect 'view=details-only'                # outside: no toggle
+  cmd "sd-open $uri" 2; cmd "dp-select none" 1; dp_expect 'view=extra'                        # the choice is kept
+  ( cd "$GT_REPO" && git checkout -q -- README.md )
+  cmd "dp-extra off" 1; cmd "st-reset details-pane-position" 0.3; cmd dp-toggle 1
+  # Git columns (§14.2 item 3): values Files has for each file, through its public API; changes made outside.
+  gt_attr() { cmd "gt-attr $1" 0.3; }
+  cmd gt-cols 0.5; cmd "fv-view 1" 3; cmd gt-dump 1; cmd "dp-png $LOG/gt-columns.png" 1
+  gt_attr 'README.md status=|commit=Update from elsewhere|'; gt_attr 'README.md author=Smoke Test|'
+  gt_attr 'src status=|commit=Initial commit|'
+  ( cd "$GT_REPO" && echo u > untracked.txt && echo l > debug.log && echo m >> src/a.c && echo x >> README.md )
+  cmd gt-dump 3
+  gt_attr 'untracked.txt status=Untracked|commit=|'; gt_attr 'debug.log status=Ignored|'
+  gt_attr 'README.md status=Modified|'; gt_attr 'src status=Contains changes|'
+  ( cd "$GT_REPO" && GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME="Col Test" GIT_AUTHOR_EMAIL=c@x.invalid \
+      GIT_COMMITTER_NAME="Col Test" GIT_COMMITTER_EMAIL=c@x.invalid git commit -qam "Commit from a terminal" )
+  cmd gt-dump 3                                                                   # the repository changed
+  gt_attr 'README.md status=|commit=Commit from a terminal|'; gt_attr 'README.md author=Col Test|'
+  gt_attr 'src status=|commit=Commit from a terminal|'; gt_attr 'untracked.txt status=Untracked|'
+  cmd "fv-view 2" 2
+  # A repository without any remote (`git remote` prints nothing): the bar, not a crash (owner's crash 2026-11-15).
+  local local_uri; local_uri="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_DIR/local")"
+  cmd "sd-open $local_uri" 2.5; cmd gt-dump 0.3; gt_expect 'bar=1'; gt_expect 'branch="main"'; gt_expect 'remote=-'
+  gt_expect 'counts="Not published"'
+  cmd "sd-open $uri/src" 2; gt_expect 'bar=1'; gt_expect 'branch="main"'          # a folder inside
+  cmd "sd-open $plain" 2; cmd gt-dump 0.3; gt_expect 'bar=0'                       # outside any repository
+  cmd "sd-open $uri" 2; gt_expect 'bar=1'
+  cmd "st-set git-ide 'org.gnome.Builder.desktop'" 1; gt_expect 'ide="Builder"'                  # Open In (settings)
+  cmd "st-set git-ide 'no-such.desktop'" 1; gt_expect 'ide="Visual Studio Code"'               # gone: the first installed
+  cmd "st-reset git-ide" 0.5
+  cmd "st-set git-status-bar false" 1; gt_expect 'bar=0'
+  cmd "st-set git-status-bar true" 1; gt_expect 'bar=1'
+  cmd "st-set git-enabled false" 1; cmd gt-dump 0.3
+  cmd "st-set git-enabled true" 2; gt_expect 'bar=1'; gt_expect 'branch="main"'
+  # Error state and loading (owner, 2026-11-15): a broken index makes `git status` fail → "Git error" with a refresh
+  # button; repaired + refresh → back. A repository whose first read takes seconds (a slow fsmonitor hook) shows a
+  # spinner while it loads.
+  cmd "sd-open $uri" 2.5; gt_expect 'loading=0'
+  ( cd "$GT_REPO" && cp .git/index "$GT_DIR/index.good" && printf 'garbage' > .git/index )
+  cmd gt-dump 2; gt_expect 'branch="Git error"'; gt_expect 'refresh=1'
+  cp "$GT_DIR/index.good" "$GT_REPO/.git/index"; cmd gt-refresh 2.5; gt_expect 'branch="main"'; gt_expect 'refresh=0'
+  # (The hook goes in the temp folder: git runs it through the shell, and this checkout's path has a space.)
+  local hook_dir; hook_dir="$(mktemp -d "${TMPDIR:-/tmp}/nu-gt-hook.XXXXXX")"
+  printf '#!/bin/sh\nsleep 4\nexit 1\n' > "$hook_dir/slow-fsmonitor"; chmod +x "$hook_dir/slow-fsmonitor"
+  ( cd "$GT_DIR" && git clone -q remote.git slow && git -C slow config core.fsmonitor "$hook_dir/slow-fsmonitor" )
+  local slow_uri; slow_uri="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_DIR/slow")"
+  cmd dp-toggle 1.5; cmd "dp-extra on" 1
+  cmd "sd-open $slow_uri" 1.5; cmd gt-dump 0.3; gt_expect 'loading=1'; gt_expect 'branch="Loading…"'
+  dp_expect '[extra: loading=1 refresh=0 spinner=0 card=[Loading…|'   # (the history, a separate read, is already in)
+  cmd gt-dump 12; gt_expect 'loading=0'; gt_expect 'branch="main"'
+  dp_expect '[extra: loading=0 refresh=0 spinner=0 card=[main|'
+  cmd "dp-extra off" 1; cmd dp-toggle 1
+  rm -rf "$hook_dir"
+  # A long history (400 commits, two branches merged now and then): the Git view shows 300 rows; the time to build
+  # them is in the log ("git history: N rows in … µs").
+  ( cd "$GT_DIR" && git init -q -b main long && cd long && for i in $(seq 1 200); do
+      git -c user.name=L -c user.email=l@x.invalid commit -q --allow-empty -m "Commit $i"
+      if [ $((i % 25)) -eq 0 ]; then git checkout -q -b side$i && git -c user.name=L -c user.email=l@x.invalid commit -q --allow-empty -m "Side $i" \
+        && git checkout -q main && git -c user.name=L -c user.email=l@x.invalid merge -q --no-ff -m "Merge side$i" side$i; fi
+    done )
+  local long_uri; long_uri="$(python3 -I -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).as_uri())' "$GT_DIR/long")"
+  cmd dp-toggle 1.5; cmd "dp-extra on" 1; cmd "sd-open $long_uri" 4; dp_expect 'graph=1 commits=216 lanes=2'
+  cmd "dp-png $LOG/gt-pane-long.png" 1; cmd "dp-extra off" 1; cmd dp-toggle 1
+  # Clone Repository… (§14.2 items 5–6): into a folder outside any repository (the bar shows the clone there), the
+  # dialog's checks, then from a local smart-HTTP server with basic auth through the sign-in dialog.
+  # The driver splits "URL NAME" at a space, and this checkout's path has one: clone from a copy in the temp folder.
+  local src; src="$(mktemp -d "${TMPDIR:-/tmp}/nu-gt-src.XXXXXX")"; git clone -q --bare "$GT_DIR/remote.git" "$src/remote.git"
+  cmd "sd-open $plain" 2; cmd gt-clone-open 1
+  cmd "gt-clone not-a-url" 0.5; cmd "gt-clone $src/remote.git" 0.5           # a path, not a URL: refused
+  cmd "gt-clone file://$src/remote.git" 4; gt_expect 'bar=1'; gt_expect 'progress="Clone remote: done"'; gt_expect 'selected=remote'
+  [ -f "$GT_PLAIN/remote/README.md" ] && echo "gt clone: local OK" >> "$LOG/gt-checks" || echo "gt clone: local MISSING" >> "$LOG/gt-checks"
+  cmd gt-clone-open 1; cmd "gt-clone file://$src/remote.git" 0.5            # "remote" exists now: refused
+  ( cd "$GT_DIR" && git clone -q --bare remote.git srv/repo.git && git -C srv/repo.git config http.receivepack true )
+  local port_file="$GT_DIR/srv.port"
+  python3 -I "$ROOT/tests/git/data/authserver.py" "$GT_DIR/srv" > "$port_file" 2>/dev/null &
+  local srv_pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$port_file" ] && break; sleep 0.3; done
+  local port; port="$(head -1 "$port_file")"
+  cmd "gt-clone http://127.0.0.1:$port/repo.git authed" 4
+  cmd "gt-auth-expect Sign In to 127.0.0.1"; cmd "gt-auth u bad" 4
+  cmd "gt-auth-expect The remote refused them."; cmd "gt-auth u tok" 5
+  gt_expect 'progress="Clone authed: done"'; cmd gt-dump 1; gt_expect 'selected=authed'
+  [ -f "$GT_PLAIN/authed/README.md" ] && echo "gt clone: authed OK" >> "$LOG/gt-checks" || echo "gt clone: authed MISSING" >> "$LOG/gt-checks"
+  kill "$srv_pid" 2>/dev/null
+  cmd "sd-open $DIR_URI" 2
+  rm -rf "$GT_PLAIN" "$src"
+}
+
+if [ -n "$AUTO" ] && [ "${SMOKE_ONLY:-}" = gt ]; then
+  gt_round
+elif [ -n "$AUTO" ] && [ "${SMOKE_ONLY:-}" = dp ]; then
   dp_round
 elif [ -n "$AUTO" ]; then
   end=$(( $(date +%s) + AUTO ))
   dp_round
+  gt_round
   icons_round
   look_round
   style_round
@@ -424,7 +574,9 @@ ours_pattern="libnautilus-utils[.]so|src/(${our_files})[.]c:"
 # with it: one from the pane's title). Never memory we own (PLAN.md §13.8 D7). And Mesa's EGL display: GTK
 # initialises GL once per process the first time something needs it (here: the details pane's first video
 # sink) and never terminates EGL at exit (D11).
-third_party_alloc='_gi[.]cpython|libpython|pygi_|libfontconfig|libEGL_mesa'
+# And libwayland-client: GTK presenting a popup (the sidebar's OS menu, the Git view's hover card) makes Wayland
+# protocol objects GTK may still hold at exit (PLAN.md §14.14); a popover we leaked would show up as its widget.
+third_party_alloc='_gi[.]cpython|libpython|pygi_|libfontconfig|libEGL_mesa|libwayland-client'
 for r in "${reports[@]}"; do
   hits="$(awk -v RS= -v pat="$ours_pattern" -v tp="$third_party_alloc" '
     $0 !~ pat { next }
@@ -531,6 +683,8 @@ n_fv_trans="$(grep -c 'transition: done' "$LOG/nautilus.log" || true)"
 if [ -n "$AUTO" ] && [ "$n_fv_checked" -eq 0 ]; then echo "FINDING: folder views never checked a tab"; fail=1; fi
 
 # Details pane: every expectation held; the button was shown; nothing of ours stays while switched off.
+gt_fail="$(grep -E 'gt expect FAIL|gt: unknown command' "$LOG/nautilus.log" || true)$(grep -h MISSING "$LOG/gt-checks" 2>/dev/null || true)"
+[ -z "$gt_fail" ] || { echo "FINDING: git:"; echo "$gt_fail" | head -10 | sed 's/^/    | /'; fail=1; }
 dp_fail="$(grep -E 'dp expect FAIL|dp: (no window|unknown command)' "$LOG/nautilus.log" || true)"
 [ -z "$dp_fail" ] || { echo "FINDING: details pane:"; echo "$dp_fail" | head -10 | sed 's/^/    | /'; fail=1; }
 dp_look_bad="$(grep -E 'dp png: FAILED' "$LOG/nautilus.log" || true)"
@@ -545,6 +699,7 @@ dp_line_left="$(grep 'dp look: bottom=0' "$LOG/nautilus.log" | tail -1 | grep 'h
 dp_off_bad="$(grep 'dp dump: enabled=0' "$LOG/nautilus.log" | grep -v 'windows=0' || true)"
 [ -z "$dp_off_bad" ] || { echo "FINDING: details pane left traces while switched off:"; echo "$dp_off_bad" | sed 's/^/    | /'; fail=1; }
 n_dp_ok="$(grep -c 'dp expect ok' "$LOG/nautilus.log" || true)"
+n_gt_ok="$(grep -c 'gt expect ok' "$LOG/nautilus.log" || true)"
 n_dp_button="$(grep -c 'dp dump: enabled=1 windows=[1-9].* button=1' "$LOG/nautilus.log" || true)"
 if [ -n "$AUTO" ] && { [ "$n_dp_ok" -eq 0 ] || [ "$n_dp_button" -eq 0 ]; }; then
   echo "FINDING: details pane never checked (expectations ok: $n_dp_ok, button shown: $n_dp_button)"; fail=1
@@ -566,6 +721,7 @@ echo "  OS drive menus:         $n_menu"
 echo "  settings toggles:       sidebar off-dumps $n_off, preview off-states $n_fp_off, preview re-hooked $n_fp_on"
 echo "  folder views:           tab checks $n_fv_checked, named checks $n_fv_expect, off-dumps $n_fv_off, smooth transitions $n_fv_trans, wrong: $([ -z "$fv_bad" ] && echo 0 || echo SOME)"
 echo "  details pane:           expectations ok $n_dp_ok, failed: $([ -z "$dp_fail" ] && echo 0 || echo SOME), button shown in $n_dp_button dumps"
+echo "  git:                    expectations ok $n_gt_ok, failed: $([ -z "$gt_fail" ] && echo 0 || echo SOME)"
 echo "  sanitizer report files: ${#reports[@]} (only blocks mentioning our code count)"
 echo "  result:                 $([ $fail -eq 0 ] && [ "$loaded" -gt 0 ] && echo PASS || echo FAIL)"
 [ "$loaded" -gt 0 ] || fail=1

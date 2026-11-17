@@ -9,8 +9,8 @@ st_feature_lib = static_library('st-feature',
   'folder_icons_page.c',
   'menu_hook.c',
   c_args: ['-DG_LOG_DOMAIN="settings"'] + (get_option('debug_driver') ? ['-DST_DEBUG_DRIVER'] : []),
-  dependencies: nu_common_deps + [gtk_dep, adw_dep],
-  include_directories: [include_directories('.'), nu_common_inc],
+  dependencies: nu_common_deps + [gtk_dep, adw_dep, dependency('gio-unix-2.0')],
+  include_directories: [include_directories('.', '../git'), nu_common_inc], # gt_ide.h (the Git tab's IDE list)
   pic: true,
   gnu_symbol_visibility: 'hidden',
 )

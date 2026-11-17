@@ -55,9 +55,20 @@ subdir('src/common')
 subdir('src/folder-preview')
 subdir('src/sidebar-drives')
 subdir('src/settings')
+# Widgets shared by features (GTK, after gtk_dep / adw_dep exist): the content column (PLAN.md §14.5 item 3).
+nu_common_ui_lib = static_library('nu-common-ui',
+  'src/common/nu_content.c',
+  c_args: ['-DG_LOG_DOMAIN="nautilus-utils"'],
+  dependencies: nu_common_deps + [gtk_dep, adw_dep],
+  include_directories: nu_common_inc,
+  pic: true,
+  gnu_symbol_visibility: 'hidden',
+)
+feature_libs += [nu_common_ui_lib]
 subdir('src/folder-views')
 subdir('src/folder-icons')
 subdir('src/details-pane')
+subdir('src/git')
 
 # Built at the build root as build/libnautilus-utils.so, which is what the dev symlink points at (README.md).
 nu_module = shared_module('nautilus-utils',
@@ -77,6 +88,7 @@ subdir('tests/sidebar-drives')
 subdir('tests/folder-views')
 subdir('tests/folder-icons')
 subdir('tests/details-pane')
+subdir('tests/git')
 
 summary({
   'extensiondir': extensiondir,

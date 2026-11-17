@@ -11,6 +11,7 @@
 #include <math.h>
 
 #include "folder_icons_page.h"
+#include "gt_ide.h"
 #include "nu_settings.h"
 
 #define DIALOG_KEY "st-settings-dialog" /* window qdata: GWeakRef to the open dialog */
@@ -852,6 +853,88 @@ details_pane_page (GSettings *settings)
   return page;
 }
 
+/* "Open In": the first installed IDE (""), or one of the installed IDEs by desktop ID. Pending until Apply, like
+ * every setting. */
+static void
+on_ide_selected (AdwComboRow *row, GParamSpec *pspec, gpointer data)
+{
+  (void) pspec;
+  GSettings *settings = data;
+  GPtrArray *ids = g_object_get_data (G_OBJECT (row), "gt-ide-ids");
+  guint i = adw_combo_row_get_selected (row);
+  if (ids != NULL && i < ids->len)
+    g_settings_set_string (settings, "git-ide", g_ptr_array_index (ids, i));
+}
+
+static GtkWidget *
+ide_row (GSettings *settings)
+{
+  GtkStringList *names = gtk_string_list_new (NULL);
+  GPtrArray *ids = g_ptr_array_new_with_free_func (g_free);
+  GList *ides = gt_ide_list ();
+  g_autofree char *first = g_strdup_printf ("First Installed%s%s%s", ides != NULL ? " (" : "",
+                                            ides != NULL ? g_app_info_get_name (ides->data) : "", ides != NULL ? ")" : "");
+  gtk_string_list_append (names, first);
+  g_ptr_array_add (ids, g_strdup (""));
+  for (GList *l = ides; l != NULL; l = l->next)
+    {
+      gtk_string_list_append (names, g_app_info_get_name (l->data));
+      g_ptr_array_add (ids, g_strdup (g_app_info_get_id (l->data)));
+    }
+  g_list_free_full (ides, g_object_unref);
+  GtkWidget *row = adw_combo_row_new ();
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), "Open In");
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (row), "The IDE the status bar’s Open button uses");
+  adw_combo_row_set_model (ADW_COMBO_ROW (row), G_LIST_MODEL (names));
+  g_object_unref (names);
+  g_object_set_data_full (G_OBJECT (row), "gt-ide-ids", ids, (GDestroyNotify) g_ptr_array_unref);
+  g_autofree char *current = g_settings_get_string (settings, "git-ide");
+  for (guint i = 0; i < ids->len; i++)
+    if (g_str_equal (g_ptr_array_index (ids, i), current))
+      adw_combo_row_set_selected (ADW_COMBO_ROW (row), i);
+  g_signal_connect (row, "notify::selected", G_CALLBACK (on_ide_selected), settings);
+  return row;
+}
+
+/* Git (PLAN.md §14). */
+static GtkWidget *
+git_page (GSettings *settings)
+{
+  /* The tab's branch icon is in the Git feature's resources (registered at load, also when Git is off). */
+  static gboolean icons_added;
+  if (!icons_added && gdk_display_get_default () != NULL)
+    {
+      icons_added = TRUE;
+      gtk_icon_theme_add_resource_path (gtk_icon_theme_get_for_display (gdk_display_get_default ()),
+                                        "/io/github/zyrotec/NautilusUtils/git/icons");
+    }
+  GtkWidget *page = adw_preferences_page_new ();
+  GtkWidget *main_group = group (NULL, NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (main_group),
+                             switch_row (settings, "git-enabled", "Git",
+                                         "Inside a Git repository: a status bar, Git columns for the list view, the "
+                                         "Git view in the details pane"));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (main_group));
+
+  GtkWidget *look = group ("Show", NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (look),
+                             switch_row (settings, "git-status-bar", "Status Bar",
+                                         "Branch, commits to push and pull, operations and Open in IDE, under the "
+                                         "folder view"));
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (look),
+                             switch_row (settings, "git-history-graph", "History Graph",
+                                         "The details pane’s Git view draws the branch lines next to the commits; "
+                                         "off: a plain list"));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (look));
+  g_settings_bind (settings, "git-enabled", look, "sensitive", G_SETTINGS_BIND_GET);
+
+  GtkWidget *ide = group ("Open in IDE", NULL);
+  adw_preferences_group_add (ADW_PREFERENCES_GROUP (ide), ide_row (settings));
+  adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (ide));
+  g_settings_bind (settings, "git-enabled", ide, "sensitive", G_SETTINGS_BIND_GET);
+  return page;
+}
+
 /* Shown instead of the tabs when the schema isn't installed. */
 static GtkWidget *
 unavailable_page (void)
@@ -959,6 +1042,8 @@ st_settings_dialog_present (GtkWidget *parent)
                                            "folder-icons", "Folder Icons", "folder-symbolic");
       adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), details_pane_page (settings),
                                            "details-pane", "Details Pane", "sidebar-show-right-symbolic");
+      adw_view_stack_add_titled_with_icon (ADW_VIEW_STACK (stack), git_page (settings), "git", "Git",
+                                           "nu-git-branch-symbolic");
 
       /* Sidebar pane: one row per feature. */
       GtkWidget *sidebar = adw_view_switcher_sidebar_new ();
