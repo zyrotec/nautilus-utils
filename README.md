@@ -74,8 +74,8 @@ album covers, and cycles through the next ones while the pointer hovers over it.
 - 🌫️ **Depth effect** (Blur, Transparency or Darken) makes the cards further back look further away; the
   front card always stays upright.
 - 📐 **Layout:** side padding (8 px by default at the 64 × 64 size, scaled with the zoom), **spacing** (how far each
-  picture shows above the one in front, 2 px by default; the stack keeps its size, so more spacing makes the cards
-  shorter), position (Top,
+  picture shows above the one in front, 2 px by default; only the vertical gap, the pictures behind keep their width;
+  the stack keeps its height, so all pictures get equally shorter), position (Top,
   Centre, Bottom, plus a fine-tuning slider), a bottom fade, and rounded top/bottom corners that clip all
   pictures.
 - 🖌️ **Both layouts:** border (on/off, colour and width), drop shadow (it follows the picture's shape, so

@@ -820,6 +820,10 @@ test_stack_spacing (void)
       g_assert_cmpfloat_with_epsilon (y0 + h0, ay + ah, 1e-6);
       g_assert_cmpfloat_with_epsilon (y2, ay, 1e-6);
       g_assert_cmpfloat_with_epsilon (h2, h0, 1e-6);
+      /* Only the vertical gap changes: the cards' widths (and side insets) are the same at any spacing. */
+      g_assert_cmpfloat_with_epsilon (w0, aw, 1e-6);
+      g_assert_cmpfloat_with_epsilon (w2, aw - 2 * 2 * STACK_STEP * aw, 1e-6);
+      g_assert_cmpfloat_with_epsilon (x2 - x0, 2 * STACK_STEP * aw, 1e-6);
     }
   g_assert_cmpfloat_with_epsilon (gap[0], 0.0, 1e-9);
   g_assert_cmpfloat (gap[1], <, gap[2]);

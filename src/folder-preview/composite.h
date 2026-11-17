@@ -60,9 +60,10 @@ typedef struct
   guint    view_top_radius;  /* Stacked: the stack area clips all pictures with these corner radii (px at */
   guint    view_bottom_radius; /* 64 × 64); both 0 = no clipping. */
   guint    stack_padding;    /* Stacked: space to the icon's left and right edges, px at 64 × 64 (max 20). */
-  guint    stack_spacing;    /* Stacked: how far each card further back shows above (and is inset beside) the one
-                              * in front, px at 64 × 64 (max FP_STACK_SPACING_MAX). The stack keeps its height:
-                              * more spacing makes the cards shorter. */
+  guint    stack_spacing;    /* Stacked: how far each card further back shows above the one in front, px at
+                              * 64 × 64 (max FP_STACK_SPACING_MAX). Only the vertical gap: the side inset of the
+                              * cards behind is fixed. The stack keeps its height: more spacing makes the cards
+                              * shorter. */
   gboolean bottom_align;     /* Stacked, keep_aspect: each picture sits on its card's bottom edge instead of its
                               * top, so nothing behind hangs below the front card (details pane, PLAN.md §13.12;
                               * folder previews keep FALSE). */

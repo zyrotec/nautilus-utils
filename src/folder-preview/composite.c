@@ -215,11 +215,14 @@ void
 fp_composite_card_rect (const FpStyle *style, guint index, guint width, double *x, double *y, double *w, double *h)
 {
   double sw = width / (1.0 + 2 * STACK_PAD); /* stack width */
+  guint depth = MIN (index, (guint) STACK_CARDS - 1);
   double step = fp_style_stack_step (style);
-  double inset = MIN (index, (guint) STACK_CARDS - 1) * step * sw;
-  /* The stack area keeps its size (STACK_H): the cards' height takes up what the steps leave. */
+  /* Spacing moves the cards behind up only; their side inset stays the fixed STACK_STEP, so they keep their
+   * width whatever the spacing (owner, 2026-11-17). The stack area keeps its size (STACK_H): the cards' height
+   * takes up what the steps leave. */
+  double inset = depth * STACK_STEP * sw;
   *x = STACK_PAD * sw + inset;
-  *y = STACK_PAD * sw + (STACK_CARDS - 1) * step * sw - inset;
+  *y = STACK_PAD * sw + (STACK_CARDS - 1 - depth) * step * sw;
   *w = sw - 2 * inset;
   *h = (STACK_H - (STACK_CARDS - 1) * step) * sw;
 }
