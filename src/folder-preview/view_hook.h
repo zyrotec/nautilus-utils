@@ -35,7 +35,7 @@ gboolean fp_view_hook_get_enabled (void);
  * icons are redrawn in the new look; nothing happens if nothing changed. */
 void fp_view_hook_set_look (const FpStyle   *style,
                             FpStackPosition  position,
-                            int              offset,
+                            double           offset,
                             gboolean         cycle,
                             const char      *folder_icon,
                             const char      *overlay_icon);

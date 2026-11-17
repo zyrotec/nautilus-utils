@@ -47,7 +47,7 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_cmpint (a->preview_view_top_radius, ==, b->preview_view_top_radius);
   g_assert_cmpint (a->preview_view_bottom_radius, ==, b->preview_view_bottom_radius);
   g_assert_cmpint (a->preview_stack_position, ==, b->preview_stack_position);
-  g_assert_cmpint (a->preview_stack_offset, ==, b->preview_stack_offset);
+  g_assert_cmpfloat (a->preview_stack_offset, ==, b->preview_stack_offset);
   g_assert_cmpint (a->preview_stack_padding, ==, b->preview_stack_padding);
   g_assert_cmpfloat (a->preview_border_width, ==, b->preview_border_width);
   g_assert_cmpint (a->folder_icons_enabled, ==, b->folder_icons_enabled);
@@ -98,7 +98,7 @@ assert_config_equal (const NuConfig *a, const NuConfig *b)
   g_assert_cmpint (a->git_commit_tooltip, ==, b->git_commit_tooltip);
   g_assert_cmpint (a->git_emblems, ==, b->git_emblems);
   g_assert_cmpint (a->nav_buttons_enabled, ==, b->nav_buttons_enabled);
-  g_assert_cmpint (a->preview_stack_spacing, ==, b->preview_stack_spacing);
+  g_assert_cmpfloat (a->preview_stack_spacing, ==, b->preview_stack_spacing);
   g_assert_cmpint (a->details_pane_custom_colour, ==, b->details_pane_custom_colour);
   g_assert_true (rgb_equal (a->details_pane_colour, b->details_pane_colour));
   g_assert_cmpstr (a->preview_folder_icon, ==, b->preview_folder_icon);
@@ -396,9 +396,7 @@ test_each_group (void)
     { "folder-preview-fade", 40, NU_CHANGED_PREVIEW_STYLE },
     { "folder-preview-view-top-radius", 5, NU_CHANGED_PREVIEW_STYLE },
     { "folder-preview-view-bottom-radius", 9, NU_CHANGED_PREVIEW_STYLE },
-    { "folder-preview-stack-offset", -6, NU_CHANGED_PREVIEW_ICONS },
     { "folder-preview-stack-padding", 3, NU_CHANGED_PREVIEW_STYLE },
-    { "folder-preview-stack-spacing", 5, NU_CHANGED_PREVIEW_STYLE },
   };
   for (gsize i = 0; i < G_N_ELEMENTS (ints); i++)
     {
@@ -413,15 +411,33 @@ test_each_group (void)
   g_assert_cmpint (pc->preview_fade, ==, 40);
   g_assert_cmpint (pc->preview_view_top_radius, ==, 5);
   g_assert_cmpint (pc->preview_view_bottom_radius, ==, 9);
-  g_assert_cmpint (pc->preview_stack_offset, ==, -6);
   g_assert_cmpint (pc->preview_stack_padding, ==, 3);
-  g_assert_cmpint (pc->preview_stack_spacing, ==, 5);
   counter.calls = 0;
   g_settings_set_double (s, "folder-preview-border-width", 2.5);
   drain ();
   g_assert_cmpuint (counter.calls, ==, 1);
   g_assert_cmpuint (counter.last, ==, NU_CHANGED_PREVIEW_STYLE);
   g_assert_cmpfloat (nu_settings_get ()->preview_border_width, ==, 2.5);
+  /* Half pixels: spacing and vertical offset. */
+  static const struct
+  {
+    const char *key;
+    double      value;
+    NuChanged   group;
+  } halves[] = {
+    { "folder-preview-stack-offset", -6.5, NU_CHANGED_PREVIEW_ICONS },
+    { "folder-preview-stack-spacing", 3.5, NU_CHANGED_PREVIEW_STYLE },
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS (halves); i++)
+    {
+      counter.calls = 0;
+      g_settings_set_double (s, halves[i].key, halves[i].value);
+      drain ();
+      g_assert_cmpuint (counter.calls, ==, 1);
+      g_assert_cmpuint (counter.last, ==, halves[i].group);
+    }
+  g_assert_cmpfloat (nu_settings_get ()->preview_stack_offset, ==, -6.5);
+  g_assert_cmpfloat (nu_settings_get ()->preview_stack_spacing, ==, 3.5);
   counter.calls = 0;
   g_settings_set_enum (s, "folder-preview-stack-position", NU_STACK_BOTTOM);
   drain ();

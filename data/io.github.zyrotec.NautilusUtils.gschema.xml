@@ -156,16 +156,16 @@
       <summary>Stacked: space between the stack and the icon's left and right edges (px at 64 × 64)</summary>
     </key>
 
-    <key name="folder-preview-stack-spacing" type="i">
+    <key name="folder-preview-stack-spacing" type="d">
       <range min="0" max="8"/>
-      <default>2</default>
+      <default>2.0</default>
       <summary>Stacked: how far each picture shows above and beside the one in front (px at 64 × 64)</summary>
     </key>
 
-    <key name="folder-preview-stack-offset" type="i">
+    <key name="folder-preview-stack-offset" type="d">
       <range min="-16" max="16"/>
-      <default>0</default>
-      <summary>Stacked: vertical fine-tuning in pixels at 64 × 64 (positive = down)</summary>
+      <default>0.0</default>
+      <summary>Stacked: vertical fine-tuning in pixels at 64 × 64 (positive = down), in steps of 0.5</summary>
     </key>
 
     <key name="folder-preview-folder-icon" type="s">

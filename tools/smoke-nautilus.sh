@@ -237,7 +237,7 @@ look_round() {
   cmd "st-set folder-preview-view-bottom-radius 10" 0.8; cmd "st-set folder-preview-corner-radius 9" 0.8
   for p in top bottom centre; do cmd "st-set folder-preview-stack-position '$p'" 0.6; cmd verify 0.3; done
   cmd "st-set folder-preview-stack-padding 0" 0.8; cmd "st-set folder-preview-stack-padding 20" 0.8; cmd verify 0.3
-  cmd "st-set folder-preview-stack-offset -12" 0.6; cmd "st-set folder-preview-stack-offset 16" 0.6; cmd verify 0.3
+  cmd "st-set folder-preview-stack-offset -12.5" 0.6; cmd "st-set folder-preview-stack-offset 16.0" 0.6; cmd verify 0.3
   cmd "st-set folder-preview-layout 'grid'" 1.2; cmd verify 0.3; cmd "st-set folder-preview-layout 'stacked'" 1.2
   cmd "st-set folder-preview-folder-icon '$FP_SVG_DIR/notes.txt'" 1; cmd verify 0.3   # not an SVG: theme icon
   cmd "st-set folder-preview-cycle false" 0.6; cmd hover 1.6; cmd leave 0.3

@@ -147,9 +147,9 @@ typedef struct
   int             preview_view_top_radius; /* px at 64 × 64 */
   int             preview_view_bottom_radius;
   int             preview_stack_padding;   /* px at 64 × 64 */
-  int             preview_stack_spacing;   /* px at 64 × 64, 0 … 8 */
+  double          preview_stack_spacing;   /* px at 64 × 64, 0 … 8 (steps of 0.5 in the dialog) */
   NuStackPosition preview_stack_position;
-  int             preview_stack_offset;    /* px at 64 × 64, positive = down */
+  double          preview_stack_offset;    /* px at 64 × 64, positive = down, -16 … 16 */
   const char     *preview_folder_icon;  /* Never NULL ("" = theme icon); owned by the service, valid until
                                          * the next change notification or shutdown. */
   const char     *preview_overlay_icon; /* Never NULL ("" = none); same ownership. */

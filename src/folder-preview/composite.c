@@ -26,7 +26,7 @@ fp_style_init_default (FpStyle *style)
     .depth = FP_DEPTH_BLUR,
     .corner_radius = 2,
     .stack_padding = 8,
-    .stack_spacing = 2,
+    .stack_spacing = 20,
   };
 }
 
@@ -206,7 +206,7 @@ fp_composite_stack_rect (guint width, double *x, double *y, double *w, double *h
 double
 fp_style_stack_step (const FpStyle *style)
 {
-  double px = MIN (style->stack_spacing, (guint) FP_STACK_SPACING_MAX);
+  double px = MIN (style->stack_spacing, (guint) FP_STACK_SPACING_MAX) / 10.0;
   /* At most a fifth of the stack's height per step, so the cards stay at least 60 % of it tall. */
   return MIN (px / (REF_ICON_PX * fp_style_stack_width (style)), STACK_H / 5.0);
 }

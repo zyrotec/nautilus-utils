@@ -307,6 +307,8 @@ slider_row_d (GSettings  *settings,
   gtk_scale_set_value_pos (GTK_SCALE (scale), GTK_POS_RIGHT);
   gtk_scale_set_format_value_func (GTK_SCALE (scale), format_value_1, (gpointer) unit, NULL);
   gtk_range_set_round_digits (GTK_RANGE (scale), 1);
+  if (min < 0 && max > 0)
+    gtk_scale_add_mark (GTK_SCALE (scale), 0, GTK_POS_BOTTOM, NULL);
   gtk_widget_set_size_request (scale, 180, -1);
   gtk_widget_set_valign (scale, GTK_ALIGN_CENTER);
   gtk_accessible_update_property (GTK_ACCESSIBLE (scale), GTK_ACCESSIBLE_PROPERTY_LABEL, title, -1);
@@ -565,11 +567,11 @@ folder_preview_page (GSettings *settings)
                              slider_row (settings, "folder-preview-stack-padding", "Side Padding",
                                          "Space between the pictures and the icon’s sides", 0, 20, "px"));
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
-                             slider_row (settings, "folder-preview-stack-spacing", "Spacing",
-                                         "How far each picture shows above the one in front", 0, 8, "px"));
+                             slider_row_d (settings, "folder-preview-stack-spacing", "Spacing",
+                                           "How far each picture shows above the one in front", 0.0, 8.0, 0.5, "px"));
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
-                             slider_row (settings, "folder-preview-stack-offset", "Vertical Offset",
-                                         "Fine-tune the position", -16, 16, "px"));
+                             slider_row_d (settings, "folder-preview-stack-offset", "Vertical Offset",
+                                           "Fine-tune the position", -16.0, 16.0, 0.5, "px"));
   adw_preferences_group_add (ADW_PREFERENCES_GROUP (stack_group),
                              slider_row (settings, "folder-preview-fade", "Bottom Fade",
                                          "Fade the pictures out towards the bottom", 0, 100, "%"));

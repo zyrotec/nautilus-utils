@@ -99,7 +99,7 @@ typedef struct
   /* Look (PLAN.md §11), set by fp_view_hook_set_look. */
   FpStyle     style;          /* Same as the cache's style. */
   FpStackPosition position;   /* Stacked: where the stack goes (placement only: frames don't change). */
-  int         offset;         /* Stacked: vertical fine-tuning, px at 64 × 64. */
+  double      offset;         /* Stacked: vertical fine-tuning, px at 64 × 64. */
   gboolean    cycle;          /* Hover cycling on. */
   FpIconArt  *back_art;       /* Owned or NULL: custom folder SVG (stacked layout only). */
   FpIconArt  *overlay_art;    /* Owned or NULL: front overlay SVG (stacked layout only). */
@@ -1589,7 +1589,7 @@ reload_art (FpIconArt **art, char **loaded_path, const char *path)
 void
 fp_view_hook_set_look (const FpStyle   *style,
                        FpStackPosition  position,
-                       int              offset,
+                       double           offset,
                        gboolean         cycle,
                        const char      *folder_icon,
                        const char      *overlay_icon)

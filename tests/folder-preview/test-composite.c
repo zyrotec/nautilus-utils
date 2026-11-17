@@ -807,7 +807,7 @@ test_stack_spacing (void)
   double ax, ay, aw, ah;
   fp_composite_stack_rect (w, &ax, &ay, &aw, &ah);
   double gap[3], height[3];
-  const guint spacings[] = { 0, 2, 6 };
+  const guint spacings[] = { 0, 20, 65 }; /* tenths of a px: 0, 2 and 6.5 px */
   for (guint k = 0; k < 3; k++)
     {
       st.stack_spacing = spacings[k];
@@ -830,7 +830,7 @@ test_stack_spacing (void)
   g_assert_cmpfloat (height[0], >, height[1]);
   g_assert_cmpfloat (height[1], >, height[2]);
   /* 2 px at 64 × 64 with the default 8 px padding (48 px wide stack): two steps of 2 px in icon pixels. */
-  st.stack_spacing = 2;
+  st.stack_spacing = 20;
   double icon = fp_composite_icon_px (&st, w);
   g_assert_cmpfloat_with_epsilon (gap[1], 2 * 2 * icon / 64.0, 1e-6);
   /* Out of range: clamped, and cards stay at least 60 % of the stack tall. */
@@ -840,8 +840,8 @@ test_stack_spacing (void)
   g_assert_cmpfloat (ch, >=, 0.6 * ah - 1e-6);
   /* Cache keys: stacked keys differ, grid keys don't. */
   FpStyle a = st, b = st;
-  a.stack_spacing = 1;
-  b.stack_spacing = 3;
+  a.stack_spacing = 15; /* half pixels make different frames */
+  b.stack_spacing = 20;
   g_autofree char *ka = fp_style_key (&a);
   g_autofree char *kb = fp_style_key (&b);
   g_assert_cmpstr (ka, !=, kb);
@@ -852,7 +852,7 @@ test_stack_spacing (void)
   g_assert_cmpstr (ga, ==, gb);
   /* A frame draws with any spacing. */
   st.layout = FP_LAYOUT_STACKED;
-  st.stack_spacing = 8;
+  st.stack_spacing = 80;
   FpCompositeItem items[] = { { NULL, 1, NULL }, { NULL, 2, NULL }, { NULL, 3, NULL } };
   g_autoptr (GdkTexture) t = fp_composite_frame (&st, items, 3, w, NULL);
   g_assert_nonnull (t);

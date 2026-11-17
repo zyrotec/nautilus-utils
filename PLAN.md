@@ -1373,7 +1373,7 @@ an on/off switch for hover cycling. Branch `folder-thumbnail-preview-extended`. 
 | `folder-preview-view-bottom-radius` | i 0–16 (px at 64 × 64) | 0 (stacked only) |
 | `folder-preview-stack-padding` | i 0–20 (px at 64 × 64) | 8 (stacked only) |
 | `folder-preview-stack-position` | enum top / centre / bottom | centre (stacked only) |
-| `folder-preview-stack-offset` | i −16–16 (px at 64 × 64) | 0 (stacked only) |
+| `folder-preview-stack-offset` | d −16–16 (px at 64 × 64, steps of 0.5) | 0.0 (stacked only) |
 | `folder-preview-folder-icon` | s (path, empty = theme) | '' |
 | `folder-preview-overlay-icon` | s (path, empty = none) | '' |
 
