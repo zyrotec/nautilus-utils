@@ -300,7 +300,10 @@ dp_round() {
   # objects alive at exit, which LeakSanitizer reports under our test driver's frame — PLAN.md §13.9 Phase 5).
   cmd fv-new-tab 2; cmd dp-dump 0.3; cmd "dp-tab 0" 1.5; cmd dp-dump 0.3; dp_expect 'title="photo.jpg"'
   cmd "dp-width 400" 1; cmd dp-dump 0.3; cmd "dp-width 320" 1
-  cmd st-open 1; cmd "st-tab details-pane" 1; cmd st-dump 0.3; cmd "st-tab git" 1; cmd st-dump 0.3; cmd st-close 0.5
+  cmd st-open 1; cmd "st-tab details-pane" 1; cmd st-dump 0.3; cmd "dp-png $LOG/st-details-pane.png" 1
+  cmd "st-tab git" 1; cmd st-dump 0.3
+  cmd "st-set folder-preview-layout 'stacked'" 0.5; cmd "st-tab folder-preview" 1; cmd "dp-png $LOG/st-folder-preview.png" 1
+  cmd "st-reset folder-preview-layout" 0.3; cmd st-close 0.5
   # v2 look (PLAN.md §13.10): stack options, a floating card, the header line, the bottom strip.
   cmd "dp-select all" 2; dp_expect 'preview=stack'
   cmd "st-set details-pane-stack-depth-effect 'darken'" 1; cmd "st-set details-pane-stack-card false" 1.5

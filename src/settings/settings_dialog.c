@@ -239,16 +239,31 @@ enum_row (GSettings         *settings,
   return row;
 }
 
-/* GtkScale:format-value: whole numbers with @data (static) as the unit, e.g. "4 px", "30 %". Returns a new
- * string (GTK frees it). */
-static char *
-format_value (GtkScale *scale, double value, gpointer data)
+/* Spin rows (− / + buttons and a typed value) for every number, like Files' own preferences (owner, 2026-11-17).
+ * A unit other than pixels goes in the title, e.g. "Bottom Fade (%)"; pixel rows show the number alone, as the
+ * px_row rows always did. */
+static GtkWidget *
+spin_row (const char *title,
+          const char *subtitle,
+          double      min,
+          double      max,
+          double      step,
+          guint       digits,
+          const char *unit)
 {
-  (void) scale;
-  return g_strdup_printf ("%d %s", (int) lround (value), (const char *) data);
+  GtkWidget *row = adw_spin_row_new_with_range (min, max, step);
+  g_autofree char *full = unit != NULL && !g_str_equal (unit, "px") ? g_strdup_printf ("%s (%s)", title, unit)
+                                                                     : g_strdup (title);
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), full);
+  if (subtitle != NULL)
+    adw_action_row_set_subtitle (ADW_ACTION_ROW (row), subtitle);
+  adw_spin_row_set_digits (ADW_SPIN_ROW (row), digits);
+  adw_spin_row_set_snap_to_ticks (ADW_SPIN_ROW (row), TRUE); /* a typed value goes to the nearest step */
+  adw_spin_row_set_numeric (ADW_SPIN_ROW (row), TRUE);
+  return row;
 }
 
-/* A row with a slider for integer @key in [min, max] (schema range); @unit is static text. */
+/* A spin row for integer @key in [min, max] (schema range); @unit is static text. */
 static GtkWidget *
 slider_row (GSettings  *settings,
             const char *key,
@@ -258,35 +273,13 @@ slider_row (GSettings  *settings,
             int         max,
             const char *unit)
 {
-  GtkWidget *row = adw_action_row_new ();
-  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), title);
-  if (subtitle != NULL)
-    adw_action_row_set_subtitle (ADW_ACTION_ROW (row), subtitle);
-  GtkWidget *scale = gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL, min, max, 1);
-  gtk_scale_set_digits (GTK_SCALE (scale), 0);
-  gtk_scale_set_draw_value (GTK_SCALE (scale), TRUE);
-  gtk_scale_set_value_pos (GTK_SCALE (scale), GTK_POS_RIGHT);
-  gtk_scale_set_format_value_func (GTK_SCALE (scale), format_value, (gpointer) unit, NULL);
-  if (min < 0 && max > 0)
-    gtk_scale_add_mark (GTK_SCALE (scale), 0, GTK_POS_BOTTOM, NULL);
-  gtk_widget_set_size_request (scale, 180, -1);
-  gtk_widget_set_valign (scale, GTK_ALIGN_CENTER);
-  gtk_accessible_update_property (GTK_ACCESSIBLE (scale), GTK_ACCESSIBLE_PROPERTY_LABEL, title, -1);
-  g_settings_bind_with_mapping (settings, key, gtk_range_get_adjustment (GTK_RANGE (scale)), "value",
+  GtkWidget *row = spin_row (title, subtitle, min, max, 1, 0, unit);
+  g_settings_bind_with_mapping (settings, key, adw_spin_row_get_adjustment (ADW_SPIN_ROW (row)), "value",
                                 G_SETTINGS_BIND_DEFAULT, int_to_double, double_to_int, NULL, NULL);
-  adw_action_row_add_suffix (ADW_ACTION_ROW (row), scale);
   return row;
 }
 
-/* GtkScale:format-value with one decimal and @data (static) as the unit. Returns a new string (GTK frees). */
-static char *
-format_value_1 (GtkScale *scale, double value, gpointer data)
-{
-  (void) scale;
-  return g_strdup_printf ("%.1f %s", value, (const char *) data);
-}
-
-/* A row with a slider for double @key in [min, max] (schema range), in steps of @step. */
+/* A spin row for double @key in [min, max] (schema range), in steps of @step (one decimal). */
 static GtkWidget *
 slider_row_d (GSettings  *settings,
               const char *key,
@@ -297,64 +290,21 @@ slider_row_d (GSettings  *settings,
               double      step,
               const char *unit)
 {
-  GtkWidget *row = adw_action_row_new ();
-  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), title);
-  if (subtitle != NULL)
-    adw_action_row_set_subtitle (ADW_ACTION_ROW (row), subtitle);
-  GtkWidget *scale = gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL, min, max, step);
-  gtk_scale_set_digits (GTK_SCALE (scale), 1);
-  gtk_scale_set_draw_value (GTK_SCALE (scale), TRUE);
-  gtk_scale_set_value_pos (GTK_SCALE (scale), GTK_POS_RIGHT);
-  gtk_scale_set_format_value_func (GTK_SCALE (scale), format_value_1, (gpointer) unit, NULL);
-  gtk_range_set_round_digits (GTK_RANGE (scale), 1);
-  if (min < 0 && max > 0)
-    gtk_scale_add_mark (GTK_SCALE (scale), 0, GTK_POS_BOTTOM, NULL);
-  gtk_widget_set_size_request (scale, 180, -1);
-  gtk_widget_set_valign (scale, GTK_ALIGN_CENTER);
-  gtk_accessible_update_property (GTK_ACCESSIBLE (scale), GTK_ACCESSIBLE_PROPERTY_LABEL, title, -1);
-  g_settings_bind (settings, key, gtk_range_get_adjustment (GTK_RANGE (scale)), "value", G_SETTINGS_BIND_DEFAULT);
-  adw_action_row_add_suffix (ADW_ACTION_ROW (row), scale);
+  GtkWidget *row = spin_row (title, subtitle, min, max, step, 1, unit);
+  g_settings_bind (settings, key, adw_spin_row_get_adjustment (ADW_SPIN_ROW (row)), "value", G_SETTINGS_BIND_DEFAULT);
   return row;
 }
 
-/* A spin row for integer @key in [min, max] pixels (at the 64 × 64 icon size). */
-/* Snaps the slider to multiples of 16 while it moves (the icon size, PLAN.md §13.12 P16). */
-static void
-snap_16 (GtkRange *range, gpointer data)
-{
-  (void) data;
-  double v = gtk_range_get_value (range);
-  double snapped = CLAMP (round (v / 16.0) * 16.0, 16.0, 256.0);
-  if (fabs (v - snapped) > 0.01)
-    gtk_range_set_value (range, snapped);
-}
-
-/* A 16–256 px slider in steps of 16 (snapped while it moves), with a mark at every 64 px. */
+/* 16–256 px in steps of 16 (the icon size, PLAN.md §13.12 P16). */
 static GtkWidget *
 icon_size_row (GSettings  *settings,
                const char *key,
                const char *title,
                const char *subtitle)
 {
-  GtkWidget *row = adw_action_row_new ();
-  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), title);
-  if (subtitle != NULL)
-    adw_action_row_set_subtitle (ADW_ACTION_ROW (row), subtitle);
-  GtkWidget *scale = gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL, 16, 256, 16);
-  gtk_scale_set_digits (GTK_SCALE (scale), 0);
-  gtk_scale_set_draw_value (GTK_SCALE (scale), TRUE);
-  gtk_scale_set_value_pos (GTK_SCALE (scale), GTK_POS_RIGHT);
-  gtk_scale_set_format_value_func (GTK_SCALE (scale), format_value, (gpointer) "px", NULL);
-  for (int v = 64; v <= 256; v += 64)
-    gtk_scale_add_mark (GTK_SCALE (scale), v, GTK_POS_BOTTOM, NULL);
-  gtk_range_set_increments (GTK_RANGE (scale), 16, 64);
-  gtk_widget_set_size_request (scale, 200, -1);
-  gtk_widget_set_valign (scale, GTK_ALIGN_CENTER);
-  gtk_accessible_update_property (GTK_ACCESSIBLE (scale), GTK_ACCESSIBLE_PROPERTY_LABEL, title, -1);
-  g_signal_connect (scale, "value-changed", G_CALLBACK (snap_16), NULL);
-  g_settings_bind_with_mapping (settings, key, gtk_range_get_adjustment (GTK_RANGE (scale)), "value",
+  GtkWidget *row = spin_row (title, subtitle, 16, 256, 16, 0, "px");
+  g_settings_bind_with_mapping (settings, key, adw_spin_row_get_adjustment (ADW_SPIN_ROW (row)), "value",
                                 G_SETTINGS_BIND_DEFAULT, int_to_double, double_to_int, NULL, NULL);
-  adw_action_row_add_suffix (ADW_ACTION_ROW (row), scale);
   return row;
 }
 
