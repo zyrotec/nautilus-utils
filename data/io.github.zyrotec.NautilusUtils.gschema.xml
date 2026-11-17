@@ -156,10 +156,16 @@
       <summary>Stacked: space between the stack and the icon's left and right edges (px at 64 × 64)</summary>
     </key>
 
-    <key name="folder-preview-stack-offset" type="i">
+    <key name="folder-preview-stack-spacing" type="d">
+      <range min="0" max="8"/>
+      <default>2.0</default>
+      <summary>Stacked: how far each picture shows above and beside the one in front (px at 64 × 64)</summary>
+    </key>
+
+    <key name="folder-preview-stack-offset" type="d">
       <range min="-16" max="16"/>
-      <default>0</default>
-      <summary>Stacked: vertical fine-tuning in pixels at 64 × 64 (positive = down)</summary>
+      <default>0.0</default>
+      <summary>Stacked: vertical fine-tuning in pixels at 64 × 64 (positive = down), in steps of 0.5</summary>
     </key>
 
     <key name="folder-preview-folder-icon" type="s">
@@ -270,6 +276,16 @@
     <key name="details-pane-header-border" type="b">
       <default>false</default>
       <summary>Draw a line under Files' header bar while the details pane is shown</summary>
+    </key>
+
+    <key name="details-pane-custom-colour" type="b">
+      <default>false</default>
+      <summary>Give the details pane its own background colour (details-pane-colour)</summary>
+    </key>
+
+    <key name="details-pane-colour" type="s">
+      <default>'#303036'</default>
+      <summary>Background colour of the details pane when details-pane-custom-colour is on (#rrggbb)</summary>
     </key>
 
     <key name="details-pane-icon-size" type="i">
@@ -398,6 +414,37 @@
     <key name="git-ide" type="s">
       <default>''</default>
       <summary>Desktop ID of the IDE "Open in IDE" uses ('' = the first one installed)</summary>
+    </key>
+
+    <key name="git-bar-border" type="b">
+      <default>true</default>
+      <summary>Draw a line above the Git status bar</summary>
+    </key>
+
+    <key name="git-bar-custom-colour" type="b">
+      <default>false</default>
+      <summary>Give the Git status bar its own background colour (git-bar-colour)</summary>
+    </key>
+
+    <key name="git-bar-colour" type="s">
+      <default>'#303036'</default>
+      <summary>Background colour of the Git status bar when git-bar-custom-colour is on (#rrggbb)</summary>
+    </key>
+
+    <key name="git-commit-tooltip" type="b">
+      <default>true</default>
+      <summary>Hovering a commit in the details pane's Git view shows its details in a tooltip</summary>
+    </key>
+
+    <key name="git-emblems" type="b">
+      <default>true</default>
+      <summary>Mark changed, added, untracked… files and folders with a small emblem on their icon</summary>
+    </key>
+
+    <!-- Navigation buttons in the header bar. -->
+    <key name="nav-buttons-enabled" type="b">
+      <default>true</default>
+      <summary>Show Up and Refresh buttons right of Files' Back and Forward buttons</summary>
     </key>
 
     <!-- Folder icons by name (PLAN.md §12.4). -->

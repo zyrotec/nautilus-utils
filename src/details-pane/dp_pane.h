@@ -51,6 +51,8 @@ typedef struct
   gboolean media_box;       /* media flush inside a fixed box instead of a box of their shape (P20) */
   gboolean title_centered;  /* P21 */
   gboolean show_icon;       /* the small icon next to the name (P21) */
+  gboolean custom_colour;   /* the pane's own background colour instead of the view's */
+  GdkRGBA  colour;          /* used when @custom_colour */
 } DpPaneStyle;
 
 /* Restyles every pane (and re-renders shown stacks if their options changed). Main thread. */

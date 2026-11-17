@@ -634,6 +634,7 @@ install (GtkWidget *window)
   gtk_paned_set_end_child (GTK_PANED (paned), pane);
   adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar_view), paned);
   g_object_unref (column);
+  nu_content_track_below (column, pane); /* the scroll shadow when the pane is at the bottom */
   g_weak_ref_init (&hook->paned, paned);
   g_weak_ref_init (&hook->pane, pane);
   hook->position_id = g_signal_connect_object (paned, "notify::position", G_CALLBACK (on_position), window, 0);

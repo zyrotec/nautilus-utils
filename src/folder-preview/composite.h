@@ -60,10 +60,16 @@ typedef struct
   guint    view_top_radius;  /* Stacked: the stack area clips all pictures with these corner radii (px at */
   guint    view_bottom_radius; /* 64 × 64); both 0 = no clipping. */
   guint    stack_padding;    /* Stacked: space to the icon's left and right edges, px at 64 × 64 (max 20). */
+  guint    stack_spacing;    /* Stacked: how far each card further back shows above the one in front, tenths of a
+                              * px at 64 × 64 (max FP_STACK_SPACING_MAX). Only the vertical gap: the side inset of the
+                              * cards behind is fixed. The stack keeps its height: more spacing makes the cards
+                              * shorter. */
   gboolean bottom_align;     /* Stacked, keep_aspect: each picture sits on its card's bottom edge instead of its
                               * top, so nothing behind hangs below the front card (details pane, PLAN.md §13.12;
                               * folder previews keep FALSE). */
 } FpStyle;
+
+#define FP_STACK_SPACING_MAX 80 /* tenths of a px: 8 px */
 
 /* The default look: grid, white border, shadow, rotation, aspect ratio kept, 2 px corners; stacked: blur
  * depth, no fade, no view clipping, step 1. */
@@ -121,14 +127,18 @@ void fp_composite_stack_rect (guint   width,
                               double *w,
                               double *h);
 
+/* Stacked: the step between neighbouring cards, as a fraction of the stack width (from style->stack_spacing). */
+double fp_style_stack_step (const FpStyle *style);
+
 /* Stacked: rectangle (before tilting) of card @index (0 = front) in a frame @width pixels wide, in frame
  * pixels. Exposed for tests. */
-void fp_composite_card_rect (guint   index,
-                             guint   width,
-                             double *x,
-                             double *y,
-                             double *w,
-                             double *h);
+void fp_composite_card_rect (const FpStyle *style,
+                             guint          index,
+                             guint          width,
+                             double        *x,
+                             double        *y,
+                             double        *w,
+                             double        *h);
 
 /* Builds a frame @width pixels wide (height from fp_composite_frame_height) from @n_items items
  * (0 .. fp_style_slots). Blocking (reads and decodes files): worker threads or tests only.

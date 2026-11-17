@@ -33,8 +33,9 @@ static const NuConfig defaults = {
   .preview_view_top_radius = 0,
   .preview_view_bottom_radius = 0,
   .preview_stack_padding = 8,
+  .preview_stack_spacing = 2.0,
   .preview_stack_position = NU_STACK_CENTRE,
-  .preview_stack_offset = 0,
+  .preview_stack_offset = 0.0,
   .preview_folder_icon = "",
   .preview_overlay_icon = "",
   .folder_icons_enabled = TRUE,
@@ -51,6 +52,8 @@ static const NuConfig defaults = {
   .details_pane_padding = 18,
   .details_pane_radius = 0,
   .details_pane_header_border = FALSE,
+  .details_pane_custom_colour = FALSE,
+  .details_pane_colour = { 0x30, 0x30, 0x36 },
   .details_pane_preview_radius = 12,
   .details_pane_preview_margin = 0,
   .details_pane_icon_size = 128,
@@ -75,6 +78,12 @@ static const NuConfig defaults = {
   .git_ide = "",
   .git_pane_git = FALSE,
   .git_history_graph = TRUE,
+  .git_bar_border = TRUE,
+  .git_bar_custom_colour = FALSE,
+  .git_bar_colour = { 0x30, 0x30, 0x36 },
+  .git_commit_tooltip = TRUE,
+  .git_emblems = TRUE,
+  .nav_buttons_enabled = TRUE,
 };
 
 /* Key name → group reported to listeners. */
@@ -112,6 +121,7 @@ static const struct
   { "folder-preview-view-top-radius", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-view-bottom-radius", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-stack-padding", NU_CHANGED_PREVIEW_STYLE },
+  { "folder-preview-stack-spacing", NU_CHANGED_PREVIEW_STYLE },
   { "folder-preview-stack-position", NU_CHANGED_PREVIEW_ICONS },
   { "folder-preview-stack-offset", NU_CHANGED_PREVIEW_ICONS },
   { "folder-preview-cycle", NU_CHANGED_PREVIEW_ICONS },
@@ -130,6 +140,8 @@ static const struct
   { "details-pane-padding", NU_CHANGED_DP_LOOK },
   { "details-pane-radius", NU_CHANGED_DP_LOOK },
   { "details-pane-header-border", NU_CHANGED_DP_LOOK },
+  { "details-pane-custom-colour", NU_CHANGED_DP_LOOK },
+  { "details-pane-colour", NU_CHANGED_DP_LOOK },
   { "details-pane-preview-radius", NU_CHANGED_DP_LOOK },
   { "details-pane-preview-margin", NU_CHANGED_DP_LOOK },
   { "details-pane-stack-depth-effect", NU_CHANGED_DP_LOOK },
@@ -154,6 +166,12 @@ static const struct
   { "git-ide", NU_CHANGED_GIT },
   { "git-pane-git", NU_CHANGED_GIT },
   { "git-history-graph", NU_CHANGED_GIT },
+  { "git-bar-border", NU_CHANGED_GIT },
+  { "git-bar-custom-colour", NU_CHANGED_GIT },
+  { "git-bar-colour", NU_CHANGED_GIT },
+  { "git-commit-tooltip", NU_CHANGED_GIT },
+  { "git-emblems", NU_CHANGED_GIT },
+  { "nav-buttons-enabled", NU_CHANGED_NAV_BUTTONS },
 };
 
 typedef struct
@@ -291,8 +309,9 @@ read_all (void)
   c->preview_fade = g_settings_get_int (s, "folder-preview-fade");
   c->preview_view_top_radius = g_settings_get_int (s, "folder-preview-view-top-radius");
   c->preview_view_bottom_radius = g_settings_get_int (s, "folder-preview-view-bottom-radius");
-  c->preview_stack_offset = g_settings_get_int (s, "folder-preview-stack-offset");
+  c->preview_stack_offset = CLAMP (g_settings_get_double (s, "folder-preview-stack-offset"), -16.0, 16.0);
   c->preview_stack_padding = g_settings_get_int (s, "folder-preview-stack-padding");
+  c->preview_stack_spacing = CLAMP (g_settings_get_double (s, "folder-preview-stack-spacing"), 0.0, 8.0);
   /* Replace the owned strings; the config borrows them. */
   g_free (ns->folder_icon);
   ns->folder_icon = g_settings_get_string (s, "folder-preview-folder-icon");
@@ -330,6 +349,8 @@ read_all (void)
   c->details_pane_padding = g_settings_get_int (s, "details-pane-padding");
   c->details_pane_radius = g_settings_get_int (s, "details-pane-radius");
   c->details_pane_header_border = g_settings_get_boolean (s, "details-pane-header-border");
+  c->details_pane_custom_colour = g_settings_get_boolean (s, "details-pane-custom-colour");
+  read_colour (s, "details-pane-colour", defaults.details_pane_colour, &c->details_pane_colour);
   c->details_pane_preview_radius = g_settings_get_int (s, "details-pane-preview-radius");
   c->details_pane_preview_margin = g_settings_get_int (s, "details-pane-preview-margin");
   /* Steps of 16 (a hand-edited value in between is rounded to the nearest step). */
@@ -361,6 +382,12 @@ read_all (void)
   c->git_ide = ns->git_ide;
   c->git_pane_git = g_settings_get_boolean (s, "git-pane-git");
   c->git_history_graph = g_settings_get_boolean (s, "git-history-graph");
+  c->git_bar_border = g_settings_get_boolean (s, "git-bar-border");
+  c->git_bar_custom_colour = g_settings_get_boolean (s, "git-bar-custom-colour");
+  read_colour (s, "git-bar-colour", defaults.git_bar_colour, &c->git_bar_colour);
+  c->git_commit_tooltip = g_settings_get_boolean (s, "git-commit-tooltip");
+  c->git_emblems = g_settings_get_boolean (s, "git-emblems");
+  c->nav_buttons_enabled = g_settings_get_boolean (s, "nav-buttons-enabled");
 }
 
 static gboolean

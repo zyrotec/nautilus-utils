@@ -41,6 +41,10 @@ apply (void)
   gt_hook_set_below_all (c->details_pane_enabled && c->details_pane_position == NU_PANE_BOTTOM);
   gt_hook_configure (c->git_enabled, c->git_status_bar, c->git_ide);
   gt_columns_set_enabled (c->git_enabled);
+  gt_columns_set_emblems (c->git_emblems);
+  GdkRGBA bg = { c->git_bar_colour.r / 255.0f, c->git_bar_colour.g / 255.0f, c->git_bar_colour.b / 255.0f, 1.0f };
+  gt_bar_set_look (c->git_bar_border, c->git_bar_custom_colour ? &bg : NULL);
+  gt_page_set_tooltips (c->git_commit_tooltip);
   /* The details pane's "Details | Git" (PLAN.md §14.2 item 4); the choice is remembered. */
   if (!last.applied || last.pane_git != c->git_pane_git)
     dp_pane_set_extra_selected (c->git_pane_git);
@@ -89,6 +93,10 @@ void
 gt_feature_initialize (GTypeModule *module)
 {
   g_resources_register (gt_get_resource ());
+  /* The emblems and the branch icon, for Files' views too (not only our widgets). */
+  if (gdk_display_get_default () != NULL)
+    gtk_icon_theme_add_resource_path (gtk_icon_theme_get_for_display (gdk_display_get_default ()),
+                                      "/io/github/zyrotec/NautilusUtils/git/icons");
   gt_columns_register (module);
   types[0] = GT_TYPE_COLUMNS;
   gt_hook_init ();

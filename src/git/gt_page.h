@@ -21,7 +21,11 @@ GtkWidget *gt_page_new (GFile      *folder,
                         GtkWidget **header,
                         gpointer    user_data);
 
-/* Opens the hover card of commit @index (debug driver). FALSE if there is no such commit. */
+/* Commit tooltips in the history (setting git-commit-tooltip); process-wide, takes effect on the next hover. */
+void gt_page_set_tooltips (gboolean on);
+
+/* Reads the tooltip of commit @index and includes it in gt_page_describe (debug driver). FALSE if there is no such
+ * commit. */
 gboolean gt_page_open_card (GtkWidget *page,
                             guint      index);
 

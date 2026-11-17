@@ -48,6 +48,8 @@ apply_look (void)
     .stack_media_square = c->details_pane_stack_media_square,
     .stack_spacing = c->details_pane_stack_spacing,
     .backdrop = c->details_pane_preview_backdrop,
+    .custom_colour = c->details_pane_custom_colour,
+    .colour = { c->details_pane_colour.r / 255.0f, c->details_pane_colour.g / 255.0f, c->details_pane_colour.b / 255.0f, 1.0f },
   };
   dp_pane_set_style (&st);
   dp_hook_set_look (c->details_pane_position == NU_PANE_BOTTOM, c->details_pane_header_border);

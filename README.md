@@ -27,6 +27,7 @@ Shipped as one native C extension module (`libnautilus-utils.so`) with its own s
   - [🎨 Folder icons by name](#-folder-icons-by-name)
   - [📋 Details pane](#-details-pane)
   - [🌿 Git](#-git)
+  - [⬆️ Navigation](#️-navigation)
   - [⚙️ Settings](#️-settings)
 - [📦 Installation](#-installation)
   - [✅ Requirements](#-requirements)
@@ -51,6 +52,7 @@ Shipped as one native C extension module (`libnautilus-utils.so`) with its own s
 | 🎨 | **Folder icons by name** | Give every folder with a certain name (e.g. `node_modules`) its own icon, everywhere. |
 | 📋 | **Details pane** | A pane right of the folder view with the selected item's preview and properties, like Windows File Explorer. |
 | 🌿 | **Git** | Inside a repository: a status bar (branch, commits to push and pull, push / pull / sync, Open in IDE), Git columns in the list view, a Git view with the history in the details pane, and *Clone Repository…*. |
+| ⬆️ | **Navigation** | Up and Refresh buttons right next to Files' Back and Forward buttons. |
 | ⚙️ | **Settings** | One settings window for all features, opened from Files' main menu. |
 
 Every feature can be switched off on its own. Files keeps working normally if a Nautilus update changes
@@ -71,7 +73,9 @@ album covers, and cycles through the next ones while the pointer hovers over it.
   the same canvas and place the overlay where it belongs inside its SVG.
 - 🌫️ **Depth effect** (Blur, Transparency or Darken) makes the cards further back look further away; the
   front card always stays upright.
-- 📐 **Layout:** side padding (8 px by default at the 64 × 64 size, scaled with the zoom), position (Top,
+- 📐 **Layout:** side padding (8 px by default at the 64 × 64 size, scaled with the zoom), **spacing** (how far each
+  picture shows above the one in front, 2 px by default; only the vertical gap, the pictures behind keep their width;
+  the stack keeps its height, so all pictures get equally shorter), position (Top,
   Centre, Bottom, plus a fine-tuning slider), a bottom fade, and rounded top/bottom corners that clip all
   pictures.
 - 🖌️ **Both layouts:** border (on/off, colour and width), drop shadow (it follows the picture's shape, so
@@ -118,7 +122,10 @@ Left: the default accent-colour bars. Right: a gradient, with the eject buttons 
   menu and drag-and-drop work as before.
 - 🌐 **Network shares** (mounted ones, e.g. SMB/SFTP, or NFS/CIFS mounted by the system) are listed below a
   separator under the local drives, with a bar when the server reports its size. Clicking opens the share,
-  the eject button unmounts it.
+  the eject button unmounts it, and right-clicking it (or the Menu key) opens Files' own drive menu for it (Open,
+  Open in New Tab / Window, Unmount, Properties). Shares mounted by the system are recognised from the mount table
+  straight away, so every window (a new one too) lists them in this section from the start.
+- 🖱️ **Right-click menus** of the OS drive and of network shares open where you clicked, like Files' own rows.
 - 🎨 **Colours:** bars use the accent colour by default, turning the warning colour from 90 % full and the
   error colour from 95 %. A custom colour or a two-colour gradient can be chosen instead (these replace the
   warning/error colours). Light, dark and high-contrast themes are followed.
@@ -134,9 +141,9 @@ Left: the default accent-colour bars. Right: a gradient, with the eject buttons 
 - **Nautilus updates may switch the feature off.** It relies on Nautilus' private sidebar widgets
   (verified on Nautilus 51.1). If they change, it logs one warning ("sidebar drives disabled: …") and the
   sidebar stays as stock Nautilus.
-- Only mounted network shares are listed (mount them via *Network*). Their right-click menu and dropping
-  files onto them are not available (Nautilus sorts shares above the local drives and its rows can't be
-  re-sorted, so these are the extension's own rows).
+- Only mounted network shares are listed (mount them via *Network*). Dropping files onto them is not available
+  (Nautilus sorts shares above the local drives and its rows can't be re-sorted, so these are the extension's own
+  rows; their menu is Files' own, opened for Files' hidden row of the share).
 
 </details>
 
@@ -231,8 +238,10 @@ file or folder and its properties. Drag its left edge to resize it.
   gaps stay even whatever the icons look like.
   **Nothing selected:** the folder you are in.
 - ↔️ **Right or bottom:** at the bottom it becomes a short summary strip like Windows 7 — thumbnail, name and
-  type, then a few key properties in columns; drag its top edge to change the height.
-- 🎨 **Look:** border on/off, margin (the pane then floats as a card), padding and corner radius; the preview
+  type, then a few key properties in columns; drag its top edge to change the height. While the folder view can
+  scroll further down, a soft shadow (like the one under Files' header bar) sits on the strip's top edge.
+- 🎨 **Look:** border on/off, margin (the pane then floats as a card), padding and corner radius, an optional
+  background colour of its own; the preview
   box's corner radius and margin; an optional line under Files' header bar while the pane is shown, meeting the
   pane's border (below the tab bar when several tabs are open; not under the sidebar's header).
 - 🪟 Shown or hidden in every window at once, and remembered (also its width). Hidden while the window is too
@@ -261,12 +270,16 @@ work exactly as in a terminal, and it never changes a repository unless you clic
 
 - 🌿 **Branch:** the branch checked out; its menu lists your branches and the remote ones (with search) —
   click one to switch to it — and **Create** makes a new branch here and switches to it.
-- ↕️ **↑ / ↓:** commits to push and to pull. Its menu shows the last commit and **Push** (the first push of a new
-  branch publishes it), **Pull** (fast-forward only: never a merge or a conflict you didn't ask for) and **Sync**
-  (checks the remote for new commits and changes nothing else).
+- ↕️ **↑ / ↓:** commits to push and to pull (hover them for the last commit and the branch the remote tracks), with
+  **Push** (the first push of a new branch publishes it), **Pull** (fast-forward only: never a merge or a conflict
+  you didn't ask for) and **Sync** (checks the remote for new commits and changes nothing else) right beside them.
 - ⏳ **Progress:** what is running, and git's own message (with a copy button) when something fails.
-- 🧑‍💻 **Open in IDE:** VS Code, Zed, GNOME Builder, JetBrains IDEs… — the first one installed, or the one you
-  choose in Settings.
+- 🧑‍💻 **Open in IDE:** a split button — VS Code, Zed, GNOME Builder, JetBrains IDEs… (the first one installed, or
+  the one you choose in Settings); its arrow lists the other installed editors.
+- 🎨 **Look:** the line above the bar can be switched off and the bar given its own colour; while the folder view
+  can scroll further down, a soft shadow (like the one under Files' header bar) sits on the bar's top edge.
+- 🏷️ **Status emblems:** modified, added, deleted, renamed, untracked and conflicted files — and folders with
+  changes inside — get a small emblem on their icon, in the grid and the list view (ignored ones get none).
 - 🔄 **Up to date by itself:** commits, checkouts and fetches — in Files or in a terminal — show at once. A
   spinner shows while a repository loads; if git fails, its message and a refresh button do.
 - 📊 **Git columns** for the list view (switch them on with Files' own *Visible Columns*, right-click the column
@@ -275,7 +288,8 @@ work exactly as in a terminal, and it never changes a repository unless you clic
 - 📋 **Git in the details pane:** a *Details | Git* switch at the top of the pane (at the right) shows the branch
   (with how far it is ahead of / behind the main branch) instead of the preview, and the history: every commit with
   its author, time and branch / tag labels, with a graph of the branch lines (or as a plain list). Hover a commit
-  for the whole message, its hashes and how much it changed.
+  for the whole message, its hashes and how much it changed (a native tooltip, so the rows under it keep highlighting;
+  it can be switched off).
 - 📥 **Clone Repository…** in the background menu of a folder: paste the link (or have it taken from the
   clipboard), check the folder name, press **Clone**. The progress shows in the status bar; the new folder is
   selected when it is done.
@@ -293,6 +307,13 @@ work exactly as in a terminal, and it never changes a repository unless you clic
 - Merge conflicts, staging and committing are left to your terminal or IDE.
 
 </details>
+
+### ⬆️ Navigation
+
+**Up** (the parent folder, like <kbd>Alt</kbd> <kbd>↑</kbd>) and **Refresh** (like <kbd>F5</kbd>) buttons right
+of Files' Back and Forward buttons, in the header bar and in the bottom bar of a narrow window. They use Files' own
+actions, so Up is greyed out in `/`. If a Nautilus update moves the Back / Forward buttons, nothing is added and one
+warning is logged.
 
 ### ⚙️ Settings
 
@@ -313,12 +334,13 @@ press **Apply**; closing the window without Apply discards them.
 
 | Page | Options |
 |---|---|
-| 🖼️ **Folder Preview** | On/off, layout (Grid or Stacked), cycle on hover, pictures per step and depth effect (Stacked), border, border colour, border width, shadow, keep aspect ratio, corner radius, random rotation. Stacked only: position, vertical offset, bottom fade, top/bottom corner radius, custom folder icon and front overlay (SVG files; the path is stored, so keep the files where they are). |
+| 🖼️ **Folder Preview** | On/off, layout (Grid or Stacked), cycle on hover, pictures per step and depth effect (Stacked), border, border colour, border width, shadow, keep aspect ratio, corner radius, random rotation. Stacked only: position, side padding, spacing, vertical offset, bottom fade, top/bottom corner radius, custom folder icon and front overlay (SVG files; the path is stored, so keep the files where they are). |
 | 💽 **Sidebar Drives** | On/off, bar colour (accent colour, a custom colour, or a two-colour gradient), show/hide the usage bars and the size labels, slide the eject button in only on hover. |
 | 👁️ **Folder Views** | Remember the view per folder (on/off) and **Reset All Folder Views…**, which asks for confirmation and acts right away (it isn't a setting waiting for Apply). |
 | 🎨 **Folder Icons** | Icons by folder name (on/off) and the rules: folder name, icon (Choose Icon…), remove; add a rule with **+**. Invalid or duplicate names are marked red. |
-| 🌿 **Git** | On/off; status bar; history graph or plain list in the details pane; the IDE for *Open in IDE*. |
-| 📋 **Details Pane** | On/off; position (right or bottom); border, margin, padding, corner radius; line under the header bar; icon size (16–256 px in steps of 16), pictures in a box of their shape or a fixed box, icon next to the name, centred name, preview box corner radius and margin; blurred background behind pictures; several selected: copy the folder previews' look, spacing, depth effect, shadow, rotation, bottom fade, card behind icons; for pictures, videos and PDFs: squares the size of icons, keep aspect ratio, border (colour, width), corner radius. Whether the pane is shown, its width and its height are kept as you leave them. |
+| 🌿 **Git** | On/off; status bar; history graph or plain list in the details pane; commit details on hover; status emblems; the status bar's border and colour; the IDE for *Open in IDE*. |
+| ⬆️ **Navigation** | Up and Refresh buttons (on/off). |
+| 📋 **Details Pane** | On/off; position (right or bottom); border, margin, padding, corner radius; line under the header bar; custom background colour; icon size (16–256 px in steps of 16), pictures in a box of their shape or a fixed box, icon next to the name, centred name, preview box corner radius and margin; blurred background behind pictures; several selected: copy the folder previews' look, spacing, depth effect, shadow, rotation, bottom fade, card behind icons; for pictures, videos and PDFs: squares the size of icons, keep aspect ratio, border (colour, width), corner radius. Whether the pane is shown, its width and its height are kept as you leave them. |
 
 The settings are stored with GSettings (schema `io.github.zyrotec.NautilusUtils`; inspect them with
 `gsettings list-recursively io.github.zyrotec.NautilusUtils`). If the schema isn't installed, the features

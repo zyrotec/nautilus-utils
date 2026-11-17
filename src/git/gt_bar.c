@@ -25,15 +25,16 @@ struct _GtBar
   GtkWidget    *box;           /* our only child */
   GtkWidget    *branch_button; /* GtkMenuButton */
   GtkWidget    *branch_label;
-  GtkWidget    *counts_button; /* GtkMenuButton */
+  GtkWidget    *counts_box;    /* the counts and Push / Pull / Sync, side by side in the bar */
   GtkWidget    *counts_label;
   GtkWidget    *progress_button;
   GtkWidget    *progress_spinner;
   GtkWidget    *progress_icon;
   GtkWidget    *progress_label;
-  GtkWidget    *ide_button;
+  GtkWidget    *ide_button;    /* AdwSplitButton: opens @ide; its menu has the other installed IDEs */
   GtkWidget    *ide_label;
   GtkWidget    *ide_image;
+  GPtrArray    *other_ides;    /* GAppInfo* (owned) in the split button's menu */
 
   /* Branch popover */
   GtkWidget    *branch_search;
@@ -43,11 +44,7 @@ struct _GtBar
   GtkWidget    *create_button;
   GCancellable *branch_cancel;
 
-  /* Counts popover */
-  GtkWidget    *commit_hash;
-  GtkWidget    *commit_subject;
-  GtkWidget    *commit_meta;
-  GtkWidget    *upstream_label;
+  /* Counts: Push / Pull / Sync */
   GtkWidget    *push_button;
   GtkWidget    *pull_button;
   GtkWidget    *sync_button;
@@ -67,6 +64,8 @@ static GtkCssProvider *css;
  * inside, rows lined up with the search field (owner, 2026-11-15). */
 static const char style_sheet[] =
   "gt-bar { border-top: 1px solid var(--border-color); padding: 6px; }\n"
+  ".gt-counts > button { min-width: 28px; min-height: 28px; padding: 2px; }\n"
+  ".gt-counts > label { margin: 0 4px 0 6px; }\n"
   "popover.gt-popover > contents { padding: 12px; }\n"
   ".gt-list { background: none; }\n"
   ".gt-list > row { padding: 6px 8px; border-radius: 6px; }\n"
@@ -84,9 +83,36 @@ ensure_style (void)
                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 }
 
+static GtkCssProvider *look_css; /* the options: border, background colour */
+
+void
+gt_bar_set_look (gboolean border, const GdkRGBA *background)
+{
+  GdkDisplay *display = gdk_display_get_default ();
+  if (display == NULL)
+    return;
+  if (look_css == NULL)
+    {
+      look_css = gtk_css_provider_new ();
+      /* Above the bar's own sheet (added with the same priority, earlier). */
+      gtk_style_context_add_provider_for_display (display, GTK_STYLE_PROVIDER (look_css),
+                                                  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+    }
+  g_autofree char *bg = background != NULL ? gdk_rgba_to_string (background) : NULL;
+  g_autofree char *sheet = g_strdup_printf ("gt-bar { %s %s%s%s }\n", border ? "" : "border-top: none;",
+                                            bg != NULL ? "background-color: " : "", bg != NULL ? bg : "",
+                                            bg != NULL ? ";" : "");
+  gtk_css_provider_load_from_string (look_css, sheet);
+}
+
 void
 gt_bar_unload_style (void)
 {
+  if (look_css != NULL)
+    {
+      gtk_style_context_remove_provider_for_display (gdk_display_get_default (), GTK_STYLE_PROVIDER (look_css));
+      g_clear_object (&look_css);
+    }
   if (css == NULL)
     return;
   gtk_style_context_remove_provider_for_display (gdk_display_get_default (), GTK_STYLE_PROVIDER (css));
@@ -143,27 +169,26 @@ update (GtBar *self)
   g_autofree char *counts_text = counts ? g_strdup_printf ("↑%d ↓%d", ahead, behind)
                                         : g_strdup (loaded && branch != NULL ? "Not published" : "");
   gtk_label_set_text (GTK_LABEL (self->counts_label), counts_text);
-  gtk_widget_set_visible (self->counts_button, loaded && error == NULL && *counts_text != '\0');
+  gtk_widget_set_visible (self->counts_box, loaded && error == NULL && *counts_text != '\0');
   /* Outside a repository (a clone running here): only the progress. */
   gtk_widget_set_visible (self->branch_button, info != NULL);
   gtk_widget_set_visible (self->ide_button, info != NULL && self->ide != NULL);
-  gtk_widget_set_tooltip_text (self->counts_button,
-                               counts ? "Commits to push (↑) and to pull (↓) — Push, Pull, Sync" : "Push this branch");
 
-  /* Counts popover content. */
+  /* The counts' tooltip: what they mean, the last commit and where the branch is tracked. */
   GtCommit *last = info != NULL ? gt_info_get_last (info) : NULL;
   g_autofree char *hash = last != NULL ? g_strndup (last->hash, 7) : NULL;
   g_autofree char *when = last != NULL ? relative_date (last->date) : NULL;
-  g_autofree char *meta = last != NULL ? g_strdup_printf ("%s · %s", last->author, when) : NULL;
-  gtk_label_set_text (GTK_LABEL (self->commit_hash), hash != NULL ? hash : "");
-  gtk_label_set_text (GTK_LABEL (self->commit_subject), last != NULL ? last->subject : "No commits yet");
-  gtk_label_set_text (GTK_LABEL (self->commit_meta), meta != NULL ? meta : "");
   const char *upstream = info != NULL ? gt_info_get_upstream (info) : NULL;
   g_autofree char *up = upstream != NULL && counts ? g_strdup_printf ("Tracking %s", upstream)
                         : upstream != NULL         ? g_strdup_printf ("%s no longer exists", upstream)
                         : self->remote != NULL      ? g_strdup_printf ("Not on %s yet: Push publishes it", self->remote)
                                                     : g_strdup ("This repository has no remote");
-  gtk_label_set_text (GTK_LABEL (self->upstream_label), up);
+  g_autofree char *tip = last != NULL
+    ? g_markup_printf_escaped ("%s\n\n<b>Last commit</b>\n%s\n<tt>%s</tt> · %s · %s\n\n%s",
+                               counts ? "Commits to push (↑) and to pull (↓)" : "This branch is not on the remote yet",
+                               last->subject, hash, last->author, when, up)
+    : g_markup_printf_escaped ("No commits yet\n\n%s", up);
+  gtk_widget_set_tooltip_markup (self->counts_label, tip);
   gboolean busy = gt_ops_count_running (root (self)) > 0;
   gtk_widget_set_sensitive (self->push_button, !busy && branch != NULL && (counts || self->remote != NULL));
   gtk_widget_set_sensitive (self->pull_button, !busy && counts);
@@ -247,7 +272,6 @@ start (GtBar *self, const char *title, const char *const *args, GtRunFlags flags
   if (root (self) == NULL)
     return;
   gt_ops_start (root (self), title, args, flags, NULL, success, on_op_done, bar_ref (self));
-  gtk_menu_button_popdown (GTK_MENU_BUTTON (self->counts_button));
   gtk_menu_button_popdown (GTK_MENU_BUTTON (self->branch_button));
 }
 
@@ -363,10 +387,26 @@ on_sync (GtkButton *b, gpointer d)
 }
 
 static void
-on_ide (GtkButton *b, gpointer d)
+on_ide (AdwSplitButton *b, gpointer d)
 {
   (void) b;
   gt_bar_open_ide (GT_BAR (d));
+}
+
+/* "gtbar.open-ide" (u): the split button's menu, one of the other installed IDEs. */
+static void
+on_open_other (GSimpleAction *action, GVariant *param, gpointer d)
+{
+  (void) action;
+  GtBar *self = GT_BAR (d);
+  guint i = g_variant_get_uint32 (param);
+  if (self->other_ides == NULL || i >= self->other_ides->len || root (self) == NULL)
+    return;
+  GAppInfo *app = g_ptr_array_index (self->other_ides, i);
+  g_autoptr (GFile) folder = g_file_new_for_path (root (self));
+  g_autoptr (GError) error = NULL;
+  if (!gt_ide_open (app, folder, &error))
+    g_warning ("could not open %s in %s: %s", root (self), g_app_info_get_name (app), error->message);
 }
 
 /* ---- branch popover ---- */
@@ -767,71 +807,13 @@ build_branch_popover (GtBar *self)
 }
 
 static GtkWidget *
-caption (const char *text)
-{
-  GtkWidget *l = gtk_label_new (text);
-  gtk_label_set_xalign (GTK_LABEL (l), 0);
-  gtk_label_set_wrap (GTK_LABEL (l), TRUE);
-  gtk_label_set_max_width_chars (GTK_LABEL (l), 40);
-  return l;
-}
-
-static void
-on_counts_popover (GtkPopover *popover, gpointer data)
-{
-  (void) popover;
-  load_remotes (GT_BAR (data));
-}
-
-static GtkWidget *
 soft_icon_button (const char *icon, const char *name)
 {
   GtkWidget *b = gtk_button_new_from_icon_name (icon);
+  gtk_widget_add_css_class (b, "flat");
+  gtk_widget_set_valign (b, GTK_ALIGN_CENTER);
   gtk_accessible_update_property (GTK_ACCESSIBLE (b), GTK_ACCESSIBLE_PROPERTY_LABEL, name, -1);
   return b;
-}
-
-static void
-build_counts_popover (GtBar *self)
-{
-  GtkWidget *pop = bar_popover ();
-  GtkWidget *box = popover_box ();
-  gtk_widget_set_size_request (box, 300, -1);
-  GtkWidget *head = gtk_label_new ("Last Commit");
-  gtk_widget_add_css_class (head, "heading");
-  gtk_label_set_xalign (GTK_LABEL (head), 0);
-  gtk_box_append (GTK_BOX (box), head);
-  self->commit_subject = caption ("");
-  gtk_label_set_selectable (GTK_LABEL (self->commit_subject), TRUE);
-  self->commit_hash = caption ("");
-  gtk_widget_add_css_class (self->commit_hash, "monospace");
-  gtk_widget_add_css_class (self->commit_hash, "dim-label");
-  gtk_label_set_selectable (GTK_LABEL (self->commit_hash), TRUE);
-  self->commit_meta = caption ("");
-  gtk_widget_add_css_class (self->commit_meta, "dim-label");
-  gtk_box_append (GTK_BOX (box), self->commit_subject);
-  gtk_box_append (GTK_BOX (box), self->commit_hash);
-  gtk_box_append (GTK_BOX (box), self->commit_meta);
-  gtk_box_append (GTK_BOX (box), gtk_separator_new (GTK_ORIENTATION_HORIZONTAL));
-  self->upstream_label = caption ("");
-  gtk_widget_add_css_class (self->upstream_label, "dim-label");
-  gtk_box_append (GTK_BOX (box), self->upstream_label);
-  GtkWidget *buttons = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
-  gtk_box_set_homogeneous (GTK_BOX (buttons), TRUE);
-  /* Soft icon buttons (owner, 2026-11-15): Adwaita's default, tinted button style; the words are in the tooltips. */
-  self->push_button = soft_icon_button ("go-up-symbolic", "Push");
-  self->pull_button = soft_icon_button ("go-down-symbolic", "Pull");
-  self->sync_button = soft_icon_button ("view-refresh-symbolic", "Sync");
-  g_signal_connect (self->push_button, "clicked", G_CALLBACK (on_push), self);
-  g_signal_connect (self->pull_button, "clicked", G_CALLBACK (on_pull), self);
-  g_signal_connect (self->sync_button, "clicked", G_CALLBACK (on_sync), self);
-  gtk_box_append (GTK_BOX (buttons), self->push_button);
-  gtk_box_append (GTK_BOX (buttons), self->pull_button);
-  gtk_box_append (GTK_BOX (buttons), self->sync_button);
-  gtk_box_append (GTK_BOX (box), buttons);
-  gtk_popover_set_child (GTK_POPOVER (pop), box);
-  g_signal_connect (pop, "show", G_CALLBACK (on_counts_popover), self);
-  gtk_menu_button_set_popover (GTK_MENU_BUTTON (self->counts_button), pop);
 }
 
 static void
@@ -893,11 +875,23 @@ gt_bar_init (GtBar *self)
   g_signal_connect_swapped (self->refresh_button, "clicked", G_CALLBACK (gt_bar_refresh), self);
   gtk_box_append (GTK_BOX (self->box), self->refresh_button);
 
+  /* The counts and their buttons right in the bar (owner, 2026-11-17: no popover). */
+  self->counts_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
+  gtk_widget_add_css_class (self->counts_box, "gt-counts");
   self->counts_label = gtk_label_new (NULL);
-  self->counts_button = menu_button (self->counts_label);
-  gtk_accessible_update_property (GTK_ACCESSIBLE (self->counts_button), GTK_ACCESSIBLE_PROPERTY_LABEL,
+  gtk_accessible_update_property (GTK_ACCESSIBLE (self->counts_label), GTK_ACCESSIBLE_PROPERTY_LABEL,
                                   "Commits to push and pull", -1);
-  gtk_box_append (GTK_BOX (self->box), self->counts_button);
+  gtk_box_append (GTK_BOX (self->counts_box), self->counts_label);
+  self->push_button = soft_icon_button ("go-up-symbolic", "Push");
+  self->pull_button = soft_icon_button ("go-down-symbolic", "Pull");
+  self->sync_button = soft_icon_button ("view-refresh-symbolic", "Sync");
+  g_signal_connect (self->push_button, "clicked", G_CALLBACK (on_push), self);
+  g_signal_connect (self->pull_button, "clicked", G_CALLBACK (on_pull), self);
+  g_signal_connect (self->sync_button, "clicked", G_CALLBACK (on_sync), self);
+  gtk_box_append (GTK_BOX (self->counts_box), self->push_button);
+  gtk_box_append (GTK_BOX (self->counts_box), self->pull_button);
+  gtk_box_append (GTK_BOX (self->counts_box), self->sync_button);
+  gtk_box_append (GTK_BOX (self->box), self->counts_box);
 
   GtkWidget *spacer = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
   gtk_widget_set_hexpand (spacer, TRUE);
@@ -925,10 +919,18 @@ gt_bar_init (GtBar *self)
   gtk_label_set_width_chars (GTK_LABEL (self->ide_label), 4);
   gtk_box_append (GTK_BOX (ib), self->ide_image);
   gtk_box_append (GTK_BOX (ib), self->ide_label);
-  self->ide_button = gtk_button_new ();
-  gtk_button_set_child (GTK_BUTTON (self->ide_button), ib);
+  self->ide_button = adw_split_button_new ();
+  adw_split_button_set_child (ADW_SPLIT_BUTTON (self->ide_button), ib);
+  adw_split_button_set_dropdown_tooltip (ADW_SPLIT_BUTTON (self->ide_button), "Open in another editor");
   gtk_widget_add_css_class (self->ide_button, "flat");
   g_signal_connect (self->ide_button, "clicked", G_CALLBACK (on_ide), self);
+  GSimpleActionGroup *actions = g_simple_action_group_new ();
+  GSimpleAction *open_other = g_simple_action_new ("open-ide", G_VARIANT_TYPE_UINT32);
+  g_signal_connect (open_other, "activate", G_CALLBACK (on_open_other), self);
+  g_action_map_add_action (G_ACTION_MAP (actions), G_ACTION (open_other));
+  g_object_unref (open_other);
+  gtk_widget_insert_action_group (GTK_WIDGET (self), "gtbar", G_ACTION_GROUP (actions));
+  g_object_unref (actions);
   gtk_widget_set_visible (self->ide_button, FALSE);
   gtk_box_append (GTK_BOX (self->box), self->ide_button);
 
@@ -944,7 +946,6 @@ gt_bar_init (GtBar *self)
     }
 
   build_branch_popover (self);
-  build_counts_popover (self);
   build_progress_popover (self);
   update (self);
 }
@@ -961,6 +962,7 @@ gt_bar_dispose (GObject *object)
   g_clear_object (&self->branch_cancel);
   g_clear_object (&self->remote_cancel);
   g_clear_object (&self->ide);
+  g_clear_pointer (&self->other_ides, g_ptr_array_unref);
   g_clear_pointer (&self->scope, g_free);
   g_clear_pointer (&self->remote, g_free);
   g_clear_pointer (&self->box, gtk_widget_unparent);
@@ -1045,6 +1047,34 @@ gt_bar_set_ide (GtBar *self, GAppInfo *ide)
   gtk_image_set_from_gicon (GTK_IMAGE (self->ide_image), icon);
   gtk_widget_set_visible (self->ide_image, icon != NULL);
   gtk_widget_set_tooltip_text (self->ide_button, "Open the repository in your IDE");
+
+  /* The menu: every other installed IDE / editor (the one chosen in Settings is the button itself). */
+  g_clear_pointer (&self->other_ides, g_ptr_array_unref);
+  self->other_ides = g_ptr_array_new_with_free_func (g_object_unref);
+  g_autoptr (GMenu) menu = g_menu_new ();
+  GList *all = gt_ide_list ();
+  for (GList *l = all; l != NULL; l = l->next)
+    {
+      GAppInfo *app = l->data;
+      if (g_app_info_equal (app, ide))
+        continue;
+      g_autofree char *item_label = g_strdup_printf ("Open in %s", g_app_info_get_name (app));
+      g_autoptr (GMenuItem) item = g_menu_item_new (item_label, NULL);
+      g_menu_item_set_action_and_target_value (item, "gtbar.open-ide", g_variant_new_uint32 (self->other_ides->len));
+      if (g_app_info_get_icon (app) != NULL)
+        g_menu_item_set_icon (item, g_app_info_get_icon (app));
+      g_menu_append_item (menu, item);
+      g_ptr_array_add (self->other_ides, g_object_ref (app));
+    }
+  g_list_free_full (all, g_object_unref);
+  if (self->other_ides->len > 0)
+    adw_split_button_set_menu_model (ADW_SPLIT_BUTTON (self->ide_button), G_MENU_MODEL (menu));
+  else
+    {
+      /* Nothing else installed: the arrow says so instead of opening an empty menu. */
+      g_menu_append (menu, "No other editors installed", "gtbar.none");
+      adw_split_button_set_menu_model (ADW_SPLIT_BUTTON (self->ide_button), G_MENU_MODEL (menu));
+    }
 }
 
 char *
@@ -1055,7 +1085,7 @@ gt_bar_describe (GtBar *self)
                           "running=%u ide=\"%s\" remote=%s",
                           gtk_widget_get_visible (self->loading), gtk_widget_get_visible (self->refresh_button),
                           root (self) != NULL ? root (self) : "-", gtk_label_get_text (GTK_LABEL (self->branch_label)),
-                          gtk_label_get_text (GTK_LABEL (self->counts_label)), gtk_widget_get_visible (self->counts_button),
+                          gtk_label_get_text (GTK_LABEL (self->counts_label)), gtk_widget_get_visible (self->counts_box),
                           gtk_label_get_text (GTK_LABEL (self->progress_label)),
                           gtk_widget_get_visible (self->progress_button), gt_ops_count_running (root (self)),
                           self->ide != NULL ? g_app_info_get_name (self->ide) : "",

@@ -85,6 +85,8 @@ typedef struct
   int             section_mounts;    /* NAUTILUS_SIDEBAR_SECTION_MOUNTS */
   int             place_internal;    /* NAUTILUS_SIDEBAR_ROW_INTERNAL_MOUNT */
   GHashTable     *sidebars;          /* Set of SidebarHook* (borrowed: owned by the sidebars' qdata). */
+  GHashTable     *remote_uris;       /* Root URIs (owned) any window learnt are network shares, so every other window
+                                      * (a new one too) shows them in the network section from its first apply. */
   GtkCssProvider *css;               /* Owned. */
   GtkCssProvider *colour_css;        /* Owned: bar colours from the settings (PLAN.md §9.1.5), above @css. */
   GPtrArray      *css_displays;      /* Borrowed GdkDisplay* the provider was added to (displays outlive us). */
@@ -633,13 +635,35 @@ open_row_menu (GtkWidget *sidebar)
   return NULL;
 }
 
+/* Points Nautilus' open row menu in @sidebar at the pointer, as Nautilus does for its own rows on a right-click
+ * (show_row_popover: a 0 × 0 rectangle at the click, in sidebar coordinates). (@x, @y) are in @row's
+ * coordinates. Without a menu or a point (keyboard), the menu stays pointing at the row it was opened for. */
+static void
+point_row_menu_at (GtkWidget *sidebar,
+                   GtkWidget *row,
+                   double     x,
+                   double     y)
+{
+  GtkWidget *menu = open_row_menu (sidebar);
+  GtkWidget *parent = menu != NULL ? gtk_widget_get_parent (menu) : NULL;
+  graphene_point_t p;
+  if (parent == NULL || !gtk_widget_compute_point (row, parent, &GRAPHENE_POINT_INIT ((float) x, (float) y), &p))
+    return;
+  gtk_popover_set_pointing_to (GTK_POPOVER (menu), &(GdkRectangle) { (int) p.x, (int) p.y, 0, 0 });
+  gtk_popover_present (GTK_POPOVER (menu));
+}
+
 /* Opens Nautilus' own drive menu for our OS row: Open / Open in New Tab / Open in New Window / Properties
  * (Nautilus builds it from the row's properties; our row has no mount, so no Unmount/Format). Done by
  * emitting the sidebar long-press gesture's "pressed" at our row; Nautilus' handler looks the row up with
- * gtk_list_box_get_row_at_y on the places list. Returns FALSE (row keeps working, no menu) if that isn't
- * possible. */
+ * gtk_list_box_get_row_at_y on the places list. With @at_pointer the menu then points at (@x, @y) (row
+ * coordinates), where the right-click was, like on Nautilus' own rows. Returns FALSE (row keeps working, no
+ * menu) if that isn't possible. */
 static gboolean
-show_os_menu (GtkWidget *os_row)
+show_os_menu (GtkWidget *os_row,
+              gboolean   at_pointer,
+              double     x,
+              double     y)
 {
   GtkWidget *sidebar = sidebar_of (os_row);
   GtkWidget *list = gtk_widget_get_parent (os_row);
@@ -656,6 +680,8 @@ show_os_menu (GtkWidget *os_row)
       return FALSE;
     }
   g_signal_emit_by_name (long_press, "pressed", (double) p.x, (double) p.y);
+  if (at_pointer)
+    point_row_menu_at (sidebar, os_row, x, y);
   return TRUE;
 }
 
@@ -685,7 +711,7 @@ on_os_released (GtkGestureClick *gesture,
   if (button == GDK_BUTTON_PRIMARY)
     activate_os_row (row);
   else if (button == GDK_BUTTON_SECONDARY)
-    show_os_menu (row);
+    show_os_menu (row, TRUE, x, y);
 }
 
 static gboolean
@@ -700,7 +726,7 @@ on_os_key (GtkEventControllerKey *controller,
   /* Menu key / Shift+F10: the drive menu, as on Nautilus' own rows. */
   if ((keyval == GDK_KEY_Menu && (state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK)) == 0) ||
       (keyval == GDK_KEY_F10 && (state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK)) == GDK_SHIFT_MASK))
-    return show_os_menu (row);
+    return show_os_menu (row, FALSE, 0, 0);
   if ((state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK)) != 0)
     return FALSE;
   if (keyval != GDK_KEY_Return && keyval != GDK_KEY_KP_Enter && keyval != GDK_KEY_ISO_Enter &&
@@ -968,15 +994,28 @@ debug_fake_network (GtkWidget *row)
 #endif
 }
 
-/* A Nautilus mount row is a network share if its location isn't local (smb://, sftp://, …) or its query
- * reported filesystem::remote (NFS/CIFS mounted by the kernel). */
+/* A Nautilus mount row is a network share if its location isn't local (smb://, sftp://, …), the mount table has a
+ * network filesystem there (NFS/CIFS mounted by the system: known at once, so a new window never shows the share
+ * among the local drives, where Nautilus sorts it above the OS drive), or a query reported filesystem::remote. */
 static gboolean
 is_network_row (SidebarHook *hook,
                 GtkWidget   *row,
                 GFile       *root)
 {
   g_autofree char *uri = g_file_get_uri (root);
-  gboolean remote = g_hash_table_contains (hook->remote_uris, uri);
+  gboolean remote = g_hash_table_contains (hook->remote_uris, uri) ||
+                    (sh->remote_uris != NULL && g_hash_table_contains (sh->remote_uris, uri));
+  if (!remote && g_file_is_native (root))
+    {
+      g_autofree char *path = g_file_get_path (root);
+      remote = sd_mount_path_is_network (path);
+    }
+  if (remote)
+    {
+      g_hash_table_add (hook->remote_uris, g_strdup (uri));
+      if (sh->remote_uris != NULL)
+        g_hash_table_add (sh->remote_uris, g_strdup (uri));
+    }
   return sd_classify (g_file_is_native (root), remote) == SD_DRIVE_NETWORK || debug_fake_network (row);
 }
 
@@ -992,6 +1031,8 @@ note_remote (GtkWidget *row,
   if (hook == NULL)
     return;
   g_autofree char *uri = g_file_get_uri (root);
+  if (sh->remote_uris != NULL)
+    g_hash_table_add (sh->remote_uris, g_strdup (uri));
   if (g_hash_table_add (hook->remote_uris, g_steal_pointer (&uri)))
     schedule_apply (hook);
 }
@@ -1062,6 +1103,129 @@ on_net_activated (GtkListBox    *list,
   const char *uri = g_object_get_data (G_OBJECT (row), NET_URI_KEY);
   if (uri != NULL && !gtk_widget_activate_action (GTK_WIDGET (row), "slot.open-location", "s", uri))
     g_warning ("cannot open %s: Nautilus' slot.open-location action is missing", uri);
+}
+
+/* Nautilus' key controller on its places list (its handler opens the row menu for the list's selected row on
+ * Menu / Shift+F10). Borrowed (owned by the list); NULL if not found. */
+static GtkEventController *
+find_list_keys (GtkWidget *list)
+{
+  g_autoptr (GListModel) controllers = gtk_widget_observe_controllers (list);
+  for (guint i = 0; i < g_list_model_get_n_items (controllers); i++)
+    {
+      g_autoptr (GObject) c = g_list_model_get_item (controllers, i);
+      if (GTK_IS_EVENT_CONTROLLER_KEY (c))
+        return GTK_EVENT_CONTROLLER (c); /* stays alive: the list holds it */
+    }
+  return NULL;
+}
+
+/* "closed" on Nautilus' row menu: our network row no longer has an open menu. @row is the connect_object target. */
+static void
+on_net_menu_closed (GtkPopover *menu,
+                    gpointer    row)
+{
+  (void) menu;
+  gtk_widget_remove_css_class (GTK_WIDGET (row), "has-open-popup");
+}
+
+/* Opens Nautilus' own drive menu (Open, Open in New Tab / Window, Unmount, Properties…) for the share of our network
+ * row @row: Nautilus' (hidden) row for it is selected for a moment and the places list gets the Menu key, which
+ * opens the menu for the selected row (on_key_pressed → popup_menu_cb) with that row as the menu's context row, so
+ * every item acts on the share through Nautilus' own code. The previous selection is put back at once. With
+ * @at_pointer the menu points at (@x, @y) (row coordinates), like on Nautilus' own rows. FALSE if not possible. */
+static gboolean
+show_net_menu (GtkWidget *row,
+               gboolean   at_pointer,
+               double     x,
+               double     y)
+{
+  GtkWidget *sidebar = sidebar_of (row);
+  const char *uri = g_object_get_data (G_OBJECT (row), NET_URI_KEY);
+  GtkWidget *nrow = sidebar != NULL && uri != NULL ? find_nautilus_mount_row (sidebar, uri) : NULL;
+  GtkWidget *list = nrow != NULL ? gtk_widget_get_parent (nrow) : NULL;
+  GtkEventController *keys = GTK_IS_LIST_BOX (list) ? find_list_keys (list) : NULL;
+  if (keys == NULL)
+    {
+      static gboolean logged;
+      if (!logged)
+        g_debug ("network row menu unavailable (no Nautilus row or key controller for %s)", uri != NULL ? uri : "?");
+      logged = TRUE;
+      return FALSE;
+    }
+  GtkListBoxRow *prev = gtk_list_box_get_selected_row (GTK_LIST_BOX (list));
+  gtk_list_box_select_row (GTK_LIST_BOX (list), GTK_LIST_BOX_ROW (nrow));
+  gboolean handled = FALSE;
+  if (gtk_list_box_get_selected_row (GTK_LIST_BOX (list)) == GTK_LIST_BOX_ROW (nrow))
+    g_signal_emit_by_name (keys, "key-pressed", (guint) GDK_KEY_Menu, (guint) 0, (GdkModifierType) 0, &handled);
+  if (prev != NULL)
+    gtk_list_box_select_row (GTK_LIST_BOX (list), prev);
+  else
+    gtk_list_box_unselect_all (GTK_LIST_BOX (list));
+  GtkWidget *menu = handled ? open_row_menu (sidebar) : NULL;
+  if (menu == NULL)
+    return FALSE;
+  if (at_pointer)
+    point_row_menu_at (sidebar, row, x, y);
+  else
+    {
+      /* Keyboard: like popup_menu_cb on a visible row, the menu points at the whole row (ours: Nautilus' is hidden). */
+      graphene_point_t p;
+      GtkWidget *parent = gtk_widget_get_parent (menu);
+      if (parent != NULL && gtk_widget_compute_point (row, parent, &GRAPHENE_POINT_INIT (0.0f, 0.0f), &p))
+        {
+          gtk_popover_set_pointing_to (GTK_POPOVER (menu), &(GdkRectangle) { (int) p.x, (int) p.y,
+                                                                             gtk_widget_get_width (row),
+                                                                             gtk_widget_get_height (row) });
+          gtk_popover_present (GTK_POPOVER (menu));
+        }
+    }
+  /* Highlighted while its menu is open, as Nautilus does for its rows (setup_popover_shadowing). */
+  gtk_widget_add_css_class (row, "has-open-popup");
+  g_signal_connect_object (menu, "closed", G_CALLBACK (on_net_menu_closed), row, 0);
+  return TRUE;
+}
+
+/* Secondary presses on a network row are ours (the menu); primary ones go on to the list (activation). */
+static void
+on_net_pressed (GtkGestureClick *gesture,
+                int              n_press,
+                double           x,
+                double           y,
+                gpointer         data)
+{
+  (void) n_press; (void) x; (void) y; (void) data;
+  if (gtk_gesture_single_get_current_button (GTK_GESTURE_SINGLE (gesture)) == GDK_BUTTON_SECONDARY)
+    gtk_gesture_set_state (GTK_GESTURE (gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+  else
+    gtk_gesture_set_state (GTK_GESTURE (gesture), GTK_EVENT_SEQUENCE_DENIED);
+}
+
+static void
+on_net_released (GtkGestureClick *gesture,
+                 int              n_press,
+                 double           x,
+                 double           y,
+                 gpointer         data)
+{
+  (void) n_press; (void) data;
+  if (gtk_gesture_single_get_current_button (GTK_GESTURE_SINGLE (gesture)) == GDK_BUTTON_SECONDARY)
+    show_net_menu (gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (gesture)), TRUE, x, y);
+}
+
+/* Menu key / Shift+F10 on a network row: its drive menu, as on Nautilus' own rows. */
+static gboolean
+on_net_key (GtkEventControllerKey *controller,
+            guint                  keyval,
+            guint                  keycode,
+            GdkModifierType        state,
+            gpointer               data)
+{
+  (void) keycode; (void) data;
+  GdkModifierType mods = state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK);
+  if ((keyval == GDK_KEY_Menu && mods == 0) || (keyval == GDK_KEY_F10 && mods == GDK_SHIFT_MASK))
+    return show_net_menu (gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (controller)), FALSE, 0, 0);
+  return FALSE;
 }
 
 static int
@@ -1189,6 +1353,14 @@ create_net_row (SidebarHook *hook,
 
   GtkWidget *row = gtk_list_box_row_new ();
   g_object_set_data_full (G_OBJECT (row), NET_URI_KEY, g_strdup (uri), g_free);
+  GtkGesture *click = gtk_gesture_click_new ();
+  gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (click), 0);
+  g_signal_connect (click, "pressed", G_CALLBACK (on_net_pressed), NULL);
+  g_signal_connect (click, "released", G_CALLBACK (on_net_released), NULL);
+  gtk_widget_add_controller (row, GTK_EVENT_CONTROLLER (click)); /* row owns it */
+  GtkEventController *keys = gtk_event_controller_key_new ();
+  g_signal_connect (keys, "key-pressed", G_CALLBACK (on_net_key), NULL);
+  gtk_widget_add_controller (row, keys);
   g_object_set_data_full (G_OBJECT (row), "sd-net-title", g_strdup (title != NULL ? title : uri), g_free);
   gtk_widget_set_tooltip_text (row, tooltip != NULL ? tooltip : uri);
   gtk_accessible_update_property (GTK_ACCESSIBLE (row), GTK_ACCESSIBLE_PROPERTY_LABEL, title != NULL ? title : uri, -1);
@@ -1296,6 +1468,8 @@ reconcile_network (SidebarHook *hook,
       g_hash_table_remove (hook->net_rows, uri);
       gtk_list_box_remove (GTK_LIST_BOX (hook->net_list), row);
       g_hash_table_remove (hook->remote_uris, uri);
+      if (sh->remote_uris != NULL)
+        g_hash_table_remove (sh->remote_uris, uri); /* unmounted: whatever is mounted there next is asked anew */
     }
 
   gboolean any = g_hash_table_size (hook->net_rows) > 0;
@@ -1773,6 +1947,8 @@ debug_png (const char *path)
     }
 }
 
+static const char *debug_menu_for = "os"; /* which row the last debug-opened menu belongs to */
+
 static gboolean
 on_debug_signal (gpointer data)
 {
@@ -1923,7 +2099,9 @@ on_debug_signal (gpointer data)
             continue;
           GtkWidget *menu = open_row_menu (hook->sidebar);
           if (g_str_equal (cmd, "sd-os-menu"))
-            g_message ("sd: OS menu %s", show_os_menu (hook->os_row) ? "requested" : "UNAVAILABLE");
+            debug_menu_for = "os";
+          if (g_str_equal (cmd, "sd-os-menu"))
+            g_message ("sd: OS menu %s", show_os_menu (hook->os_row, TRUE, 24, 8) ? "requested" : "UNAVAILABLE");
           else if (g_str_equal (cmd, "sd-os-menu-dump"))
             {
               GMenuModel *model = menu != NULL ? gtk_popover_menu_get_menu_model (GTK_POPOVER_MENU (menu)) : NULL;
@@ -1941,8 +2119,11 @@ on_debug_signal (gpointer data)
                     }
                   g_string_append (items, "--|");
                 }
-              g_message ("sd os-menu: shown=%d has-open-popup=%d items=%s", menu != NULL,
-                         gtk_widget_has_css_class (hook->os_row, "has-open-popup"), items->str);
+              GdkRectangle at = { 0 };
+              gboolean pointing = menu != NULL && gtk_popover_get_pointing_to (GTK_POPOVER (menu), &at);
+              g_message ("sd os-menu: for=%s shown=%d has-open-popup=%d pointing=%d:%d,%d,%d,%d items=%s",
+                         debug_menu_for, menu != NULL, gtk_widget_has_css_class (hook->os_row, "has-open-popup"),
+                         pointing, at.x, at.y, at.width, at.height, items->str);
               g_string_free (items, TRUE);
             }
           else if (g_str_has_prefix (cmd, "sd-os-menu-activate ") && menu != NULL)
@@ -1953,6 +2134,21 @@ on_debug_signal (gpointer data)
                               : gtk_widget_activate_action (menu, parts[1], NULL);
               g_message ("sd os-menu: activate %s -> %d", cmd + 20, ok);
               gtk_popover_popdown (GTK_POPOVER (menu));
+            }
+          else if (g_str_equal (cmd, "sd-os-menu-net"))
+            {
+              /* The network list's first row: its drive menu as on a right-click 20 px in, 8 px down. */
+              GtkWidget *net = hook->net_list != NULL ? gtk_widget_get_first_child (hook->net_list) : NULL;
+              while (net != NULL && !GTK_IS_LIST_BOX_ROW (net))
+                net = gtk_widget_get_next_sibling (net);
+              graphene_point_t p;
+              debug_menu_for = "net";
+              gboolean ok = net != NULL && show_net_menu (net, TRUE, 20, 8);
+              if (ok && gtk_widget_compute_point (net, hook->sidebar, &GRAPHENE_POINT_INIT (20.0f, 8.0f), &p))
+                g_message ("sd: net menu requested, click at %d,%d in the sidebar, row has-open-popup=%d", (int) p.x,
+                           (int) p.y, gtk_widget_has_css_class (net, "has-open-popup"));
+              else
+                g_message ("sd: net menu UNAVAILABLE (row=%p)", (void *) net);
             }
           else if (g_str_equal (cmd, "sd-os-menu-close") && menu != NULL)
             gtk_popover_popdown (GTK_POPOVER (menu));
@@ -1971,6 +2167,7 @@ sd_sidebar_hook_init (void)
   g_return_if_fail (sh == NULL);
   sh = g_new0 (Hook, 1);
   sh->sidebars = g_hash_table_new (g_direct_hash, g_direct_equal);
+  sh->remote_uris = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
   sh->css_displays = g_ptr_array_new ();
   sh->os_name = sd_os_name ();
 
@@ -2100,6 +2297,7 @@ sd_sidebar_hook_shutdown (void)
   g_clear_object (&sh->colour_css);
   g_clear_pointer (&sh->css_displays, g_ptr_array_unref);
   g_clear_pointer (&sh->sidebars, g_hash_table_unref);
+  g_clear_pointer (&sh->remote_uris, g_hash_table_unref);
   g_clear_pointer (&sh->os_name, g_free);
   g_clear_pointer (&sh, g_free);
 }

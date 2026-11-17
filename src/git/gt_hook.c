@@ -253,6 +253,8 @@ place_bar (WinHook *hook)
     adw_toolbar_view_add_bottom_bar (ADW_TOOLBAR_VIEW (tv), w);
   else
     nu_content_add_bottom (column, w);
+  nu_content_track_below (column, w); /* the scroll shadow over the bar's top edge */
+  nu_content_refresh (column);
   g_object_unref (w);
 }
 
@@ -565,8 +567,9 @@ gt_hook_debug_command (const char *cmd)
     {
       g_autofree char *d = gt_bar_describe (bar);
       g_autofree char *sel = selected_name (hook);
-      g_autofree char *full = g_strdup_printf ("bar=%d selected=%s at=%s %s", gtk_widget_get_visible (GTK_WIDGET (bar)),
-                                               sel != NULL ? sel : "-",
+      g_autoptr (GtkWidget) column = g_weak_ref_get (&hook->column);
+      g_autofree char *full = g_strdup_printf ("bar=%d shadow=%d selected=%s at=%s %s", gtk_widget_get_visible (GTK_WIDGET (bar)),
+                                               nu_content_shadow_shown (column), sel != NULL ? sel : "-",
                                                gtk_widget_has_css_class (gtk_widget_get_parent (GTK_WIDGET (bar)), "nu-content")
                                                  ? "column" : "bottom", d);
       const char *want = cmd + strlen ("gt-expect ");

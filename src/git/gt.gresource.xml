@@ -3,4 +3,14 @@
   <gresource prefix="/io/github/zyrotec/NautilusUtils/git/icons/scalable/actions">
     <file preprocess="xml-stripblanks" alias="nu-git-branch-symbolic.svg">icons/nu-git-branch-symbolic.svg</file>
   </gresource>
+  <gresource prefix="/io/github/zyrotec/NautilusUtils/git/icons/scalable/emblems">
+    <file preprocess="xml-stripblanks" alias="emblem-nu-git-modified-symbolic.svg">icons/emblem-nu-git-modified-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="emblem-nu-git-added-symbolic.svg">icons/emblem-nu-git-added-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="emblem-nu-git-deleted-symbolic.svg">icons/emblem-nu-git-deleted-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="emblem-nu-git-untracked-symbolic.svg">icons/emblem-nu-git-untracked-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="emblem-nu-git-renamed-symbolic.svg">icons/emblem-nu-git-renamed-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="emblem-nu-git-conflict-symbolic.svg">icons/emblem-nu-git-conflict-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="emblem-nu-git-ignored-symbolic.svg">icons/emblem-nu-git-ignored-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="emblem-nu-git-contains-symbolic.svg">icons/emblem-nu-git-contains-symbolic.svg</file>
+  </gresource>
 </gresources>

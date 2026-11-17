@@ -410,7 +410,7 @@ test_bottom_align (void)
   st.keep_aspect = TRUE;
   guint w = 300;
   double fx, fy, fw, fh;
-  fp_composite_card_rect (0, w, &fx, &fy, &fw, &fh);
+  fp_composite_card_rect (&st, 0, w, &fx, &fy, &fw, &fh);
   FpCompositeItem items[] = { { wide_png, 1, NULL }, { blue_png, 2, NULL } }; /* front wide (short), back square */
   st.bottom_align = TRUE;
   g_autoptr (GdkTexture) on = fp_composite_frame (&st, items, 2, w, NULL);
@@ -451,7 +451,7 @@ test_stacked (void)
 
   double x[3], y[3], cw[3], ch[3];
   for (guint i = 0; i < 3; i++)
-    fp_composite_card_rect (i, w, &x[i], &y[i], &cw[i], &ch[i]);
+    fp_composite_card_rect (&st, i, w, &x[i], &y[i], &cw[i], &ch[i]);
   /* Each card further back is narrower and higher, all the same height. */
   g_assert_cmpfloat (cw[1], <, cw[0]);
   g_assert_cmpfloat (cw[2], <, cw[1]);
@@ -524,7 +524,7 @@ test_keep_aspect_option (void)
   g_autoptr (GdkTexture) s1 = fp_composite_frame (&st, wide, 1, w, NULL);
   debug_save (s1, "stacked-aspect.png");
   double cx, cy, cardw, cardh;
-  fp_composite_card_rect (0, w, &cx, &cy, &cardw, &cardh);
+  fp_composite_card_rect (&st, 0, w, &cx, &cy, &cardw, &cardh);
   double pich = cardw / 4; /* the 4:1 picture, full card width */
   assert_colour (s1, cx + cardw / 2, cy + pich / 2, RED, "card top: picture");
   assert_clear (s1, cx + cardw / 2, cy + pich + (cardh - pich) / 2, "below the short card");
@@ -552,7 +552,7 @@ test_depth (void)
   debug_save (deep, "stacked-depth.png");
   double x[3], y[3], cw[3], ch[3];
   for (guint i = 0; i < 3; i++)
-    fp_composite_card_rect (i, w, &x[i], &y[i], &cw[i], &ch[i]);
+    fp_composite_card_rect (&st, i, w, &x[i], &y[i], &cw[i], &ch[i]);
   double mid = w / 2.0, back = (y[2] + y[1]) / 2;
   Px f = pixel (flat, mid, back), d = pixel (deep, mid, back);
   g_assert_cmpuint (d.b, <, f.b); /* darker */
@@ -612,7 +612,7 @@ test_depth_presets (void)
   FpCompositeItem items[] = { { red_png, 1, NULL }, { green_png, 2, NULL }, { blue_png, 3, NULL } };
   double x[3], y[3], cw[3], ch[3];
   for (guint i = 0; i < 3; i++)
-    fp_composite_card_rect (i, w, &x[i], &y[i], &cw[i], &ch[i]);
+    fp_composite_card_rect (&st, i, w, &x[i], &y[i], &cw[i], &ch[i]);
   double mid = w / 2.0;
 
   st.depth = FP_DEPTH_TRANSPARENCY;
@@ -675,7 +675,7 @@ test_fade_clip_radius (void)
   st.shadow = FALSE;
   st.rotation = FALSE;
   double cx0, cy0, cw0, ch0;
-  fp_composite_card_rect (0, w, &cx0, &cy0, &cw0, &ch0);
+  fp_composite_card_rect (&st, 0, w, &cx0, &cy0, &cw0, &ch0);
   g_autoptr (GdkTexture) c = fp_composite_frame (&st, items, 1, w, NULL);
   assert_colour (c, cx0 + 1, cy0 + ch0 - 2, RED, "square bottom corner");
   st.view_bottom_radius = 8;
@@ -795,6 +795,69 @@ test_stress (void)
     }
 }
 
+/* Stacked spacing (px at 64 × 64): wider gaps between the cards' tops, shorter cards, same stack area; 0 = all cards
+ * on top of each other; part of the stacked cache key only. */
+static void
+test_stack_spacing (void)
+{
+  FpStyle st;
+  fp_style_init_default (&st);
+  st.layout = FP_LAYOUT_STACKED;
+  guint w = 256;
+  double ax, ay, aw, ah;
+  fp_composite_stack_rect (w, &ax, &ay, &aw, &ah);
+  double gap[3], height[3];
+  const guint spacings[] = { 0, 20, 65 }; /* tenths of a px: 0, 2 and 6.5 px */
+  for (guint k = 0; k < 3; k++)
+    {
+      st.stack_spacing = spacings[k];
+      double x0, y0, w0, h0, x2, y2, w2, h2;
+      fp_composite_card_rect (&st, 0, w, &x0, &y0, &w0, &h0);
+      fp_composite_card_rect (&st, 2, w, &x2, &y2, &w2, &h2);
+      gap[k] = y0 - y2;
+      height[k] = h0;
+      /* The front card always ends where the stack area does; the back card starts at its top. */
+      g_assert_cmpfloat_with_epsilon (y0 + h0, ay + ah, 1e-6);
+      g_assert_cmpfloat_with_epsilon (y2, ay, 1e-6);
+      g_assert_cmpfloat_with_epsilon (h2, h0, 1e-6);
+      /* Only the vertical gap changes: the cards' widths (and side insets) are the same at any spacing. */
+      g_assert_cmpfloat_with_epsilon (w0, aw, 1e-6);
+      g_assert_cmpfloat_with_epsilon (w2, aw - 2 * 2 * STACK_STEP * aw, 1e-6);
+      g_assert_cmpfloat_with_epsilon (x2 - x0, 2 * STACK_STEP * aw, 1e-6);
+    }
+  g_assert_cmpfloat_with_epsilon (gap[0], 0.0, 1e-9);
+  g_assert_cmpfloat (gap[1], <, gap[2]);
+  g_assert_cmpfloat (height[0], >, height[1]);
+  g_assert_cmpfloat (height[1], >, height[2]);
+  /* 2 px at 64 × 64 with the default 8 px padding (48 px wide stack): two steps of 2 px in icon pixels. */
+  st.stack_spacing = 20;
+  double icon = fp_composite_icon_px (&st, w);
+  g_assert_cmpfloat_with_epsilon (gap[1], 2 * 2 * icon / 64.0, 1e-6);
+  /* Out of range: clamped, and cards stay at least 60 % of the stack tall. */
+  st.stack_spacing = 999;
+  double x, y, cw, ch;
+  fp_composite_card_rect (&st, 0, w, &x, &y, &cw, &ch);
+  g_assert_cmpfloat (ch, >=, 0.6 * ah - 1e-6);
+  /* Cache keys: stacked keys differ, grid keys don't. */
+  FpStyle a = st, b = st;
+  a.stack_spacing = 15; /* half pixels make different frames */
+  b.stack_spacing = 20;
+  g_autofree char *ka = fp_style_key (&a);
+  g_autofree char *kb = fp_style_key (&b);
+  g_assert_cmpstr (ka, !=, kb);
+  g_assert_false (fp_style_equal (&a, &b));
+  a.layout = b.layout = FP_LAYOUT_GRID;
+  g_autofree char *ga = fp_style_key (&a);
+  g_autofree char *gb = fp_style_key (&b);
+  g_assert_cmpstr (ga, ==, gb);
+  /* A frame draws with any spacing. */
+  st.layout = FP_LAYOUT_STACKED;
+  st.stack_spacing = 80;
+  FpCompositeItem items[] = { { NULL, 1, NULL }, { NULL, 2, NULL }, { NULL, 3, NULL } };
+  g_autoptr (GdkTexture) t = fp_composite_frame (&st, items, 3, w, NULL);
+  g_assert_nonnull (t);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -827,6 +890,7 @@ main (int argc, char **argv)
   g_test_add_func ("/composite/stress", test_stress);
   g_test_add_func ("/composite/texture-items", test_texture_items);
   g_test_add_func ("/composite/bottom-align", test_bottom_align);
+  g_test_add_func ("/composite/stack-spacing", test_stack_spacing);
   int ret = g_test_run ();
 
   g_clear_pointer (&red_png, g_free);

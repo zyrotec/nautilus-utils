@@ -1,11 +1,11 @@
 /* GtBar: the Git status bar under the folder view (PLAN.md §14.1 G1, §14.2 item 2). Plain GTK + libadwaita, no
  * Nautilus types: the hook (or a demo) tells it which repository to show.
  *
- *   [⑂ main ▾]  [↑2 ↓1 ▾]                                        [progress ▾]  [Open in VS Code]
+ *   [⑂ main ▾]  ↑2 ↓1 [↑][↓][⟳]                              [progress ▾]  [Open in VS Code | ▾]
  *
- * Branch popover: search, local and remote branches (selecting one switches to it), Create. Counts popover: the
- * last commit and Push / Pull / Sync. Progress popover: this repository's operations with git's message when one
- * fails. */
+ * Branch popover: search, local and remote branches (selecting one switches to it), Create. The counts' tooltip
+ * has the last commit; Push / Pull / Sync sit right beside them. Progress popover: this repository's operations
+ * with git's message when one fails. Open in …: a split button, its menu the other installed editors. */
 #pragma once
 
 #include <adwaita.h>
@@ -46,6 +46,10 @@ gboolean gt_bar_open_ide  (GtBar      *self);
 
 /* One line describing what is shown (debug driver and tests). Caller frees. */
 char *gt_bar_describe (GtBar *self);
+
+/* The options for every bar: the line above it, and its own background (NULL: the view's). */
+void gt_bar_set_look (gboolean       border,
+                      const GdkRGBA *background);
 
 /* The CSS the bar needs, added once (removed by gt_bar_unload_style). */
 void gt_bar_unload_style (void);

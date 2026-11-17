@@ -26,6 +26,7 @@ fp_style_init_default (FpStyle *style)
     .depth = FP_DEPTH_BLUR,
     .corner_radius = 2,
     .stack_padding = 8,
+    .stack_spacing = 20,
   };
 }
 
@@ -38,7 +39,8 @@ fp_style_equal (const FpStyle *a, const FpStyle *b)
          a->shadow == b->shadow && a->rotation == b->rotation && a->keep_aspect == b->keep_aspect &&
          a->depth == b->depth && a->corner_radius == b->corner_radius && a->fade == b->fade &&
          a->view_top_radius == b->view_top_radius && a->view_bottom_radius == b->view_bottom_radius &&
-         a->stack_padding == b->stack_padding && a->bottom_align == b->bottom_align;
+         a->stack_padding == b->stack_padding && a->stack_spacing == b->stack_spacing &&
+         a->bottom_align == b->bottom_align;
 }
 
 /* Returns a new string (caller frees). */
@@ -48,13 +50,13 @@ fp_style_key (const FpStyle *style)
   gboolean stacked = style->layout == FP_LAYOUT_STACKED;
   /* Stacked-only options are left out of grid keys, so changing them keeps the grid's cached frames. */
   /* "-B" only when set: folder previews (never set) keep their disk cache keys. */
-  return g_strdup_printf ("%s%u-b%d%02x%02x%02x-s%d-r%d-a%d-c%u-d%d-f%u-v%u.%u-p%u-w%u%s", stacked ? "stack" : "grid",
+  return g_strdup_printf ("%s%u-b%d%02x%02x%02x-s%d-r%d-a%d-c%u-d%d-f%u-v%u.%u-p%u-w%u%s-g%u", stacked ? "stack" : "grid",
                           stacked ? style->stack_step : 0u, style->border != FALSE, style->border_r,
                           style->border_g, style->border_b, style->shadow != FALSE, style->rotation != FALSE,
                           style->keep_aspect != FALSE, style->corner_radius, stacked ? (int) style->depth : 0,
                           stacked ? style->fade : 0u, stacked ? style->view_top_radius : 0u,
                           stacked ? style->view_bottom_radius : 0u, stacked ? style->stack_padding : 0u, style->border ? style->border_width : 0u,
-                          stacked && style->bottom_align ? "-B" : "");
+                          stacked && style->bottom_align ? "-B" : "", stacked ? MIN (style->stack_spacing, FP_STACK_SPACING_MAX) : 0u);
 }
 
 guint
@@ -201,15 +203,28 @@ fp_composite_stack_rect (guint width, double *x, double *y, double *w, double *h
   *h = STACK_H * sw;
 }
 
+double
+fp_style_stack_step (const FpStyle *style)
+{
+  double px = MIN (style->stack_spacing, (guint) FP_STACK_SPACING_MAX) / 10.0;
+  /* At most a fifth of the stack's height per step, so the cards stay at least 60 % of it tall. */
+  return MIN (px / (REF_ICON_PX * fp_style_stack_width (style)), STACK_H / 5.0);
+}
+
 void
-fp_composite_card_rect (guint index, guint width, double *x, double *y, double *w, double *h)
+fp_composite_card_rect (const FpStyle *style, guint index, guint width, double *x, double *y, double *w, double *h)
 {
   double sw = width / (1.0 + 2 * STACK_PAD); /* stack width */
-  double inset = MIN (index, (guint) STACK_CARDS - 1) * STACK_STEP * sw;
+  guint depth = MIN (index, (guint) STACK_CARDS - 1);
+  double step = fp_style_stack_step (style);
+  /* Spacing moves the cards behind up only; their side inset stays the fixed STACK_STEP, so they keep their
+   * width whatever the spacing (owner, 2026-11-17). The stack area keeps its size (STACK_H): the cards' height
+   * takes up what the steps leave. */
+  double inset = depth * STACK_STEP * sw;
   *x = STACK_PAD * sw + inset;
-  *y = STACK_PAD * sw + (STACK_CARDS - 1) * STACK_STEP * sw - inset;
+  *y = STACK_PAD * sw + (STACK_CARDS - 1 - depth) * step * sw;
   *w = sw - 2 * inset;
-  *h = STACK_CARD_H * sw;
+  *h = (STACK_H - (STACK_CARDS - 1) * step) * sw;
 }
 
 /* Sets the style's border colour as the cairo source. */
@@ -527,7 +542,7 @@ fp_composite_frame (const FpStyle         *style,
       double sx, sy, sw, sh;
       if (stacked)
         {
-          fp_composite_card_rect (i, width, &sx, &sy, &sw, &sh);
+          fp_composite_card_rect (style, i, width, &sx, &sy, &sw, &sh);
           draw_card (cr, style, img, sx, sy, sw, sh, radius, border, items[i].seed, i);
         }
       else if (img != NULL)

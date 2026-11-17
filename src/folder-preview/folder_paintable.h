@@ -45,7 +45,7 @@ void fp_decor_init_stacked (FpDecor               *decor,
                             const FpStyle         *style,
                             const graphene_rect_t *body,
                             FpStackPosition        position,
-                            int                    offset);
+                            double                 offset);
 
 /* Frame width in device pixels for a logical icon @size at @scale (HiDPI). */
 guint fp_decor_frame_px (const FpDecor *decor,
